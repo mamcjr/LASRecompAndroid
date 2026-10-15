@@ -729,3 +729,25 @@ def _empty_handler(gen, a):
 
 
 PATCHES[EMPTY_HANDLER_SITE] = _empty_handler
+
+
+# Issue #19: [this+0x10] is the delegate of a recycled "action" object (the class whose vtable is 0x7001c51358, and
+# the ~100 siblings sharing these forwarders). Its slot +0x28 (main+0x10cce50) and +0x30 (main+0x10cce30) forward to
+# that delegate without checking it, while the class's own slot +0x38 (main+0x10cce80) checks *its* delegate (+0x18)
+# with `cbz` and returns when there is none. The task loop (main+0x13c21e0) picks the slot from the task's state and
+# the object's slot +0x00 (main+0x10cce00) re-initialises it, clearing the delegate: the tick can then land on a
+# freshly reset object and the forwarder dereferences NULL (signal 11 at main+0x10cce50+0x8, always the same object).
+# runtime/hle/delegate_null.c makes both forwarders read a missing delegate as "nothing to do" as well.
+DELEGATE_FORWARDER_SITES = [0x70010cce50, 0x70010cce30]
+
+
+def _delegate_forwarder(gen, a):
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w == 0xaa0003e1, hex(w)  # mov x1, x0
+    slot = 0x28 if a == 0x70010cce50 else 0x30
+    return ('{ extern int rt_delegate_null(Cpu *, int); if (rt_delegate_null(c, %#x)) return; c->x[1] = c->x[0]; }'
+            f'  /* {a:#x}: mov x1, x0 (delegate forwarder: nothing to forward to) */' % slot)
+
+
+for _a in DELEGATE_FORWARDER_SITES:
+    PATCHES[_a] = _delegate_forwarder
