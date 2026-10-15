@@ -709,3 +709,23 @@ def _shape_sim(gen, a):
 
 for _a in SHAPE_SIM_SITES:
     PATCHES[_a] = _shape_sim
+
+
+# Issue #41 (LASRecomp beta_5 c502b1d): an event's handler that is an empty std::function. The event dispatcher
+# main+0x108ddc0 calls it through main+0x108dfc0 (std::function's call: throws std::bad_function_call when empty) and
+# catches that (its landing pad 0x108de78 -> 0x108de00: returns 0, "not handled") - the catch can't work in recompiled
+# code (no unwinding), so the throw ended in std::terminate. Seen with Warp tab jumps; same family as NO_HANDLER_SITES
+# (the action dispatcher's). beta_5 hooks the call itself; here the instruction right before it (the call's second
+# argument) also skips the call when the function is empty, to where the catch goes (a branch target already).
+EMPTY_HANDLER_SITE = 0x700108de44  # add x1, sp, #0x18 (then bl main+0x108dfc0)
+
+
+def _empty_handler(gen, a):
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w == 0x910063e1, hex(w)  # add x1, sp, #0x18
+    return ('{ extern void rt_empty_handler(void); c->x[1] = c->sp + 0x18; '
+            'if (!c->x[0]) { rt_empty_handler(); goto L_700108de00; } }'
+            f'  /* {a:#x}: add x1, sp, #0x18 (an empty event handler: to where its catch goes, issue #41) */')
+
+
+PATCHES[EMPTY_HANDLER_SITE] = _empty_handler
