@@ -19,5 +19,6 @@ int rt_delegate_null(Cpu *c, int slot) {
     if (obj && *(uint64_t *)(uintptr_t)(obj + 0x10)) return 0;  // the usual case: forward like the original
     static int logged;
     if (logged++ < 8) LOG("[delegate] %#llx slot +0x%x: no delegate at [this+0x10], skipped (issue #19)\n", obj, slot);
+    c->x[0] = 0;  // (returns 0, as slot +0x38 does when its delegate is missing: x0 is the delegate it loaded)
     return 1;
 }
