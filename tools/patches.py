@@ -751,3 +751,36 @@ def _delegate_forwarder(gen, a):
 
 for _a in DELEGATE_FORWARDER_SITES:
     PATCHES[_a] = _delegate_forwarder
+
+
+# Issue #19, the hang (LASRecomp beta_5 d46dda4; hook points there): the per-frame kick-off (main+0x15730, four inlined
+# copies, one per owner X) rebuilds X's frame job J (X+0xc8) in place. The job worker (main+0x13c21e0) runs J
+# (main+0x10cceb0: sets X's done flag, wakes the main thread, unlocks) and only then calls J's finish (main+0x10ccfa0 ->
+# slot +0x00: base vtable, delegate cleared). A worker preempted between the two lets the main thread kick off the next
+# frame first; the late finish then wipes the new J, whose release is dropped, and the main thread waits for X's done
+# flag forever. Each kick-off first waits for the previous run's finish (runtime/hle/delegate_null.c), then does its
+# instruction; the finish site only serves a debug delay to force the race.
+FRAME_JOB_KICKOFF_SITES = {0x7000015780: 22, 0x7000015834: 22, 0x70000158e8: 22, 0x70000159b0: 21}  # add x19, xN, #0x1e0
+FRAME_JOB_FINISH_SITE = 0x70010ccfa0  # ldr x8, [x0]
+
+
+def _frame_job_kickoff(gen, a):
+    rn = FRAME_JOB_KICKOFF_SITES[a]
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w == 0x91078013 | rn << 5, hex(w)  # add x19, x<rn>, #0x1e0
+    return ('{ extern void rt_frame_job_kickoff(uint64_t); rt_frame_job_kickoff(c->x[%d]); c->x[19] = c->x[%d] + 0x1e0; }'
+            % (rn, rn) + f"  /* {a:#x}: add x19, x{rn}, #0x1e0 (frame job kick-off: the last run's finish first, #19) */")
+
+
+def _frame_job_finish(gen, a):
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w == 0xf9400008, hex(w)  # ldr x8, [x0]
+    return ('{ extern void rt_frame_job_finish(uint64_t); rt_frame_job_finish(c->x[0]); c->x[8] = LD64(c->x[0]); }'
+            f'  /* {a:#x}: ldr x8, [x0] (frame job finish: a debug delay, issue #19) */')
+
+
+for _a in FRAME_JOB_KICKOFF_SITES:
+    assert _a not in PATCHES
+    PATCHES[_a] = _frame_job_kickoff
+assert FRAME_JOB_FINISH_SITE not in PATCHES
+PATCHES[FRAME_JOB_FINISH_SITE] = _frame_job_finish
