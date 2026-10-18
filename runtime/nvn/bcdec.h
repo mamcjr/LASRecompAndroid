@@ -1,4 +1,6 @@
 /* bcdec.h - v0.985
+   (LAS Recomp: the signed BC4/BC5 endpoints read as (signed char), was (char) - unsigned on ARM, which turned every
+   negative endpoint positive: speckled normal maps on Android, 2026-10-18)
    provides functions to decompress blocks of BC compressed images
    written by Sergii "iOrange" Kudlai in 2022
 
@@ -284,8 +286,8 @@ static void bcdec__bc4_block(const void* compressedBlock, void* decompressedBloc
     block = bcdec__getu64le(compressedBlock);
 
     if (isSigned) {
-        alpha[0] = (char)(block & 0xFF);
-        alpha[1] = (char)((block >> 8) & 0xFF);
+        alpha[0] = (signed char)(block & 0xFF);
+        alpha[1] = (signed char)((block >> 8) & 0xFF);
         if (alpha[0] < -127) alpha[0] = -127;     /* -128 clamps to -127 */
         if (alpha[1] < -127) alpha[1] = -127;     /* -128 clamps to -127 */
     } else {
@@ -343,8 +345,8 @@ static void bcdec__bc4_block_float(const void* compressedBlock, void* decompress
     decompressed = (float*)decompressedBlock;
 
     if (isSigned) {
-        alpha[0] = (float)((char)(block & 0xFF)) / 127.0f;
-        alpha[1] = (float)((char)((block >> 8) & 0xFF)) / 127.0f;
+        alpha[0] = (float)((signed char)(block & 0xFF)) / 127.0f;
+        alpha[1] = (float)((signed char)((block >> 8) & 0xFF)) / 127.0f;
         if (alpha[0] < -1.0f) alpha[0] = -1.0f;     /* -128 clamps to -127 */
         if (alpha[1] < -1.0f) alpha[1] = -1.0f;     /* -128 clamps to -127 */
     } else {

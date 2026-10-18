@@ -19,3 +19,6 @@ tools/venv/
 venv/
 __pycache__/
 .DS_Store
+
+# test captures (screenshots, videos from testers)
+testes/
