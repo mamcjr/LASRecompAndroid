@@ -763,6 +763,16 @@ for _a in DELEGATE_FORWARDER_SITES:
 FRAME_JOB_KICKOFF_SITES = {0x7000015780: 22, 0x7000015834: 22, 0x70000158e8: 22, 0x70000159b0: 21}  # add x19, xN, #0x1e0
 FRAME_JOB_FINISH_SITE = 0x70010ccfa0  # ldr x8, [x0]
 
+# Startup hang (Windows, few cores): a call run on its object's owner thread. main+0x1048cf0 (slot +0x48 of the class
+# whose vtable is 0x7001c490b0; a loader thread calls it for an object O the main thread owns) locks O's mutex (O+0x18),
+# posts a task to the owner's queue ([O+8]) and waits on O's condition variable (O+0x38) once, with no predicate. The
+# task (main+0x1049ed0, on the main thread) stores the result at O+0x10 and calls notify_one without taking O's mutex.
+# If the loader thread is preempted between its post and its wait, the notify finds nobody and the loader waits forever,
+# while the main thread waits for that loader's load (key in its own task queue). Just before the notify the runtime
+# takes and drops O's mutex (LASRecomp beta_5 51acaf4; a hook point there): the loader holds it from before the post
+# until its wait has begun, so the notify always lands.
+OWNER_CALL_NOTIFY_SITE = 0x7001049f08  # add x0, x21, #0x38 (then bl notify_one)
+
 
 def _frame_job_kickoff(gen, a):
     rn = FRAME_JOB_KICKOFF_SITES[a]
@@ -784,3 +794,15 @@ for _a in FRAME_JOB_KICKOFF_SITES:
     PATCHES[_a] = _frame_job_kickoff
 assert FRAME_JOB_FINISH_SITE not in PATCHES
 PATCHES[FRAME_JOB_FINISH_SITE] = _frame_job_finish
+
+
+def _owner_call_notify(gen, a):
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w == 0x9100e2a0, hex(w)  # add x0, x21, #0x38
+    return ('{ extern void rt_owner_call_notify(Cpu *, uint64_t); rt_owner_call_notify(c, c->x[21]); '
+            'c->x[0] = c->x[21] + 0x38; }'
+            f'  /* {a:#x}: add x0, x21, #0x38 (owner-thread call done: notify once its caller waits) */')
+
+
+assert OWNER_CALL_NOTIFY_SITE not in PATCHES
+PATCHES[OWNER_CALL_NOTIFY_SITE] = _owner_call_notify

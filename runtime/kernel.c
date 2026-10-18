@@ -434,6 +434,9 @@ static uint32_t svc_arbitrate_unlock(uint64_t addr) {
 }
 
 static uint32_t svc_wait_process_wide_key(uint64_t mutex, uint64_t key, uint32_t tag, int64_t timeout) {
+    static long late_us = -1;  // (test) LARECOMP_DEBUG_CV_LATE_WAIT=<us>: every condition variable wait starts that late
+    if (late_us < 0) late_us = getenv("LARECOMP_DEBUG_CV_LATE_WAIT") ? atol(getenv("LARECOMP_DEBUG_CV_LATE_WAIT")) : 0;
+    if (late_us > 0) usleep((useconds_t)late_us);  // (forces notify-before-wait races in the game's code: hle/delegate_null.c)
     pthread_mutex_lock(&g_klock);
     KThread *t = t_cur;
 #ifdef __ANDROID__

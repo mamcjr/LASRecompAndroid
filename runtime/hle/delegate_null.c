@@ -32,6 +32,7 @@
 // LARECOMP_FRAMEJOB_NO_WAIT=1 turns the wait off (to see the hang come back).
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "../hle.h"
 #include "../platform.h"
@@ -104,4 +105,34 @@ void rt_frame_job_finish(uint64_t job) {
     }
     if (ms <= 0 || rd64(job) != JOB_VTABLE_LIVE || !frame_job(job)) return;
     plat_sleep_until_ns(plat_now_ns() + (uint64_t)ms * 1000000ull);
+}
+
+// Startup hang (Windows, pinned to 4 cores: about 1 boot in 6 stopped after "romfs reads: 64"). A loader thread asks
+// the main thread to make an object: main+0x1048cf0 locks O's mutex (O+0x18), posts a task to the owner's queue ([O+8],
+// the main thread's) and waits on O's condition variable (O+0x38) once, with no predicate. The task (main+0x1049ed0, on
+// the main thread) stores the result at O+0x10 and calls notify_one *without* O's mutex. On the Switch the loader
+// reaches its wait a few instructions after the post; a host thread preempted in between missed the notify, waited
+// forever, and the main thread waited for that loader's load forever (thread dump: main in its task-queue wait, the
+// loader on O+0x38, O+0x10 already set). Here, just before the notify: while O's mutex is still held (by the caller,
+// which keeps it from before its post until its wait has begun), take it and let it go first - the notify then always
+// finds the caller waiting. Uncontended (the usual case) nothing changes. LARECOMP_OWNER_CALL_NO_WAIT=1 turns it off.
+void rt_owner_call_notify(Cpu *c, uint64_t obj) {
+    static int off = -1;
+    if (off < 0) {
+        const char *e = getenv("LARECOMP_OWNER_CALL_NO_WAIT");
+        off = e && *e && *e != '0';
+    }
+    if (off || !obj || !rd32(obj + 0x30)) return;  // (O's lock word: 0 = the caller is already waiting)
+    uint64_t t0 = plat_now_ns(), saved[31], sp = c->sp, pc = c->pc;
+    memcpy(saved, c->x, sizeof saved);  // (an instruction patch here, mid-function: every register as it was)
+    c->x[0] = obj + 0x18;
+    guest_call(c, guest_sym("_ZNSt3__15mutex4lockEv"));
+    c->x[0] = obj + 0x18;
+    guest_call(c, guest_sym("_ZNSt3__15mutex6unlockEv"));
+    memcpy(c->x, saved, sizeof saved);
+    c->sp = sp, c->pc = pc;
+    static int logged;
+    if (logged++ < 16)
+        LOG("[owner-call] %#llx: notify held until the caller waits (%llu us; it would have been lost)\n",
+            (unsigned long long)obj, (unsigned long long)((plat_now_ns() - t0) / 1000));
 }
