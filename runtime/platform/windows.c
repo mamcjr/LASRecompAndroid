@@ -181,6 +181,19 @@ void plat_fatal_notice(void) {
     MessageBoxA(NULL, text, "LAS Recomp", MB_ICONERROR | MB_OK);
 }
 
+static DWORD WINAPI notice_thread(LPVOID text) {
+    MessageBoxA(NULL, text, "LAS Recomp", MB_ICONWARNING | MB_OK);
+    free(text);
+    return 0;
+}
+void plat_notice(const char *text) {
+    if (!g_log_path[0]) return;
+    char *copy = _strdup(text);
+    HANDLE t = copy ? CreateThread(NULL, 0, notice_thread, copy, 0, NULL) : NULL;
+    if (t) CloseHandle(t);
+    else free(copy);
+}
+
 void plat_init(void) {
     log_to_file_without_console();
     require_cpu();

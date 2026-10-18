@@ -1,4 +1,6 @@
-"""Exercise the production save handlers using temporary files, without game data."""
+"""Exercise the production save handlers using temporary files, without game data (tools/test_save_*.c): saves
+commit and reload with their flag sidecars, and a save that fails anywhere returns success to the game (whose SDK
+aborts on fs errors) while the committed save stays as it was."""
 import os
 from pathlib import Path
 import shlex

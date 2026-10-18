@@ -52,12 +52,17 @@ int main(int argc, char **argv) {
     mount = remount(mount); read_slot(mount, 0x44, 0x44);
     assert(access(flags_pending, F_OK));
 
-    // A sidecar publication failure remains retryable after the data has already been replaced.
+    // A sidecar publication failure (the data already replaced) succeeds for the game and keeps the staged sidecar,
+    // which the next mount publishes to finish the pair.
     save_slot(mount, 0x55, 0x55); assert(!unlink(flags) && !mkdir(flags, 0755));
-    assert(commit_mount(mount) && ((HostFs *)mount->state)->npending == 1);
-    assert(first_byte(path) == 0x55 && !access(flags_pending, F_OK));
+    assert(!commit_mount(mount) && !((HostFs *)mount->state)->npending);
+    assert(first_byte(path) == 0x55 && !access(flags_pending, F_OK) && access(pending, F_OK));
     assert(!rmdir(flags)); put_file(flags, 0x44, EXT);
-    assert(!commit_mount(mount)); mount = remount(mount); read_slot(mount, 0x55, 0x55);
+    mount = remount(mount); read_slot(mount, 0x55, 0x55);
+    // A failure before the data rename drops the whole save: data and sidecar stay as committed.
+    save_slot(mount, 0x56, 0x56); sync_error = 1; assert(!commit_mount(mount)); sync_error = 0;
+    assert(access(pending, F_OK) && access(flags_pending, F_OK));
+    mount = remount(mount); read_slot(mount, 0x55, 0x55);
 
     // If recovery cannot publish the sidecar, the mount fails and preserves it for the next attempt.
     save_slot(mount, 0x66, 0x66); assert(!replace_file(pending, path));
