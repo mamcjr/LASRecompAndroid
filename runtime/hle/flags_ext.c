@@ -10,6 +10,7 @@
 // The file-select screen reads every slot, so a slot's extra bits are matched to the save the game puts in play by
 // the body CRC (save +0x5EC4) of the data read from its file.
 // Only on when the seed needs it (rando/<seed>/flags_ext exists) or LARECOMP_FLAGS_EXT=1.
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -68,7 +69,17 @@ static bool enabled(void) {
     return g_on;
 }
 
-static void sidecar_path(const char *save, char *out, size_t n) { snprintf(out, n, "%s.flagsx", save); }
+// fs.c passes the working-copy path while a save is pending. Slot identity stays canonical;
+// the sidecar follows the same transaction, rather than becoming an orphaned .pending.flagsx file.
+static bool save_path(const char *path, char *out, size_t n) {
+    size_t len = strlen(path);
+    bool pending = len > 8 && !strcmp(path + len - 8, ".pending");
+    snprintf(out, n, "%.*s", (int)(len - (pending ? 8 : 0)), path);
+    return pending;
+}
+static void sidecar_path(const char *save, char *out, size_t n, bool pending) {
+    snprintf(out, n, "%s.flagsx%s", save, pending ? ".pending" : "");
+}
 
 static Slot *slot_for(const char *path) {
     for (int i = 0; i < g_nslots; i++)
@@ -83,13 +94,19 @@ static Slot *slot_for(const char *path) {
 // fs.c: a save file was read into guest memory
 void flags_ext_save_read(const char *path, uint64_t addr, int64_t off, int64_t size) {
     if (!enabled() || off != 0 || size < BODY_CRC + 4) return;
-    Slot *s = slot_for(path);
+    char save[1100];
+    bool pending = save_path(path, save, sizeof save);
+    Slot *s = slot_for(save);
     if (!s) return;
     s->crc = *(const uint32_t *)(uintptr_t)(addr + BODY_CRC);
     memset(s->ext, 0, sizeof s->ext);
-    char sc[1100];
-    sidecar_path(path, sc, sizeof sc);
+    char sc[1200];
+    sidecar_path(save, sc, sizeof sc, pending);
     FILE *f = fopen(sc, "rb");
+    if (!f && pending && errno == ENOENT) {
+        sidecar_path(save, sc, sizeof sc, false);
+        f = fopen(sc, "rb");
+    }
     if (f) {
         size_t n = fread(s->ext, 1, sizeof s->ext, f);
         (void)n;
@@ -98,25 +115,28 @@ void flags_ext_save_read(const char *path, uint64_t addr, int64_t off, int64_t s
 }
 
 // fs.c: a save file was written from guest memory
-void flags_ext_save_written(const char *path, uint64_t addr, int64_t off, int64_t size) {
-    if (!enabled() || off != 0 || size < BODY_CRC + 4) return;
-    strlcpy(g_current, path, sizeof g_current);
+bool flags_ext_save_written(const char *path, uint64_t addr, int64_t off, int64_t size) {
+    if (!enabled() || off != 0 || size < BODY_CRC + 4) return true;
+    char save[1100];
+    bool pending = save_path(path, save, sizeof save);
+    strlcpy(g_current, save, sizeof g_current);
     // the slot now holds the written CRC; the live save keeps its own (the game writes from a copy) - track that
     // one, else the next tick sees a "new" save in play and reloads another slot's extra bits over ours
     g_live_crc = *(const uint32_t *)(uintptr_t)(LIVE_SAVE + BODY_CRC);
-    Slot *s = slot_for(path);
+    Slot *s = slot_for(save);
     if (s) { s->crc = *(const uint32_t *)(uintptr_t)(addr + BODY_CRC); memcpy(s->ext, g_buf + 256, EXT); }
-    char sc[1100];
-    sidecar_path(path, sc, sizeof sc);
+    char sc[1200], committed[1200];
+    sidecar_path(save, sc, sizeof sc, pending);
+    sidecar_path(save, committed, sizeof committed, false);
     bool any = false;
     for (int i = 256; i < BUF; i++) any |= g_buf[i] != 0;
     struct stat sb;
-    if (!any && stat(sc, &sb)) return;  // nothing to keep and no file yet
+    if (!any && stat(sc, &sb) && stat(committed, &sb)) return true;  // no flags and no older sidecar to clear
     FILE *f = fopen(sc, "wb");
-    if (f) {
-        fwrite(g_buf + 256, 1, EXT, f);
-        fclose(f);
-    }
+    if (!f) return false;
+    bool ok = fwrite(g_buf + 256, 1, EXT, f) == EXT;
+    if (fclose(f)) ok = false;
+    return ok;
 }
 
 void flags_ext_tick(void) {

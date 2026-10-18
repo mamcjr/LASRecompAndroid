@@ -429,7 +429,10 @@ static void sync_dir_of(const char *path) {
 // code page the A function takes our paths as they are)
 static int replace_file(const char *from, const char *to) {
 #ifdef _WIN32
-    return MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) ? 0 : -1;
+    if (MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return 0;
+    LOG("[save] replace %s failed (Windows error %lu)\n", to, (unsigned long)GetLastError());
+    errno = EIO;
+    return -1;
 #else
     return rename(from, to);
 #endif
@@ -458,22 +461,72 @@ static bool pending_of(HostFs *fs, const char *p, bool create, char *out, size_t
     return true;
 }
 
-static void commit(HostFs *fs) {
-    for (int i = 0; i < fs->npending; i++) {
-        char tmp[1100];
-        snprintf(tmp, sizeof tmp, "%s.pending", fs->pending[i]);
-        int fd = open(tmp, O_RDWR);
-        if (fd >= 0) { fsync(fd); close(fd); }
-        if (replace_file(tmp, fs->pending[i])) {
-#ifdef _WIN32
-            LOG("[save] commit %s failed (Windows error %lu)\n", fs->pending[i], (unsigned long)GetLastError());
-#else
-            LOG("[save] commit %s failed (%d)\n", fs->pending[i], errno);
-#endif
-        }
-        else { LOG("[save] committed %s\n", fs->pending[i]); sync_dir_of(fs->pending[i]); }
+static bool sync_save_file(const char *path) {
+    int fd = open(path, O_RDWR);
+    if (fd < 0) return false;
+    bool ok = fsync(fd) == 0;
+    int error = errno;
+    if (close(fd)) return false;
+    if (!ok) errno = error;
+    return ok;
+}
+static bool commit_slot(const char *path) {
+    char pending[1200], flags[1200], flags_pending[1200];
+    snprintf(pending, sizeof pending, "%s.pending", path);
+    snprintf(flags, sizeof flags, "%s.flagsx", path);
+    snprintf(flags_pending, sizeof flags_pending, "%s.flagsx.pending", path);
+    struct stat st;
+    bool has_flags = stat(flags_pending, &st) == 0;
+    if (!has_flags && errno != ENOENT) return false;
+    if (has_flags && !sync_save_file(flags_pending)) return false;
+    if (!stat(pending, &st)) {
+        if (!sync_save_file(pending) || replace_file(pending, path)) return false;
+        sync_dir_of(path);
+    } else if (errno != ENOENT || !has_flags) return false;
+    // A missing working copy with pending flags means the data rename already succeeded. Finish that pair
+    // on retry; never discard its flags or let a fresh mount read the new data with the old flags.
+    if (has_flags) {
+        if (replace_file(flags_pending, flags)) return false;
+        sync_dir_of(flags);
     }
-    fs->npending = 0;
+    return true;
+}
+static bool commit(HostFs *fs) {
+    int remaining = 0, error = 0;
+    for (int i = 0; i < fs->npending; i++) {
+        if (!commit_slot(fs->pending[i])) {
+            error = errno;
+            LOG("[save] commit %s failed (%d)\n", fs->pending[i], error);
+            if (remaining != i) memcpy(fs->pending[remaining], fs->pending[i], sizeof fs->pending[i]);
+            remaining++;
+        } else LOG("[save] committed %s\n", fs->pending[i]);
+    }
+    fs->npending = remaining;
+    if (remaining) errno = error ? error : EIO;
+    return remaining == 0;
+}
+// Recover pairs before dropping abandoned working copies: deleting the data copy first would make an
+// uncommitted sidecar look committed. No format change: existing .flagsx files still contain just flag bytes.
+static bool recover_save_flags(const char *root) {
+    DIR *d = opendir(root);
+    if (!d) return false;
+    struct dirent *e;
+    int error = 0;
+    while ((e = readdir(d))) {
+        size_t n = strlen(e->d_name);
+        if (n <= 15 || strcmp(e->d_name + n - 15, ".flagsx.pending")) continue;
+        char path[1200], pending[1250], flags_pending[1250];
+        snprintf(path, sizeof path, "%s/%.*s", root, (int)(n - 15), e->d_name);
+        snprintf(pending, sizeof pending, "%s.pending", path);
+        snprintf(flags_pending, sizeof flags_pending, "%s.flagsx.pending", path);
+        struct stat st;
+        if (!stat(pending, &st)) {
+            if (unlink(flags_pending)) { error = errno; break; }
+        } else if (errno != ENOENT || !commit_slot(path)) { error = errno; break; }
+    }
+    closedir(d);
+    if (error) errno = error;
+    return !error;
 }
 typedef struct { DIR *d; char path[1024]; int mode; } HostDir;
 
@@ -532,8 +585,8 @@ static void file(Service *s, IpcReq *req, IpcResp *resp) {
             LOG("[save] write %s off %lld size %lld <- guest %llx\n", f->path, (long long)off, (long long)size, (unsigned long long)a->addr);
         if (pwrite(f->fd, (void *)(uintptr_t)a->addr, (size_t)size, off) < 0) resp->result = errno_result();
         else if (strstr(f->path, "savedata")) {
-            extern void flags_ext_save_written(const char *path, uint64_t addr, int64_t off, int64_t size);
-            flags_ext_save_written(f->path, a->addr, off, size);
+            extern bool flags_ext_save_written(const char *path, uint64_t addr, int64_t off, int64_t size);
+            if (!flags_ext_save_written(f->path, a->addr, off, size)) resp->result = errno_result();
         }
         break;
     }
@@ -668,7 +721,7 @@ static void filesystem(Service *s, IpcReq *req, IpcResp *resp) {
         ipc_return_object(resp, dsvc);
         break;
     }
-    case 10: commit(fs); break;  // Commit
+    case 10: if (!commit(fs)) resp->result = errno_result(); break;  // Commit
     case 11: case 12: OUT(int64_t, 0) = 0x40000000; resp_size(resp, 8); break;
     case 13: rm_rf(p, true); break;
     case 14: memset(resp->data, 0, 0x20); resp_size(resp, 0x20); break;
@@ -706,6 +759,7 @@ static Service *open_host_fs(const char *sub) {
     mkdir(cmd, 0755);
     fs->journaled = strcmp(sub, "sdcard") != 0;
     if (fs->journaled) {  // (a working copy left by a crash: never committed - dropped, as on the Switch)
+        if (!recover_save_flags(fs->root)) { int error = errno; free(fs); errno = error; return NULL; }
         DIR *d = opendir(fs->root);
         struct dirent *e;
         while (d && (e = readdir(d))) {
@@ -734,7 +788,9 @@ SERVICE("fsp-srv", fsp_srv) {
         uint8_t type = IN(uint8_t, 0x8 + 0x18);  // attribute.type
         char sub[64];
         snprintf(sub, sizeof sub, "save_%u", type);
-        ipc_return_object(resp, open_host_fs(sub));
+        Service *mount = open_host_fs(sub);
+        if (mount) ipc_return_object(resp, mount);
+        else resp->result = errno_result();
         break;
     }
     case 200: ipc_return_object(resp, open_romfs_storage()); break;  // OpenDataStorageByCurrentProcess
