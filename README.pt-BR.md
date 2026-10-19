@@ -23,6 +23,23 @@ Para as versões de PC (Windows, macOS, Linux), os recursos e o randomizer, veja
 > obtida legalmente, dos arquivos extraídos de *Link's Awakening* **v1.0.0**. Não serão dadas instruções de como
 > obtê-los.
 
+## Importar e exportar saves
+
+Na tela inicial, abra **Settings → Prelaunch → Saves - Eden / Yuzu / Ryujinx**:
+
+- **Import save folder**: selecione a pasta de saves de *Link's Awakening*, que contém `savedata0.bin`
+  (ou outro `savedataN.bin`) e os demais arquivos `.bin` do jogo.
+- **Import save ZIP**: selecione um ZIP dessa pasta. Uma pasta externa dentro do ZIP é aceita; arquivos com
+  saves de mais de um perfil são recusados para evitar misturar progressos.
+- **Export saves**: escolha onde salvar o ZIP. Com o jogo fechado no emulador, extraia o conteúdo na pasta
+  de saves de *Link's Awakening* aberta pelo próprio Eden, Yuzu ou Ryujinx.
+- **Export previous saves**: exporte o backup anterior à última importação. Para restaurá-lo, importe esse ZIP.
+
+A importação substitui todos os slots do conjunto selecionado e mantém uma cópia dos saves anteriores. A
+transferência funciona antes de iniciar o jogo. Se o Android não permitir selecionar a pasta de outro app,
+exporte os saves pelo emulador para uma pasta acessível, como Documentos, e selecione essa cópia ou ZIP.
+São transferidos os arquivos originais `.bin`, sem conversão; dados extras do randomizer não fazem parte do ZIP.
+
 ## Capturas de tela
 
 ![A tela inicial](docs/android/start_screen.jpg)

@@ -17,6 +17,7 @@
 package com.lasrecomp;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ContentResolver;
 import android.content.Intent;
 import android.database.Cursor;
@@ -67,8 +68,12 @@ public class LASRecompActivity extends SDLActivity {
     private static native void nativeImportProgress(long done, long total);
     private static native void nativeImportDone(int result);
     private static native void nativeDriverPicked(String name);
+    private static native void nativeSaveTransferDone(String message);
 
     private static final int REQ_GAME = 0x4c41, REQ_DRIVER = 0x4c42;
+    private static final int REQ_SAVE_FOLDER = 0x4c43, REQ_SAVE_ZIP = 0x4c44, REQ_SAVE_EXPORT = 0x4c45;
+    private File saveTarget;
+    private boolean exportPrevious;
     private static LASRecompActivity self;
 
     @Override
@@ -221,6 +226,94 @@ public class LASRecompActivity extends SDLActivity {
         });
     }
 
+    // Called only from prelaunch settings. Native code holds PLAY until the picker/worker completes.
+    // 0: folder import, 1: ZIP import, 2: ZIP export, 3: previous saves ZIP export.
+    public static void transferSaves(String path, int mode) {
+        LASRecompActivity activity = self;
+        activity.runOnUiThread(() -> {
+            activity.saveTarget = new File(path);
+            activity.exportPrevious = mode == 3;
+            Runnable pick = () -> {
+                try {
+                    Intent intent;
+                    int request;
+                    if (mode == 0) {
+                        intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+                        request = REQ_SAVE_FOLDER;
+                    } else {
+                        intent = new Intent(mode == 1 ? Intent.ACTION_OPEN_DOCUMENT : Intent.ACTION_CREATE_DOCUMENT);
+                        intent.addCategory(Intent.CATEGORY_OPENABLE);
+                        intent.setType(mode == 1 ? "*/*" : "application/zip");
+                        request = mode == 1 ? REQ_SAVE_ZIP : REQ_SAVE_EXPORT;
+                        if (mode != 1) intent.putExtra(Intent.EXTRA_TITLE, mode == 3 ? "Links-Awakening-previous-saves.zip" : "Links-Awakening-saves.zip");
+                    }
+                    activity.startActivityForResult(intent, request);
+                } catch (Exception e) {
+                    nativeSaveTransferDone("Could not open the save picker: " + e.getMessage());
+                }
+            };
+            if (mode < 2) {
+                new AlertDialog.Builder(activity).setTitle("Import saves?")
+                    .setMessage("This replaces all current save slots. A backup is kept and can be exported with Export previous saves.")
+                    .setPositiveButton("Continue", (dialog, which) -> pick.run())
+                    .setNegativeButton("Cancel", (dialog, which) -> nativeSaveTransferDone("Import cancelled."))
+                    .setOnCancelListener(dialog -> nativeSaveTransferDone("Import cancelled.")).show();
+            } else pick.run();
+        });
+    }
+
+    private void transferSaveFiles(Uri uri, int request, File target, boolean previous) {
+        File stage = null, archive = null;
+        try {
+            if (!target.getParentFile().isDirectory() && !target.getParentFile().mkdirs())
+                throw new IOException("Could not create the saves folder.");
+            SaveTransfer.recover(target);
+            if (request == REQ_SAVE_EXPORT) {
+                // Build locally first, so invalid saves never leave a partly built archive in the destination.
+                archive = File.createTempFile("save-export-", ".zip", getCacheDir());
+                try (OutputStream out = new FileOutputStream(archive)) {
+                    SaveTransfer.exportZip(previous ? SaveTransfer.previous(target) : target, out);
+                }
+                try (InputStream in = new FileInputStream(archive);
+                     OutputStream out = getContentResolver().openOutputStream(uri, "wt")) {
+                    SaveTransfer.copy(in, out, SaveTransfer.MAX_BYTES + (1 << 20));
+                }
+                nativeSaveTransferDone("Saves exported. Extract the ZIP into Link's Awakening's save folder in Eden, Yuzu or Ryujinx.");
+            } else {
+                stage = java.nio.file.Files.createTempDirectory(target.getParentFile().toPath(), ".save-import-").toFile();
+                if (request == REQ_SAVE_ZIP) {
+                    archive = File.createTempFile("save-import-", ".zip", getCacheDir());
+                    try (InputStream in = getContentResolver().openInputStream(uri); OutputStream out = new FileOutputStream(archive)) {
+                        SaveTransfer.copy(in, out, SaveTransfer.MAX_BYTES + (1 << 20));
+                    }
+                    SaveTransfer.unpack(archive, stage);
+                } else {
+                    List<Doc> docs = children(uri, DocumentsContract.getTreeDocumentId(uri));
+                    long total = 0;
+                    int count = 0;
+                    for (Doc doc : docs) {
+                        if (doc.dir || doc.name == null || !SaveTransfer.gameFile(doc.name)) continue;
+                        if (++count > SaveTransfer.MAX_FILES) throw new IOException("Too many save files.");
+                        File file = new File(stage, doc.name);
+                        if (file.exists()) throw new IOException("Duplicate save filename.");
+                        try (InputStream in = getContentResolver().openInputStream(DocumentsContract.buildDocumentUriUsingTree(uri, doc.id));
+                             OutputStream out = new FileOutputStream(file)) {
+                            total += SaveTransfer.copy(in, out, SaveTransfer.MAX_BYTES - total);
+                        }
+                    }
+                }
+                SaveTransfer.install(stage, target);
+                nativeSaveTransferDone("Saves imported. You can now press PLAY. Previous saves, if any, were backed up.");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "save transfer", e);
+            nativeSaveTransferDone("Save transfer failed: " + e.getMessage());
+        } finally {
+            try { if (stage != null) SaveTransfer.discard(stage); } catch (IOException e) { Log.w(TAG, "save staging cleanup", e); }
+            if (archive != null) archive.delete();
+        }
+    }
+
     // Back to the system's Vulkan driver: the chosen package and its unpacked copy go (from the next start on)
     public static void useSystemDriver() {
         new Thread(() -> {
@@ -263,6 +356,14 @@ public class LASRecompActivity extends SDLActivity {
 
     @Override
     protected void onActivityResult(int req, int result, Intent data) {
+        if (req == REQ_SAVE_FOLDER || req == REQ_SAVE_ZIP || req == REQ_SAVE_EXPORT) {
+            Uri uri = result == Activity.RESULT_OK && data != null ? data.getData() : null;
+            File target = saveTarget;
+            boolean previous = exportPrevious;
+            if (uri == null || target == null) nativeSaveTransferDone("Save transfer cancelled.");
+            else new Thread(() -> transferSaveFiles(uri, req, target, previous), "save-transfer").start();
+            return;
+        }
         if (req == REQ_GAME) {
             Uri tree = result == Activity.RESULT_OK && data != null ? data.getData() : null;
             if (tree == null) nativeImportDone(1);

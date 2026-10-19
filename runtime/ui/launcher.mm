@@ -380,6 +380,51 @@ done:
 #include <jni.h>
 std::atomic<bool> g_android_imported{false};
 static std::string g_driver_msg;
+static std::string g_save_msg;
+static std::atomic<bool> g_save_busy{false};
+
+static std::string save_transfer_path() {
+    const char *override = getenv("LARECOMP_SAVE_DIR");
+    std::string dir = override ? override : g_settings.rando_seed[0]
+        ? std::string("rando/") + g_settings.rando_seed + "/save" : "save";
+    if (dir.empty() || dir[0] != '/') dir = std::string(rt_data_root()) + "/" + dir;
+    return dir + "/save_0";
+}
+
+extern "C" JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeSaveTransferDone(JNIEnv *env, jclass, jstring message) {
+    const char *text = env->GetStringUTFChars(message, NULL);
+    pthread_mutex_lock(&g_lock);
+    g_save_msg = text ? text : "Save transfer failed.";
+    pthread_mutex_unlock(&g_lock);
+    if (text) env->ReleaseStringUTFChars(message, text);
+    g_save_busy = false;
+}
+
+static void transfer_saves(int mode) {
+    if (g_save_busy.exchange(true)) return;
+    pthread_mutex_lock(&g_lock);
+    g_save_msg = "Waiting for the save picker / transferring saves...";
+    pthread_mutex_unlock(&g_lock);
+    JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
+    jobject act = (jobject)SDL_GetAndroidActivity();
+    bool called = false;
+    if (env && act) {
+        jclass c = env->GetObjectClass(act);
+        jmethodID method = env->GetStaticMethodID(c, "transferSaves", "(Ljava/lang/String;I)V");
+        jstring path = env->NewStringUTF(save_transfer_path().c_str());
+        if (method && path) { env->CallStaticVoidMethod(c, method, path, mode); called = true; }
+        if (env->ExceptionCheck()) { env->ExceptionClear(); called = false; }
+        if (path) env->DeleteLocalRef(path);
+        env->DeleteLocalRef(c);
+        env->DeleteLocalRef(act);
+    }
+    if (!called) {
+        pthread_mutex_lock(&g_lock);
+        g_save_msg = "Could not open the save picker.";
+        pthread_mutex_unlock(&g_lock);
+        g_save_busy = false;
+    }
+}
 
 static void android_call(const char *method) {  // a static method of the activity
     JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
@@ -884,6 +929,28 @@ static void prelaunch_tab(float sc) {
         ImGui::Spacing();
     };
 #ifdef __ANDROID__
+    heading("Saves - Eden / Yuzu / Ryujinx");
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextDisabled("Import the folder containing savedata0.bin, or a ZIP of that folder. "
+                        "Export a ZIP to transfer your saves back to an emulator. Imports replace all save slots and keep a backup.");
+    ImGui::TextDisabled("Save set: %s", g_settings.rando_seed[0] ? g_settings.rando_seed : "Base game");
+    ImGui::BeginDisabled(g_save_busy.load());
+    if (ImGui::Button("Import save folder")) transfer_saves(0);
+    ImGui::SameLine();
+    if (ImGui::Button("Import save ZIP")) transfer_saves(1);
+    if (ImGui::Button("Export saves")) transfer_saves(2);
+    if (file_exists(save_transfer_path() + ".previous")) {
+        ImGui::SameLine();
+        if (ImGui::Button("Export previous saves")) transfer_saves(3);
+    }
+    ImGui::EndDisabled();
+    pthread_mutex_lock(&g_lock);
+    std::string save_msg = g_save_msg;
+    pthread_mutex_unlock(&g_lock);
+    if (!save_msg.empty()) ImGui::TextWrapped("%s", save_msg.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+    ImGui::Spacing();
     heading("Vulkan driver");
     {
         const char *d = getenv("LARECOMP_VK_DRIVER");
@@ -1288,7 +1355,11 @@ extern "C" void launcher_run(const char *root) {
                 if (!focused_once) { ImGui::SetKeyboardFocusHere(); focused_once = true; }
                 ImVec2 play_at = ImGui::GetCursorScreenPos();
                 const char *name = strstr(label, "\xe2\x80\xb9") + 4, *name_end = strstr(label, " \xe2\x80\xba");
-                bool pressed = menu_item(label, status.empty(), &hov, name,
+                bool can_play = status.empty();
+#ifdef __ANDROID__
+                can_play = can_play && !g_save_busy.load();
+#endif
+                bool pressed = menu_item(label, can_play, &hov, name,
                                          choice ? IM_COL32(250, 250, 255, 255) : IM_COL32(246, 232, 176, 255),
                                          name_end);  // (the choice keeps its colour when hovered: "Rando: <seed>" white,
                                                      //  "Vanilla" vanilla cream; the arrows stay white)
@@ -1309,6 +1380,9 @@ extern "C" void launcher_run(const char *root) {
                 }
                 // first PLAY ever: the aspect ratio question, then how to reach our menu, then the game
                 if (g_play_pending && status.empty()) pressed = true, g_play_pending = false;
+#ifdef __ANDROID__
+                if (g_save_busy.load()) pressed = false;
+#endif
                 if (pressed) {
                     if (!g_settings.aspect_asked) ImGui::OpenPopup("##aspect");
                     else if (!g_settings.menu_tip_seen) ImGui::OpenPopup("##menutip");

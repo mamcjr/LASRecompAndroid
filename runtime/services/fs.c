@@ -582,6 +582,20 @@ static Service *open_host_fs(const char *sub) {
         g_save_dir = seed_save;
     }
     snprintf(fs->root, sizeof fs->root, "%s/%s", g_save_dir, sub);
+#ifdef __ANDROID__
+    // Save import swaps directories before PLAY. Recover if Android killed the process between the two renames.
+    if (!strcmp(sub, "save_0")) {
+        char previous[1200];
+        snprintf(previous, sizeof previous, "%s.previous", fs->root);
+        struct stat st;
+        if (stat(fs->root, &st) != 0 && errno == ENOENT && stat(previous, &st) == 0) {
+            if (rename(previous, fs->root) != 0) {
+                LOG("[fs] cannot restore save backup %s: %s\n", previous, strerror(errno));
+                abort();  // do not silently create empty saves over an unrecovered import
+            }
+        }
+    }
+#endif
     char cmd[1200];
     snprintf(cmd, sizeof cmd, "%s", fs->root);
     for (char *q = cmd + 1; *q; q++)
