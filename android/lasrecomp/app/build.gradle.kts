@@ -20,8 +20,8 @@ android {
         applicationId = "com.lasrecomp.android"
         minSdk = 30
         targetSdk = 36
-        versionCode = 10
-        versionName = "0.3.6"
+        versionCode = 11
+        versionName = "0.3.7"
         ndk {
             abiFilters += "arm64-v8a"
         }

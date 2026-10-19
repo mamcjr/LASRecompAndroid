@@ -471,13 +471,14 @@ static void adpf_work(int slot, uint64_t work_ns, uint64_t target_ns, uint64_t g
     }
     if (s_split < 0) s_split = getenv("LARECOMP_ADPF_SPLIT") != NULL;
 
-    // Target duration adjustment: LARECOMP_ADPF_TARGET_US or LARECOMP_ADPF_MARGIN (pct)
+    // Target duration adjustment: default 20% margin (headroom for the governor to ramp clocks up before missing
+    // vsync, target ~13.3 ms for 60 fps; LARECOMP_ADPF_MARGIN=n to change, =0 to disable; LARECOMP_ADPF_TARGET_US=n)
     static int target_override_us = -1, margin_pct = -1;
     if (target_override_us < 0) {
         const char *to = getenv("LARECOMP_ADPF_TARGET_US");
         target_override_us = to ? atoi(to) : 0;
         const char *mp = getenv("LARECOMP_ADPF_MARGIN");
-        margin_pct = mp ? atoi(mp) : 0;
+        margin_pct = mp ? atoi(mp) : 20;
     }
     if (target_override_us > 0) target_ns = (uint64_t)target_override_us * 1000ull;
     else if (margin_pct > 0 && margin_pct < 100) target_ns = target_ns * (100 - margin_pct) / 100;
