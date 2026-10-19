@@ -77,7 +77,7 @@ Testado em um **POCO F7 Ultra** (Snapdragon 8 Elite / Adreno 830, Android 16) co
   menu;
 - controles Bluetooth (testado com um GameSir X4 Aileron), com botões remapeáveis na aba Controls;
 - uma opção de taxa de quadros (aba Video): Auto (a escolha de 30 / 60 do próprio jogo), 30 fps ou 60 fps;
-- um overlay de desempenho (fps, tempo de quadro, CPU, GPU, temperatura, bateria), e sem tela preta quando o app
+- um overlay de desempenho (fps, tempo de quadro, frequência e uso de CPU, diagnóstico do ADPF e núcleos por thread, GPU, memória, temperatura, bateria), e sem tela preta quando o app
   volta do segundo plano. O menu do jogo deixa de fora as opções do desktop (tela cheia, 4K / 8K, randomizer).
 
 ### O que deixou rápido
@@ -101,7 +101,7 @@ No lado da CPU:
   corrida no sistema de tarefas (um crash). Agora essas threads se revezam aqui também, e os outros núcleos do jogo
   seguem em paralelo;
 - **controle de ritmo de quadros** que distingue os quadros de 30 fps do próprio jogo de um quadro de 60 fps que
-  atrasou, as dicas de desempenho do Android mirando 60 fps nas duas threads, e correções de três condições de
+  atrasou, dicas de desempenho do Android (ADPF) com sessão unificada para as duas threads mirando 60 fps, e correções de três condições de
   corrida de sincronização no kernel emulado;
 - o runtime é compilado com otimização, os fences de GPU do jogo não esperam mais o compositor, e o trabalho por draw
   é guardado em cache.

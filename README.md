@@ -76,7 +76,7 @@ Tested on a **POCO F7 Ultra** (Snapdragon 8 Elite / Adreno 830, Android 16) with
   size, opacity) in the in-game menu's Controls tab; the Android back button opens the menu;
 - Bluetooth controllers (tested with a GameSir X4 Aileron), remappable in the Controls tab;
 - a frame rate setting (Video tab): Auto (the game's own 30 / 60 choice), 30 fps or 60 fps;
-- a performance overlay (fps, frame time, CPU, GPU, temperature, battery), and no black screen after the app comes
+- a performance overlay (fps, frame time, CPU clusters, ADPF session status and thread times/cores, GPU, memory, temperature, battery), and no black screen after the app comes
   back from the background. The in-game menu leaves out the desktop's options (fullscreen, 4K / 8K, randomizer).
 
 ### What made it fast
@@ -99,7 +99,7 @@ On the CPU side:
   they take turns; truly parallel, a faster main thread exposed a race in its job system (a crash). Those threads now
   take turns here too, while the game's other cores stay parallel;
 - **frame pacing** that tells the game's own 30 fps frames from a 60 fps frame that ran late, Android's performance
-  hints aimed at 60 fps for both threads, and fixes to three thread-synchronization races in the emulated kernel;
+  hints (ADPF) with a single unified session for both threads aimed at 60 fps, and fixes to three thread-synchronization races in the emulated kernel;
 - the runtime is built optimized, the game's GPU fences no longer wait for the compositor, and per-draw work is
   cached.
 
