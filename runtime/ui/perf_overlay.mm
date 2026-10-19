@@ -82,6 +82,29 @@ void perf_overlay_draw(ImVec2 display, float scale) {
     ImGui::Text("CPU %s MHz", cpu);
     ImGui::SameLine();
     ImGui::TextDisabled("app %.0f%%", ds.cpu_pct);
+
+    PlatAdpfStats adpf;
+    plat_adpf_stats(&adpf);
+    if (adpf.state > 0) {
+        ImGui::TextColored(grade(adpf.target_ms - adpf.work_ms, 3.0f, 0.0f), "ADPF on (%d thr%s)",
+                           adpf.threads, adpf.sessions > 1 ? ", split" : "");
+        if (adpf.errors > 0) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.35f, 1), "err %d (%d)", adpf.errors, adpf.last_error);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("tgt %.1f ms", adpf.target_ms);
+        if (adpf.render_ms > 0) {
+            ImGui::TextDisabled("    game %.1f ms (cpu %d)  render %.1f ms (cpu %d)",
+                                adpf.game_ms, adpf.game_cpu, adpf.render_ms, adpf.render_cpu);
+        } else {
+            ImGui::TextDisabled("    game %.1f ms (cpu %d)", adpf.game_ms, adpf.game_cpu);
+        }
+    } else if (adpf.state == 0) {
+        ImGui::TextDisabled("ADPF: init...");
+    } else {
+        ImGui::TextDisabled("ADPF: %s", adpf.state == -2 ? "disabled" : "unavailable");
+    }
     ImGui::Text("GPU %s", vk_gpu_desc());
     ImGui::TextColored(grade(100 - wait_pct, 50, 20), "    waiting on the GPU %.0f%%", wait_pct);
     ImGui::Text("RAM app %u MB", ds.rss_mb);

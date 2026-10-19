@@ -215,7 +215,8 @@ void vk_pace_frame(void) {
         last_busy = total;
         // (per presented frame, against 60 fps's budget in either mode: a 30 fps frame renders one image too - its GPU
         // time is what a 60 fps frame would take, and halved it looked comfortable: the clock stayed low)
-        plat_frame_work_gpu((uint64_t)(busy * 1e6), no_gpu ? 0 : gpu, follow && pace_slow ? 33333333ull : 16666667ull);
+        plat_frame_work_gpu((uint64_t)(busy * 1e6), no_gpu ? 0 : gpu, follow && pace_slow ? 33333333ull : 16666667ull,
+                            (uint64_t)(game_busy * 1e6));
     }
 #endif
 #ifdef __ANDROID__

@@ -83,7 +83,22 @@ typedef struct {
 void plat_device_stats(PlatDeviceStats *out);
 // ADPF: the calling thread's work for a frame (busy, ns) and its target (the frame time it must fit)
 void plat_frame_work(uint64_t work_ns, uint64_t target_ns);
-void plat_frame_work_gpu(uint64_t cpu_ns, uint64_t gpu_ns, uint64_t target_ns);  // (Android: the GPU's time too, API 35+)
+// (the presenting thread: cpu_ns is the frame's critical path - the longer of its own and the render thread's work -,
+// game_ns its own part, for the overlay; the GPU's time too, API 35+)
+void plat_frame_work_gpu(uint64_t cpu_ns, uint64_t gpu_ns, uint64_t target_ns, uint64_t game_ns);
+// ADPF state for the performance overlay (platform/android.c)
+typedef struct {
+    int state;                 // -2 disabled via env, -1 not available, 0 not yet, 1 on
+    int sessions;              // 1: one session for both threads (default), 2: one per thread (LARECOMP_ADPF_SPLIT=1)
+    int threads;               // threads in the session
+    int errors;                // failed reports
+    int last_error;            // last error code
+    int recreated;             // sessions created / updated
+    float target_ms, work_ms;  // the last target and reported work (the frame's critical path)
+    float game_ms, render_ms;  // each thread's work per frame, moving average
+    int game_cpu, render_cpu;  // the core each last ran on (-1: unknown)
+} PlatAdpfStats;
+void plat_adpf_stats(PlatAdpfStats *out);
 #ifdef __ANDROID__
 // A new thread back on every core: threads inherit the creating thread's affinity, and the presenting thread is
 // pinned to the fastest cores (platform/android.c)

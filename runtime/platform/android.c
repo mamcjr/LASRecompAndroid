@@ -418,16 +418,24 @@ static void pin_to_fastest_cores(void) {
     LOG("[android] presenting thread on the %d fastest cores (%ld MHz): %s\n", k, best / 1000, r ? strerror(errno) : "ok");
 }
 
-// One session per thread that reports (slot 0: the presenting thread, plat_frame_work; slot 1: the render thread,
-// plat_render_work - LARECOMP_VK_ASYNC, which the system otherwise left on a middling clock: its translation took
-// twice as long as on the game's thread)
+// One session for both threads by default (the presenting thread and the render thread; LARECOMP_ADPF_SPLIT=1 for
+// two separate sessions). The presenting thread reports the frame's critical path (max of both threads' busy times).
 typedef struct AWorkDuration AWorkDuration;
-static void adpf_work(int slot, uint64_t work_ns, uint64_t target_ns, uint64_t gpu_ns) {
-    static int loaded;  // 0 untried, 1 on, -1 off
+static int loaded;  // 0 untried, 1 on, -1 off, -2 disabled
+static int s_split = -1;
+static int s_errors, s_last_error, s_recreated;
+static int32_t s_presenting_tid, s_render_tid;
+static int s_session_threads;
+static float s_target_ms, s_work_ms, s_game_ms, s_render_ms;
+static int s_game_cpu = -1, s_render_cpu = -1;
+
+static void adpf_work(int slot, uint64_t work_ns, uint64_t target_ns, uint64_t gpu_ns, uint64_t game_ns) {
     static APerformanceHintManager *(*get_manager)(void);
     static APerformanceHintSession *(*create)(APerformanceHintManager *, const int32_t *, size_t, int64_t);
     static int (*report)(APerformanceHintSession *, int64_t);
     static int (*retarget)(APerformanceHintSession *, int64_t);
+    static int (*set_threads)(APerformanceHintSession *, const int32_t *, size_t);
+    static void (*close_session)(APerformanceHintSession *);
     static int state[2];  // per slot: 0 untried, 1 on, -1 off
     static APerformanceHintSession *session[2];
     static uint64_t target[2];
@@ -439,8 +447,8 @@ static void adpf_work(int slot, uint64_t work_ns, uint64_t target_ns, uint64_t g
     static AWorkDuration *wd;
     if (loaded < 0 || state[slot] < 0) return;
     if (!loaded) {
+        if (getenv("LARECOMP_NO_ADPF")) { loaded = -2; return; }
         loaded = -1;
-        if (getenv("LARECOMP_NO_ADPF")) return;
         void *lib = dlopen("libandroid.so", RTLD_NOW);
         if (!lib) return;
         get_manager = (APerformanceHintManager * (*)(void)) dlsym(lib, "APerformanceHint_getManager");
@@ -448,6 +456,8 @@ static void adpf_work(int slot, uint64_t work_ns, uint64_t target_ns, uint64_t g
             dlsym(lib, "APerformanceHint_createSession");
         report = (int (*)(APerformanceHintSession *, int64_t))dlsym(lib, "APerformanceHint_reportActualWorkDuration");
         retarget = (int (*)(APerformanceHintSession *, int64_t))dlsym(lib, "APerformanceHint_updateTargetWorkDuration");
+        set_threads = (int (*)(APerformanceHintSession *, const int32_t *, size_t))dlsym(lib, "APerformanceHint_setThreads");
+        close_session = (void (*)(APerformanceHintSession *))dlsym(lib, "APerformanceHint_closeSession");
         if (!get_manager || !create || !report || !retarget) return;
         wd_create = (AWorkDuration * (*)(void)) dlsym(lib, "AWorkDuration_create");
         wd_start = (void (*)(AWorkDuration *, int64_t))dlsym(lib, "AWorkDuration_setWorkPeriodStartTimestampNanos");
@@ -459,33 +469,166 @@ static void adpf_work(int slot, uint64_t work_ns, uint64_t target_ns, uint64_t g
         LOG("[android] performance hints with the GPU's time: %s\n", wd ? "yes" : "no (API < 35)");
         loaded = 1;
     }
-    if (!state[slot]) {
-        state[slot] = -1;
-        APerformanceHintManager *m = get_manager();
-        if (slot == 0) pin_to_fastest_cores();
-        int32_t tid = (int32_t)gettid();
-        session[slot] = m ? create(m, &tid, 1, (int64_t)target_ns) : NULL;
-        LOG("[android] performance hint session (%s thread): %s\n", slot ? "render" : "presenting",
-            session[slot] ? "on" : "not available");
+    if (s_split < 0) s_split = getenv("LARECOMP_ADPF_SPLIT") != NULL;
+
+    // Target duration adjustment: LARECOMP_ADPF_TARGET_US or LARECOMP_ADPF_MARGIN (pct)
+    static int target_override_us = -1, margin_pct = -1;
+    if (target_override_us < 0) {
+        const char *to = getenv("LARECOMP_ADPF_TARGET_US");
+        target_override_us = to ? atoi(to) : 0;
+        const char *mp = getenv("LARECOMP_ADPF_MARGIN");
+        margin_pct = mp ? atoi(mp) : 0;
+    }
+    if (target_override_us > 0) target_ns = (uint64_t)target_override_us * 1000ull;
+    else if (margin_pct > 0 && margin_pct < 100) target_ns = target_ns * (100 - margin_pct) / 100;
+
+    if (slot == 0) {  // Presenting thread (game's main loop)
+        s_presenting_tid = (int32_t)gettid();
+        s_game_cpu = sched_getcpu();
+        float gms = (float)(game_ns ? game_ns : work_ns) / 1e6f;
+        s_game_ms = s_game_ms > 0 ? s_game_ms * 0.9f + gms * 0.1f : gms;
+        s_work_ms = (float)work_ns / 1e6f;
+        s_target_ms = (float)target_ns / 1e6f;
+    } else {          // Render thread (Vulkan command translation)
+        s_render_tid = (int32_t)gettid();
+        s_render_cpu = sched_getcpu();
+        float rms = (float)work_ns / 1e6f;
+        s_render_ms = s_render_ms > 0 ? s_render_ms * 0.9f + rms * 0.1f : rms;
+    }
+
+    APerformanceHintManager *m = get_manager();
+    if (!m) return;
+
+    if (!s_split) {
+        // --- Single session mode (both threads in session[0]) ---
+        if (!session[0]) {
+            if (slot == 0) pin_to_fastest_cores();
+            int32_t tids[2];
+            int ntids = 0;
+            if (s_presenting_tid > 0) tids[ntids++] = s_presenting_tid;
+            if (s_render_tid > 0) tids[ntids++] = s_render_tid;
+            if (ntids > 0) {
+                session[0] = create(m, tids, (size_t)ntids, (int64_t)target_ns);
+                if (session[0]) {
+                    s_session_threads = ntids;
+                    target[0] = target_ns;
+                    state[0] = 1;
+                    LOG("[android] performance hint single session (%d thread%s): on\n", ntids, ntids > 1 ? "s" : "");
+                } else {
+                    s_errors++;
+                    s_last_error = errno;
+                }
+            }
+        } else if (s_session_threads < 2 && s_presenting_tid > 0 && s_render_tid > 0) {
+            // Add the second thread to the active session
+            int32_t tids[2] = {s_presenting_tid, s_render_tid};
+            int ok = 0;
+            if (set_threads) {
+                int r = set_threads(session[0], tids, 2);
+                if (r == 0) { ok = 1; s_session_threads = 2; }
+                else { s_errors++; s_last_error = r; }
+            }
+            if (!ok) {
+                if (close_session) close_session(session[0]);
+                session[0] = create(m, tids, 2, (int64_t)target_ns);
+                if (session[0]) {
+                    s_session_threads = 2;
+                    s_recreated++;
+                    LOG("[android] performance hint session recreated with 2 threads: on\n");
+                } else {
+                    s_errors++;
+                    s_last_error = errno;
+                }
+            }
+        }
+        if (slot != 0 || !session[0]) return;  // Render thread doesn't report separately in single-session mode
+
+        if (target_ns != target[0]) {
+            int r = retarget(session[0], (int64_t)target_ns);
+            if (r != 0) { s_errors++; s_last_error = r; }
+            target[0] = target_ns;
+        }
+        if (gpu_ns && wd) {
+            int64_t now = (int64_t)plat_now_ns(), cpu = (int64_t)(work_ns ? work_ns : 1), gpu = (int64_t)gpu_ns;
+            wd_start(wd, now - (cpu > gpu ? cpu : gpu));
+            wd_total(wd, cpu > gpu ? cpu : gpu);
+            wd_cpu(wd, cpu);
+            wd_gpu(wd, gpu);
+            int r = report2(session[0], wd);
+            if (r != 0) {
+                s_errors++;
+                s_last_error = r;
+                static bool told;
+                if (!told) { told = true; LOG("[android] performance hint with GPU: error %d\n", r); }
+            } else {
+                return;
+            }
+        }
+        if (work_ns) {
+            int r = report(session[0], (int64_t)work_ns);
+            if (r != 0) {
+                s_errors++;
+                s_last_error = r;
+                static bool told;
+                if (!told) { told = true; LOG("[android] performance hint report error %d\n", r); }
+            }
+        }
+    } else {
+        // --- Split session mode (one session per thread) ---
+        if (!state[slot]) {
+            state[slot] = -1;
+            if (slot == 0) pin_to_fastest_cores();
+            int32_t tid = (int32_t)gettid();
+            session[slot] = create(m, &tid, 1, (int64_t)target_ns);
+            LOG("[android] performance hint session (%s thread): %s\n", slot ? "render" : "presenting",
+                session[slot] ? "on" : "not available");
+            if (!session[slot]) { s_errors++; s_last_error = errno; return; }
+            target[slot] = target_ns;
+            state[slot] = 1;
+            s_session_threads = (session[0] ? 1 : 0) + (session[1] ? 1 : 0);
+        }
         if (!session[slot]) return;
-        target[slot] = target_ns;
-        state[slot] = 1;
+        if (target_ns != target[slot]) {
+            int r = retarget(session[slot], (int64_t)target_ns);
+            if (r != 0) { s_errors++; s_last_error = r; }
+            target[slot] = target_ns;
+        }
+        if (slot == 0 && gpu_ns && wd) {
+            int64_t now = (int64_t)plat_now_ns(), cpu = (int64_t)(work_ns ? work_ns : 1), gpu = (int64_t)gpu_ns;
+            wd_start(wd, now - (cpu > gpu ? cpu : gpu));
+            wd_total(wd, cpu > gpu ? cpu : gpu);
+            wd_cpu(wd, cpu);
+            wd_gpu(wd, gpu);
+            int r = report2(session[slot], wd);
+            if (r != 0) { s_errors++; s_last_error = r; }
+            else return;
+        }
+        if (work_ns) {
+            int r = report(session[slot], (int64_t)work_ns);
+            if (r != 0) { s_errors++; s_last_error = r; }
+        }
     }
-    if (target_ns != target[slot]) { retarget(session[slot], (int64_t)target_ns); target[slot] = target_ns; }
-    if (gpu_ns && wd) {
-        int64_t now = (int64_t)plat_now_ns(), cpu = (int64_t)(work_ns ? work_ns : 1), gpu = (int64_t)gpu_ns;
-        wd_start(wd, now - (cpu > gpu ? cpu : gpu));
-        wd_total(wd, cpu > gpu ? cpu : gpu);
-        wd_cpu(wd, cpu);
-        wd_gpu(wd, gpu);
-        int r = report2(session[slot], wd);
-        static bool told;
-        if (r && !told) { told = true; LOG("[android] performance hint with the GPU's time: error %d\n", r); }
-        if (!r) return;
-    }
-    if (work_ns) report(session[slot], (int64_t)work_ns);
 }
 
-void plat_frame_work(uint64_t work_ns, uint64_t target_ns) { adpf_work(0, work_ns, target_ns, 0); }
-void plat_frame_work_gpu(uint64_t cpu_ns, uint64_t gpu_ns, uint64_t target_ns) { adpf_work(0, cpu_ns, target_ns, gpu_ns); }
-void plat_render_work(uint64_t work_ns, uint64_t target_ns) { adpf_work(1, work_ns, target_ns, 0); }
+void plat_frame_work(uint64_t work_ns, uint64_t target_ns) { adpf_work(0, work_ns, target_ns, 0, work_ns); }
+void plat_frame_work_gpu(uint64_t cpu_ns, uint64_t gpu_ns, uint64_t target_ns, uint64_t game_ns) {
+    adpf_work(0, cpu_ns, target_ns, gpu_ns, game_ns);
+}
+void plat_render_work(uint64_t work_ns, uint64_t target_ns) { adpf_work(1, work_ns, target_ns, 0, 0); }
+
+void plat_adpf_stats(PlatAdpfStats *out) {
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    out->state = loaded;
+    out->sessions = s_split ? 2 : 1;
+    out->threads = s_session_threads;
+    out->errors = s_errors;
+    out->last_error = s_last_error;
+    out->recreated = s_recreated;
+    out->target_ms = s_target_ms;
+    out->work_ms = s_work_ms;
+    out->game_ms = s_game_ms;
+    out->render_ms = s_render_ms;
+    out->game_cpu = s_game_cpu;
+    out->render_cpu = s_render_cpu;
+}
