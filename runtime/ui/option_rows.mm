@@ -281,8 +281,9 @@ bool opt_radio(const char *label, bool selected, const char *desc) {
 
 bool opt_action(const char *label, const char *value, const char *desc, bool upper) {
 #ifdef __ANDROID__
-    touch_begin(label, desc);
-    bool clicked = ImGui::Button(value && *value ? value : "Open", ImVec2(-1, 0));
+    bool has_value = value && *value;
+    touch_begin(label, desc, has_value);
+    bool clicked = ImGui::Button(has_value ? value : label, ImVec2(-1, 0));
     touch_end(); return clicked;
 #else
     return row(label, value ? value : "", false, desc, upper) == 2;

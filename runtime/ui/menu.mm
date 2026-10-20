@@ -585,18 +585,20 @@ static void tab_quit(float scale, bool in_game) {
     snprintf(d1, sizeof d1, "Leaves the game and goes back to the LAS Recomp start screen.%s", lost);
     snprintf(d2, sizeof d2, "Closes LAS Recomp.%s", lost);
 #ifdef __ANDROID__
-    const char *quit_app = "Close the App", *quit_app_yes = "Yes, close the App";
+    const char *quit_app = "Close app", *quit_app_yes = "Close app";
+    const char *quit_start = "Return to start", *quit_start_yes = "Return to start";
 #else
     const char *quit_app = "Quit to Desktop", *quit_app_yes = "Yes, quit to Desktop";
+    const char *quit_start = "Quit to Start Screen", *quit_start_yes = "Yes, quit to Start Screen";
 #endif
     opt_begin("##quit", scale);
-    opt_section("Quit");
+    opt_section(ask ? "Confirm exit" : "Quit");
     if (!ask) {
         if (!in_game) opt_disable_next();  // (already on it)
-        if (opt_action("Quit to Start Screen", "", in_game ? d1 : "You're on the start screen.")) ask = 1;
+        if (opt_action(quit_start, "", in_game ? d1 : "You're on the start screen.")) ask = 1;
         if (opt_action(quit_app, "", d2)) ask = 2;
     } else {
-        if (opt_action(ask == 1 ? "Yes, quit to Start Screen" : quit_app_yes, "", ask == 1 ? d1 : d2)) {
+        if (opt_action(ask == 1 ? quit_start_yes : quit_app_yes, "", ask == 1 ? d1 : d2)) {
             settings_save();
             if (ask == 1) {
                 rt_request_reboot(2);

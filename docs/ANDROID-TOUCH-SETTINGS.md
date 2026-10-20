@@ -4,6 +4,8 @@ Android settings now use a category rail with Video, Audio, Controls and Saves &
 
 Android option pages use full-width controls with inline descriptions, larger dropdown entries, native checkboxes and numeric sliders. The touch-controls layout editor also uses full-width actions and sliders. A persistent Back to start / Back to game button sits below the scrolling content. The settings window uses 94% of the screen width.
 
+Action rows without a separate value put the action name on the button itself instead of showing a duplicate heading and a generic Open button. The Quit page uses short Return to start / Close app labels, an explicit Confirm exit heading and a Cancel button before leaving.
+
 Vertical touch drags scroll the category rail, option list, regular pages and dropdowns. After the movement threshold is exceeded, the active control is cancelled, including on release. Horizontal slider gestures are retained. Touch source information is preserved through the in-game event queue; the launcher already receives it through the SDL ImGui backend.
 
 PC validation:
