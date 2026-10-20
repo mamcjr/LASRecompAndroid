@@ -1348,6 +1348,7 @@ extern "C" void launcher_run(const char *root) {
                     g_menu_gap = -0.18f;
                     ImGui::SetCursorPosY(285 * s + 3 * pitch(0.35f) - 3 * pitch(g_menu_gap));
                 }
+#ifndef __ANDROID__
                 bool hov = false;
                 char label[192];
                 snprintf(label, sizeof label, "PLAY    \xe2\x80\xb9 %s%s \xe2\x80\xba", choice ? "Rando: " : "",
@@ -1373,18 +1374,28 @@ extern "C" void launcher_run(const char *root) {
                     if (in_y && m.x >= rx - pad && m.x <= rx + aw + pad) arrow = 1;
                     ImGui::PopFont();
                 }
+#endif
                 static bool focused_once;
                 if (!focused_once) { ImGui::SetKeyboardFocusHere(); focused_once = true; }
                 ImVec2 play_at = ImGui::GetCursorScreenPos();
+#ifndef __ANDROID__
                 const char *name = strstr(label, "\xe2\x80\xb9") + 4, *name_end = strstr(label, " \xe2\x80\xba");
+#else
+                ImGui::SetCursorPosX(x0);
+                play_at = ImGui::GetCursorScreenPos();
+#endif
                 bool can_play = status.empty();
 #ifdef __ANDROID__
                 can_play = can_play && !g_save_busy.load();
 #endif
+#ifdef __ANDROID__
+                bool pressed = menu_item("PLAY", can_play);
+#else
                 bool pressed = menu_item(label, can_play, &hov, name,
                                          choice ? IM_COL32(250, 250, 255, 255) : IM_COL32(246, 232, 176, 255),
                                          name_end);  // (the choice keeps its colour when hovered: "Rando: <seed>" white,
                                                      //  "Vanilla" vanilla cream; the arrows stay white)
+#endif
                 if (status.empty()) {  // PLAY twinkles now and then while the game is ready
                     ImGui::PushFont(g_font_menu);
                     float w = ImGui::CalcTextSize("PLAY").x, h = ImGui::CalcTextSize("PLAY").y;
@@ -1396,10 +1407,12 @@ extern "C" void launcher_run(const char *root) {
                     sparkle(dl, ImVec2(play_at.x + w - h * 0.32f, play_at.y + h * 0.08f), h * 0.11f, k2 * 0.8f, -t * 0.8f);
                 }
                 ImGui::SetWindowFontScale(1.0f);
+#ifndef __ANDROID__
                 if (pressed && arrow && ImGui::IsMouseReleased(0)) {  // (a mouse click on an arrow: cycle)
                     choice = (choice + arrow + (int)choices.size()) % (int)choices.size();
                     pressed = false;
                 }
+#endif
                 // first PLAY ever: the aspect ratio question, then how to reach our menu, then the game
                 if (g_play_pending && status.empty()) pressed = true, g_play_pending = false;
 #ifdef __ANDROID__
@@ -1416,6 +1429,7 @@ extern "C" void launcher_run(const char *root) {
                     else ImGui::OpenPopup("##menutip");
                 }
                 if (menu_tip(s)) play = true;
+#ifndef __ANDROID__
                 if (hov && status.empty()) {
                     if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft))
                         choice = (choice + (int)choices.size() - 1) % (int)choices.size();
@@ -1427,6 +1441,7 @@ extern "C" void launcher_run(const char *root) {
                     for (ImGuiKey k : {ImGuiKey_LeftArrow, ImGuiKey_RightArrow, ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight})
                         ImGui::SetKeyOwner(k, own);
                 }
+#endif
                 ImGui::SetCursorPosX(x0);
                 if (g_refocus == SETTINGS) ImGui::SetKeyboardFocusHere(), g_refocus = MAIN;  // (back from Settings: it
                 if (menu_item("SETTINGS", true)) {                                             //  stays selected)

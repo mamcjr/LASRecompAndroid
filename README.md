@@ -25,6 +25,8 @@ For the PC versions (Windows, macOS, Linux), features and the randomizer, see th
 
 ## New in 0.3.8
 
+Updated 0.3.8 APK: the start screen shows only **PLAY**, without the Vanilla/seed selector. The new background follows the game's toy-like miniature village style, with a small Android adventurer.
+
 ![Android adventurer icon](docs/icon/android-hero.png)
 
 ![Android island launcher background](docs/artwork/android-island.png)

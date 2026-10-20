@@ -25,6 +25,8 @@ Para as versões de PC (Windows, macOS, Linux), os recursos e o randomizer, veja
 
 ## Novidades da 0.3.8
 
+APK 0.3.8 atualizado: a tela inicial mostra apenas **PLAY**, sem o seletor Vanilla/seed. O novo fundo segue o visual de vila em miniatura do jogo, com um pequeno Android aventureiro.
+
 ![Ícone Android aventureiro](docs/icon/android-hero.png)
 
 ![Novo fundo da ilha com Android](docs/artwork/android-island.png)
