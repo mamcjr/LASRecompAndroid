@@ -429,7 +429,10 @@ static int s_session_threads;
 static float s_target_ms, s_work_ms, s_game_ms, s_render_ms;
 static int s_game_cpu = -1, s_render_cpu = -1;
 
-static void adpf_work(int slot, uint64_t work_ns, uint64_t target_ns, uint64_t gpu_ns, uint64_t game_ns) {
+static pthread_mutex_t adpf_lock = PTHREAD_MUTEX_INITIALIZER;
+
+// Caller holds adpf_lock, including initialization and session replacement.
+static void adpf_work_locked(int slot, uint64_t work_ns, uint64_t target_ns, uint64_t gpu_ns, uint64_t game_ns) {
     static APerformanceHintManager *(*get_manager)(void);
     static APerformanceHintSession *(*create)(APerformanceHintManager *, const int32_t *, size_t, int64_t);
     static int (*report)(APerformanceHintSession *, int64_t);
@@ -496,6 +499,9 @@ static void adpf_work(int slot, uint64_t work_ns, uint64_t target_ns, uint64_t g
         float rms = (float)work_ns / 1e6f;
         s_render_ms = s_render_ms > 0 ? s_render_ms * 0.9f + rms * 0.1f : rms;
     }
+
+    // Only the presenting thread owns the unified session; render publishes telemetry.
+    if (!s_split && slot != 0) return;
 
     APerformanceHintManager *m = get_manager();
     if (!m) return;
@@ -611,6 +617,12 @@ static void adpf_work(int slot, uint64_t work_ns, uint64_t target_ns, uint64_t g
     }
 }
 
+static void adpf_work(int slot, uint64_t work_ns, uint64_t target_ns, uint64_t gpu_ns, uint64_t game_ns) {
+    pthread_mutex_lock(&adpf_lock);
+    adpf_work_locked(slot, work_ns, target_ns, gpu_ns, game_ns);
+    pthread_mutex_unlock(&adpf_lock);
+}
+
 void plat_frame_work(uint64_t work_ns, uint64_t target_ns) { adpf_work(0, work_ns, target_ns, 0, work_ns); }
 void plat_frame_work_gpu(uint64_t cpu_ns, uint64_t gpu_ns, uint64_t target_ns, uint64_t game_ns) {
     adpf_work(0, cpu_ns, target_ns, gpu_ns, game_ns);
@@ -619,6 +631,7 @@ void plat_render_work(uint64_t work_ns, uint64_t target_ns) { adpf_work(1, work_
 
 void plat_adpf_stats(PlatAdpfStats *out) {
     if (!out) return;
+    pthread_mutex_lock(&adpf_lock);
     memset(out, 0, sizeof(*out));
     out->state = loaded;
     out->sessions = s_split ? 2 : 1;
@@ -632,4 +645,5 @@ void plat_adpf_stats(PlatAdpfStats *out) {
     out->render_ms = s_render_ms;
     out->game_cpu = s_game_cpu;
     out->render_cpu = s_render_cpu;
+    pthread_mutex_unlock(&adpf_lock);
 }

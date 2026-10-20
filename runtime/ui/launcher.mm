@@ -87,7 +87,11 @@ static void save_png(id<MTLTexture> tex, const char *path) {
 static const uint8_t BUILD_ID[8] = {0xae, 0x16, 0xf7, 0x1e, 0x00, 0x2a, 0xf8, 0xcb};  // Link's Awakening v1.0.0 main
 // The release tag this build is (also names the release files; Makefile / tools/bundle_macos.sh / make_dmg.sh read
 // it): beta_<n> until 1.0, then v<major>.<minor>.<patch>.
+#ifdef __ANDROID__
+#define LARECOMP_VERSION "v0.3.8"
+#else
 #define LARECOMP_VERSION "beta_4"
+#endif
 
 // ------------------------------------------------------------------ update check
 // The start screen asks GitHub for the project's releases once per launch (a background curl, which macOS and
@@ -567,6 +571,24 @@ typedef void *GpuDevice;
 static int g_bg_w, g_bg_h;
 
 static void load_background(GpuDevice dev) {
+#ifdef __ANDROID__
+    if (g_bg) return;
+    char background[1100];
+    if (rt_resource("launcher-background.png", "docs/artwork/android-island.png", background, sizeof background)) {
+        SDL_Surface *image = SDL_LoadPNG(background);
+        SDL_Surface *rgba = image ? SDL_ConvertSurface(image, SDL_PIXELFORMAT_RGBA32) : NULL;
+        if (image) SDL_DestroySurface(image);
+        if (rgba) {
+            std::vector<uint8_t> pixels((size_t)rgba->w * rgba->h * 4);
+            for (int y = 0; y < rgba->h; y++)
+                memcpy(pixels.data() + (size_t)y * rgba->w * 4, (uint8_t *)rgba->pixels + (size_t)y * rgba->pitch, (size_t)rgba->w * 4);
+            g_bg = vk_imgui_texture_rgba(pixels.data(), rgba->w, rgba->h);
+            g_bg_w = rgba->w; g_bg_h = rgba->h;
+            SDL_DestroySurface(rgba);
+            if (g_bg) return;
+        }
+    }
+#endif
 #ifdef LARECOMP_NO_FFMPEG
     (void)dev;  // (no movie decoder yet: the start screen without its background frame)
 #else
@@ -1424,7 +1446,10 @@ extern "C" void launcher_run(const char *root) {
             } else if (page == SETTINGS) {
                 // the in-game menu's tabs (runtime/ui/menu.mm), in a window like the in-game one; tabs that need a
                 // loaded game say so
-                float sc = ds.y / 1080.0f, w = fminf(ds.x * 0.9f, 1500 * sc), h = ds.y - 2 * 18 * sc;  // (all the height: a slim margin)
+                float sc = ds.y / 1080.0f, w = fminf(ds.x * 0.9f, 1500 * sc), h = ds.y - 2 * 18 * sc;
+#ifdef __ANDROID__
+                w = ds.x * 0.94f;
+#endif  // (all the height: a slim margin)
                 ImGui::GetWindowDrawList()->AddRectFilled(ImGui::GetWindowPos(), ImVec2(ImGui::GetWindowPos().x + ds.x,
                                                           ImGui::GetWindowPos().y + ds.y), IM_COL32(0, 0, 0, 110));
                 ImVec2 wp = ImGui::GetWindowPos();
@@ -1457,6 +1482,10 @@ extern "C" void launcher_run(const char *root) {
                 }
                 bool popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);  // (before the pages run, like the menu)
                 menu_tabs_draw(sc, g_font_small, g_font_menu, false, prelaunch_tab);
+#ifdef __ANDROID__
+                extern bool menu_settings_back_requested();
+                back |= menu_settings_back_requested();
+#endif
                 int cap_dev;
                 bind_capture_active(&cap_dev, NULL, NULL);
                 if (!popup && !typing && cap_dev < 0 && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&

@@ -50,23 +50,24 @@ static void touch_layout_draw(void) {
     ImGui::Spacing();
     bool can = touch_edit_available();
     ImGui::BeginDisabled(!can);
-    if (ImGui::Button("Edit touch layout")) touch_edit_begin();
+    if (ImGui::Button("Edit touch layout", ImVec2(-1, 0))) touch_edit_begin();
     ImGui::EndDisabled();
-    ImGui::SameLine();
     bool def = true;
     for (int i = 0; i < TOUCH_NCTL; i++) def &= g_settings.touch_pos[i][0] < 0;
     ImGui::BeginDisabled(def);
-    if (ImGui::Button("Reset layout to defaults")) touch_layout_reset();
+    if (ImGui::Button("Reset layout to defaults", ImVec2(-1, 0))) touch_layout_reset();
     ImGui::EndDisabled();
     if (!can) ImGui::TextDisabled(g_settings.touch_controls ? "Get into the game to edit the layout."
                                                             : "Turn on Touch controls (Video tab) to edit the layout.");
     ImGui::Spacing();
     float sz = g_settings.touch_scale * 100, op = g_settings.touch_opacity * 100;
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12);
-    if (ImGui::SliderFloat("Size", &sz, 60, 160, "%.0f%%")) g_settings.touch_scale = sz / 100;
+    ImGui::TextUnformatted("Button size");
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::SliderFloat("##Size", &sz, 60, 160, "%.0f%%")) g_settings.touch_scale = sz / 100;
     if (ImGui::IsItemDeactivatedAfterEdit()) settings_save();
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12);
-    if (ImGui::SliderFloat("Opacity", &op, 20, 100, "%.0f%%")) g_settings.touch_opacity = op / 100;
+    ImGui::TextUnformatted("Opacity");
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::SliderFloat("##Opacity", &op, 20, 100, "%.0f%%")) g_settings.touch_opacity = op / 100;
     if (ImGui::IsItemDeactivatedAfterEdit()) settings_save();
 }
 #endif

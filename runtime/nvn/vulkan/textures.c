@@ -503,6 +503,8 @@ static TexBackend *tex_backend(NvnTexture *t) {
     return b;
 }
 
+static void texture_snapshot_forget(TexBackend *b);
+
 void backend_texture_destroyed(NvnTexture *t) {
 #ifdef __ANDROID__
     extern void vk_async_drain(void);
@@ -514,6 +516,7 @@ void backend_texture_destroyed(NvnTexture *t) {
         vk_alias_texture_destroyed(t);
         live_remove(b);
         destroy_image(b);
+        texture_snapshot_forget(b);
         free(b->pending_rgba);
         free(b);
     }
@@ -578,6 +581,42 @@ static void upload_pending(TexBackend *b) {
                 vkCmdCopyBufferToImage(cb, s.buf, b->image, VK_IMAGE_LAYOUT_GENERAL, 1, &rg);
 }
 
+// Upload conversion runs on the render thread. Keep one scratch allocation instead of one per mip/layer.
+static uint8_t *upload_scratch;
+static size_t upload_scratch_size;
+static uint8_t *texture_scratch(size_t size) {
+    if (size > upload_scratch_size) {
+        uint8_t *next = realloc(upload_scratch, size);
+        if (!next) abort();
+        upload_scratch = next;
+        upload_scratch_size = size;
+    }
+    return upload_scratch;
+}
+
+// Exact comparisons replace repeated hashing for stable dynamic textures without relying on page tracking.
+// At most eight 1 MB snapshots. The hash tag prevents reuse after an upload bypassed this cache.
+typedef struct { TexBackend *owner; uint64_t hash, size; uint8_t *bytes; } TextureSnapshot;
+static TextureSnapshot texture_snapshots[8];
+static void texture_snapshot_forget(TexBackend *b) {
+    for (int i = 0; i < 8; i++) if (texture_snapshots[i].owner == b) texture_snapshots[i].owner = NULL;
+}
+static bool texture_unchanged(TexBackend *b, const uint8_t *mem, uint64_t size) {
+    static int enabled = -1;
+    if (enabled < 0) { const char *e = getenv("LARECOMP_TEX_SNAPSHOTS"); enabled = !e || atoi(e) != 0; }
+    if (!enabled || !size || size > (1u << 20)) return false;
+    TextureSnapshot *e = &texture_snapshots[((uintptr_t)b >> 6) & 7];
+    if (e->owner == b && e->hash == b->data_hash && e->size == size && !memcmp(e->bytes, mem, size)) return true;
+    if (e->size != size) {
+        uint8_t *next = realloc(e->bytes, size ? size : 1);
+        if (!next) return false;
+        e->bytes = next;
+    }
+    memcpy(e->bytes, mem, size);
+    e->owner = b; e->hash = b->data_hash; e->size = size;
+    return false;
+}
+
 uint64_t prof_tex_checks, prof_tex_samples, prof_tex_full, prof_tex_full_bytes, prof_tex_dyn, prof_tex_watch_skips;
 static void upload_texture(NvnTexture *t, TexBackend *b) {
     if (!t->addr || t->target == 10) return;
@@ -617,6 +656,7 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
             }
         }
     }
+    if (b->uploaded && b->dynamic && !always_full && !restyle && !periodic && texture_unchanged(b, mem, total)) return;
     if (!full && !restyle) {
         prof_tex_samples++;
         uint64_t sh = fnv_sample(mem, total);
@@ -647,13 +687,12 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
             LevelLayout l = tegra_level(&t->layout, lv);
             if (b->astc_bw) {  // blocks -> linear block rows -> RGBA8 texels
                 const uint8_t *src = (const uint8_t *)(uintptr_t)t->addr + layer * layer_size + l.offset;
-                uint8_t *blocks = malloc((uint64_t)l.wb * l.hb * 16);
+                uint8_t *blocks = texture_scratch((uint64_t)l.wb * l.hb * 16);
                 if (linear) for (uint32_t y = 0; y < l.hb; y++) memcpy(blocks + (uint64_t)y * l.wb * 16, src + (uint64_t)y * t->stride, l.wb * 16);
                 else tegra_deswizzle(src, blocks, l.wb, l.hb, 1, 16, l.block_height_log2, l.block_depth_log2);
                 if (b->tp > 0 && layer == 0) texpatch_apply(b->tp - 1, lv, blocks, l.w, l.h, l.wb * 16);
                 VkSpan s = vk_transient((uint64_t)l.w * l.h * 4, 16);
                 astc_decode_ldr(blocks, l.w, l.h, b->astc_bw, b->astc_bh, b->astc_srgb, s.ptr);
-                free(blocks);
                 VkBufferImageCopy rg = {.bufferOffset = s.off, .bufferRowLength = l.w, .bufferImageHeight = l.h,
                                         .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, lv, layer, 1},
                                         .imageExtent = {l.w < level_w(b, lv) ? l.w : level_w(b, lv), l.h < level_h(b, lv) ? l.h : level_h(b, lv), 1}};
@@ -666,13 +705,12 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
                 uint32_t bsize = fi->bpb, bpp;
                 bc_target(b->bc_vf, &bpp);
                 const uint8_t *src = (const uint8_t *)(uintptr_t)t->addr + layer * layer_size + l.offset;
-                uint8_t *blocks = malloc((uint64_t)l.wb * l.hb * bsize);
+                uint8_t *blocks = texture_scratch((uint64_t)l.wb * l.hb * bsize);
                 if (linear) for (uint32_t y = 0; y < l.hb; y++) memcpy(blocks + (uint64_t)y * l.wb * bsize, src + (uint64_t)y * t->stride, l.wb * bsize);
                 else tegra_deswizzle(src, blocks, l.wb, l.hb, 1, bsize, l.block_height_log2, l.block_depth_log2);
                 if (b->tp > 0 && layer == 0) texpatch_apply(b->tp - 1, lv, blocks, l.w, l.h, l.wb * bsize);
                 VkSpan s = vk_transient((uint64_t)l.wb * 4 * l.hb * 4 * bpp, 16);
                 bc_decode(b->bc_vf, blocks, l.wb, l.hb, bsize, s.ptr, bpp);
-                free(blocks);
                 VkBufferImageCopy rg = {.bufferOffset = s.off, .bufferRowLength = l.wb * 4, .bufferImageHeight = l.hb * 4,
                                         .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, lv, layer, 1},
                                         .imageExtent = {l.w < level_w(b, lv) ? l.w : level_w(b, lv), l.h < level_h(b, lv) ? l.h : level_h(b, lv), 1}};
@@ -686,7 +724,7 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
             bool expand = mf.expand_rgb && fi->bpb == 3;
             uint32_t out_row = expand ? l.wb * 4 : row;
             VkSpan s = vk_transient((uint64_t)out_row * l.hb * l.d, 16);
-            uint8_t *lin = expand ? malloc(sz) : s.ptr;
+            uint8_t *lin = expand ? texture_scratch(sz) : s.ptr;
             const uint8_t *src = (const uint8_t *)(uintptr_t)t->addr + layer * layer_size + l.offset;
             if (linear) {
                 for (uint32_t y = 0; y < l.hb; y++) memcpy(lin + (uint64_t)y * row, src + (uint64_t)y * t->stride, row);
@@ -698,7 +736,6 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
                 uint8_t *o = s.ptr;
                 uint64_t n = (uint64_t)l.wb * l.hb * l.d;
                 for (uint64_t i = 0; i < n; i++) { o[i * 4] = lin[i * 3]; o[i * 4 + 1] = lin[i * 3 + 1]; o[i * 4 + 2] = lin[i * 3 + 2]; o[i * 4 + 3] = 255; }
-                free(lin);
             }
             uint32_t w = l.w, hh = l.h, d = l.d;
             // the copy stays inside the image's level: a texture allocated at the internal resolution (16:9, render

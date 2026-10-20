@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "../nvn.h"
 #include "../../platform.h"
@@ -42,8 +43,9 @@ static int on = -1;
 static int ahead = 1;
 
 // The render thread's work for its last frame (requests run between two presents, ns): the frame pacer's other half
-static uint64_t frame_work, last_frame_work;
+static uint64_t frame_work, last_frame_work, frame_cpu, last_frame_cpu;
 uint64_t vk_async_frame_work_ns(void) { return __atomic_load_n(&last_frame_work, __ATOMIC_RELAXED); }
+uint64_t vk_async_frame_cpu_ns(void) { return __atomic_load_n(&last_frame_cpu, __ATOMIC_RELAXED); }
 
 void kernel_blocking_begin(void);        // kernel.c: core 0 to the game's other threads while a guest thread waits here
 void kernel_blocking_end(void);
@@ -65,25 +67,39 @@ bool vk_async_on(void) {
 
 bool vk_async_is_render_thread(void) { return started && pthread_equal(pthread_self(), render_thread); }
 
+// Thread CPU time excludes GPU fences, swapchain acquisition and time descheduled by Android.
+static uint64_t render_cpu_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
 static void *render_main(void *arg) {
     (void)arg;
     extern void plat_thread_unpin(void);
     plat_thread_unpin();
+    // Keep the established ADPF signal by default. CPU-only timing is an explicit experiment:
+    // excluding descheduling/waits can understate the work seen by Android's frequency governor.
+    const char *timing = getenv("LARECOMP_ADPF_CPU_TIME");
+    bool cpu_timing = timing && atoi(timing) != 0;
     pthread_mutex_lock(&q_lock);
     for (;;) {
         while (q_head == q_tail) pthread_cond_wait(&q_more, &q_lock);
         Req r = q[q_head % QN];
         pthread_mutex_unlock(&q_lock);
-        uint64_t t0 = plat_now_ns();
+        uint64_t t0 = plat_now_ns(), cpu0 = cpu_timing ? render_cpu_ns() : 0;
         if (r.type == REQ_EXEC) vk_execute_now(r.a);
         else if (r.type == REQ_PRESENT) vk_present_now((NvnTexture *)r.p);
         else if (r.type == REQ_FENCE) nvn_sync_set_seq(r.a, renderer_fence_seq());
-        frame_work += plat_now_ns() - t0;
+        uint64_t elapsed = plat_now_ns() - t0;
+        frame_cpu += cpu_timing ? render_cpu_ns() - cpu0 : elapsed;
+        frame_work += elapsed;
         if (r.type == REQ_PRESENT) {
             __atomic_store_n(&last_frame_work, frame_work, __ATOMIC_RELAXED);
             extern void plat_render_work(uint64_t work_ns, uint64_t target_ns);
-            plat_render_work(frame_work, 16666667ull);  // (ADPF: clocks for 60 fps on this thread too)
-            frame_work = 0;
+            __atomic_store_n(&last_frame_cpu, frame_cpu, __ATOMIC_RELAXED);
+            plat_render_work(frame_cpu, 16666667ull);  // (ADPF: clocks for 60 fps on this thread too)
+            frame_work = frame_cpu = 0;
         }
         pthread_mutex_lock(&q_lock);
         q_head++;

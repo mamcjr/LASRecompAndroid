@@ -24,6 +24,56 @@ void opt_focus_first(bool on) { g_focus_req = on; }
 static bool g_held;  // the last row's left / right has been held a while (steppers go faster)
 void opt_indent(int step) { g_indent = g_indent + step < 0 ? 0 : g_indent + step; }
 
+void ui_touch_scroll() {
+#ifdef __ANDROID__
+    ImGuiIO &io = ImGui::GetIO();
+    static ImGuiContext *context;
+    static ImGuiID owner;
+    static ImVec2 origin;
+    static float start_scroll;
+    static bool dragging;
+    ImGuiWindow *window = ImGui::GetCurrentWindow();
+    if (io.MouseSource != ImGuiMouseSource_TouchScreen) return;
+    if (ImGui::IsMouseClicked(0) && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+        (!ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) || (window->Flags & ImGuiWindowFlags_Popup))) {
+        context = ImGui::GetCurrentContext(); owner = window->ID;
+        origin = io.MousePos; start_scroll = window->Scroll.y; dragging = false;
+    }
+    if (context != ImGui::GetCurrentContext() || owner != window->ID) return;
+    float dx = io.MousePos.x - origin.x, dy = io.MousePos.y - origin.y;
+    if (io.MouseDown[0] && fabsf(dy) > ImGui::GetFontSize() * 0.4f && fabsf(dy) > fabsf(dx) * 1.3f && window->ScrollMax.y > 0)
+        dragging = true;
+    if (dragging) {
+        ImGui::ClearActiveID();  // a swipe must not activate the row when the finger lifts
+        ImGui::SetScrollY(start_scroll - dy);
+    }
+    if (!io.MouseDown[0]) { owner = 0; dragging = false; }
+#endif
+}
+
+#ifdef __ANDROID__
+static void touch_begin(const char *label, const char *desc, bool heading = true) {
+    ImGui::PushID(label);
+    ImGui::PushTextWrapPos(0);
+    if (heading) ImGui::TextUnformatted(label);
+    ImGui::PopTextWrapPos();
+    if (desc && *desc) {
+        ImGui::PushTextWrapPos(0);
+        ImGui::TextDisabled("%s", desc);
+        ImGui::PopTextWrapPos();
+    }
+    ImGui::BeginDisabled(g_next_disabled);
+    g_next_disabled = false;
+    if (g_take_first) { ImGui::SetKeyboardFocusHere(); g_take_first = false; }
+    ImGui::SetNextItemWidth(-1);
+}
+static void touch_end() {
+    ImGui::EndDisabled();
+    ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+    ImGui::PopID();
+}
+#endif
+
 void opt_begin(const char *id, float scale) {
     g_scale = scale;
     g_take_first = g_focus_req;
@@ -33,9 +83,15 @@ void opt_begin(const char *id, float scale) {
     g_desc_hover.clear(), g_desc_focus.clear();
     ImVec2 avail = ImGui::GetContentRegionAvail();
     ImGui::PushID(id);
-    ImGui::BeginChild("##rows", ImVec2(avail.x * 0.48f, avail.y), ImGuiChildFlags_None, ImGuiWindowFlags_NavFlattened);
+#ifdef __ANDROID__
+    float rows_width = avail.x;
+#else
+    float rows_width = avail.x * 0.48f;
+#endif
+    ImGui::BeginChild("##rows", ImVec2(rows_width, avail.y), ImGuiChildFlags_None, ImGuiWindowFlags_NavFlattened);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 4 * scale));  // (rows close)
     g_desc_first.clear();
+    ui_touch_scroll();
 }
 
 void opt_section(const char *title) {
@@ -121,6 +177,11 @@ static int row(const char *label, const std::string &value, bool changed, const 
 }
 
 bool opt_toggle(const char *label, bool *v, bool def, const char *desc) {
+#ifdef __ANDROID__
+    touch_begin(label, desc);
+    bool changed = ImGui::Checkbox(*v ? "Enabled" : "Disabled", v);
+    touch_end(); return changed;
+#endif
     if (!row(label, *v ? "On" : "Off", *v != def, desc)) return false;  // (any step flips it)
     *v = !*v;
     return true;
@@ -128,6 +189,19 @@ bool opt_toggle(const char *label, bool *v, bool def, const char *desc) {
 
 bool opt_choice(const char *label, int *v, const char *const *names, int n, int def, const char *desc, bool wrap) {
     int cur = *v >= 0 && *v < n ? *v : 0;
+#ifdef __ANDROID__
+    touch_begin(label, desc);
+    bool changed = false;
+    if (ImGui::BeginCombo("##value", names[cur])) {
+        ui_touch_scroll();
+        for (int i = 0; i < n; i++) {
+            if (ImGui::Selectable(names[i], i == cur, 0, ImVec2(0, ImGui::GetFontSize() * 2.1f))) { changed = *v != i; *v = i; }
+            if (i == cur) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    touch_end(); return changed;
+#endif
     int step = row(label, names[cur], cur != def, desc, true, true);
     if (!step) return false;
     int nv = cur + (step == 2 ? 1 : step);
@@ -138,6 +212,13 @@ bool opt_choice(const char *label, int *v, const char *const *names, int n, int 
 }
 
 bool opt_slider(const char *label, float *v, float lo, float hi, float step, float def, const char *fmt, const char *desc) {
+#ifdef __ANDROID__
+    touch_begin(label, desc);
+    float next = *v;
+    bool changed = ImGui::SliderFloat("##value", &next, lo, hi, fmt);
+    if (changed) *v = fminf(hi, fmaxf(lo, lo + roundf((next - lo) / step) * step));
+    touch_end(); return changed;
+#endif
     char buf[32];
     snprintf(buf, sizeof buf, fmt, *v);
     int s = row(label, buf, fabsf(*v - def) > step * 0.01f, desc, true, true);
@@ -150,6 +231,13 @@ bool opt_slider(const char *label, float *v, float lo, float hi, float step, flo
 
 bool opt_int(const char *label, int *v, int lo, int hi, int step, int def, const char *fmt, const char *desc,
              const char *lo_name) {
+#ifdef __ANDROID__
+    touch_begin(label, desc);
+    int next = *v;
+    bool changed = ImGui::SliderInt("##value", &next, lo, hi, lo_name && *v == lo ? lo_name : fmt);
+    if (changed) { next = lo + (int)roundf((float)(next - lo) / step) * step; *v = next < lo ? lo : next > hi ? hi : next; }
+    touch_end(); return changed;
+#endif
     char buf[48];
     if (lo_name && *v == lo) snprintf(buf, sizeof buf, "%s", lo_name);
     else snprintf(buf, sizeof buf, fmt, *v);
@@ -164,9 +252,22 @@ bool opt_int(const char *label, int *v, int lo, int hi, int step, int def, const
     return true;
 }
 
-bool opt_button(const char *label, const char *desc) { return row(label, "", false, desc) == 2; }
+bool opt_button(const char *label, const char *desc) {
+#ifdef __ANDROID__
+    touch_begin(label, desc, false);
+    bool clicked = ImGui::Button(label, ImVec2(-1, 0));
+    touch_end(); return clicked;
+#else
+    return row(label, "", false, desc) == 2;
+#endif
+}
 
 bool opt_radio(const char *label, bool selected, const char *desc) {
+#ifdef __ANDROID__
+    touch_begin(label, desc);
+    bool touch_chosen = ImGui::RadioButton(selected ? "Selected" : "Select", selected);
+    touch_end(); return touch_chosen && !selected;
+#endif
     bool off = g_next_disabled;
     bool chosen = row(label, "", false, desc) == 2;
     ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
@@ -179,13 +280,27 @@ bool opt_radio(const char *label, bool selected, const char *desc) {
 }
 
 bool opt_action(const char *label, const char *value, const char *desc, bool upper) {
+#ifdef __ANDROID__
+    touch_begin(label, desc);
+    bool clicked = ImGui::Button(value && *value ? value : "Open", ImVec2(-1, 0));
+    touch_end(); return clicked;
+#else
     return row(label, value ? value : "", false, desc, upper) == 2;
+#endif
 }
 
 static ImGuiID g_text_editing;  // the text row turned into a field (one at a time)
 bool opt_text_editing(const char *label) { return g_text_editing && g_text_editing == ImGui::GetID(label); }
 
 bool opt_text(const char *label, char *buf, size_t cap, const char *hint, const char *desc) {
+#ifdef __ANDROID__
+    ImGuiID touch_id = ImGui::GetID(label);
+    touch_begin(label, desc);
+    bool entered = ui_input_text("##text", buf, cap, ImGuiInputTextFlags_EnterReturnsTrue, hint, label);
+    if (ImGui::IsItemActive()) g_text_editing = touch_id;
+    else if (g_text_editing == touch_id) g_text_editing = 0;
+    touch_end(); return entered;
+#endif
     ImGuiID &editing = g_text_editing;
     static int focus;        // frames left to give it the keyboard focus
     ImGuiID id = ImGui::GetID(label);
@@ -207,6 +322,10 @@ void opt_end(void) {
     ImGui::PopStyleVar();
     if (const char *t = getenv("LARECOMP_OPT_SCROLL")) ImGui::SetScrollY(ImGui::GetScrollMaxY() * (float)atof(t));  // (test)
     ImGui::EndChild();
+#ifdef __ANDROID__
+    ImGui::PopID();
+    return;
+#endif
     // the description: the hovered row (mouse) wins, else the selected one (controller), else the last shown
     if (!g_desc_hover.empty()) g_desc_shown = g_desc_hover;
     else if (!g_desc_focus.empty()) g_desc_shown = g_desc_focus;

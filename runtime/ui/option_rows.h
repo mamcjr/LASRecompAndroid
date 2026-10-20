@@ -40,3 +40,6 @@ void opt_end(void);
 // the next page's first row takes the controller's cursor (Down on the tab bar: ImGui's own pick across the nested
 // panes was unreliable - some tabs went to a row further down, some nowhere). Cleared by the next opt_begin / call.
 void opt_focus_first(bool on);
+
+// Android: call inside each scrollable child before drawing its controls.
+void ui_touch_scroll();

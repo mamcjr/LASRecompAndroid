@@ -1,4 +1,5 @@
 import java.util.Properties
+import java.security.MessageDigest
 
 plugins {
     id("com.android.application")
@@ -20,8 +21,8 @@ android {
         applicationId = "com.lasrecomp.android"
         minSdk = 30
         targetSdk = 36
-        versionCode = 11
-        versionName = "0.3.7"
+        versionCode = 12
+        versionName = "0.3.8"
         ndk {
             abiFilters += "arm64-v8a"
         }
@@ -89,9 +90,10 @@ android {
 val prepareLasRecomp by tasks.registering {
     val smaa = repo.resolve("third_party/smaa/SMAA.hlsl")
     val font = repo.resolve("third_party/fonts/Baloo2/Baloo2-SemiBold.ttf")
-    val icon = repo.resolve("docs/icon/icon_1024.png")
+    val icon = repo.resolve("docs/icon/android-hero.png")
     val libs = listOf("libSDL3.so", "libshaderc_shared.so", "libavcodec.so", "libavformat.so", "libavutil.so", "libswscale.so")
-    inputs.files(smaa, font, icon)
+    val background = repo.resolve("docs/artwork/android-island.png")
+    inputs.files(smaa, font, icon, background, project.file("build.gradle.kts"))
     inputs.files(libs.map { deps.resolve("lib/$it") }.filter { it.exists() })
     if (deps.resolve("gen").exists()) inputs.dir(deps.resolve("gen"))  // (the game code's builder, below)
     inputs.files(listOf("tools/gen.py", "tools/lifter.py", "tools/analyze.py", "tools/nso.py", "tools/passes.py", "tools/patches.py",
@@ -111,6 +113,7 @@ val prepareLasRecomp by tasks.registering {
         font.copyTo(out.resolve("assets/res/Baloo2-SemiBold.ttf"), overwrite = true)
         deps.resolve("fonts/DejaVuSans.ttf").copyTo(out.resolve("assets/res/DejaVuSans.ttf"), overwrite = true)
         icon.copyTo(out.resolve("assets/res/icon.png"), overwrite = true)
+        background.copyTo(out.resolve("assets/res/launcher-background.png"), overwrite = true)
         icon.copyTo(out.resolve("res/mipmap-xxxhdpi/ic_launcher.png"), overwrite = true)
         // the game code's builder (docs/ANDROID-PORT.md, Fase 6; android/deps/build_gen_deps.sh): its programs and
         // libraries as native libraries (Android runs binaries only from nativeLibraryDir), the rest as assets/gen
@@ -133,6 +136,22 @@ val prepareLasRecomp by tasks.registering {
                 repo.resolve("runtime/$n").copyTo(a.resolve("gamelib-src/$n"), overwrite = true)
             repo.resolve("tools/gamelib_entry.c").copyTo(a.resolve("gamelib-src/gamelib_entry.c"), overwrite = true)
             repo.resolve("runtime/hle/hle_symbols.txt").copyTo(a.resolve("gamelib-src/hle_symbols.txt"), overwrite = true)
+            val digest = MessageDigest.getInstance("SHA-256")
+            val buffer = ByteArray(65536)
+            for (f in a.walkTopDown().filter { it.isFile }.sortedBy { it.relativeTo(a).invariantSeparatorsPath }) {
+                digest.update(f.relativeTo(a).invariantSeparatorsPath.toByteArray(Charsets.UTF_8))
+                digest.update(0.toByte())
+                digest.update(f.length().toString().toByteArray(Charsets.US_ASCII))
+                digest.update(0.toByte())
+                f.inputStream().use { input ->
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        digest.update(buffer, 0, n)
+                    }
+                }
+            }
+            out.resolve("assets/gen.id").writeText(digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) })
         }
     }
 }

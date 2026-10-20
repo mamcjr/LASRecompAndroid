@@ -10,8 +10,8 @@ For the PC versions (Windows, macOS, Linux), features and the randomizer, see th
 
 > [!IMPORTANT]
 > Like the original, this port was made almost entirely with AI: the porting work was written by Claude (Opus 5.5,
-> by Anthropic, through Claude Code), directed, tested and reviewed by a human. You run the code at your own
-> discretion.
+> by Anthropic, through Claude Code), with subsequent development assisted by **GPT Astra** and **GPT Sol 6.1**
+> (OpenAI, through Codex), directed, tested and reviewed by a human. You run the code at your own discretion.
 
 > [!WARNING]
 > **Experimental.** Get the APK from the [Releases](https://github.com/mamcjr/LASRecompAndroid/releases) page:
@@ -23,9 +23,23 @@ For the PC versions (Windows, macOS, Linux), features and the randomizer, see th
 > copy of the extracted game files of *Link's Awakening* **v1.0.0**. Instructions on how to obtain them will not be
 > provided.
 
+## New in 0.3.8
+
+![Android adventurer icon](docs/icon/android-hero.png)
+
+![Android island launcher background](docs/artwork/android-island.png)
+
+- **Touch settings:** large sidebar categories, inline descriptions, larger controls and dropdown choices, swipe scrolling and a persistent Back button. Video, Audio and Controls are directly accessible; Saves & files is available before launch, and More options contains the remaining pages.
+- **Rendering work:** pipeline configuration reuse, reusable texture-conversion buffers, exact comparisons for stable dynamic textures, load-only arena-copy reuse, and queued compute-shader translation. Shader compiler worker count is configurable.
+- **Stable ADPF default:** retains the established wall-time performance signal, with synchronized session management. In the user's 50% resolution comparison on Turnip, the captured intervals improved from roughly 52–58 FPS to 58.9–59.9 FPS after restoring this signal. Occasional long frames remain; this is not a controlled benchmark or a guarantee for other devices.
+- **Faster updates:** the bundled game builder is unpacked only when its content fingerprint changes.
+- **New artwork:** an Android adventurer icon and an original island-themed launcher background generated with OpenAI image generation. These are fan illustrations, not extracted game assets.
+
+Validation: release build on PC, 22 upload-cache checks , 12 simulated touch-gesture checks and 28 save-transfer checks; the user tested frametime on the connected Turnip device. Qualcomm/Mali copy-path behavior and all menu flows still require broader device testing. Details: [optimizations](docs/ANDROID-OPTIMIZATIONS.md), [touch settings](docs/ANDROID-TOUCH-SETTINGS.md).
+
 ## Importing and exporting saves
 
-On the start screen, open **Settings → Prelaunch → Saves - Eden / Yuzu / Ryujinx**:
+On the start screen, open **Settings → Saves & files → Saves - Eden / Yuzu / Ryujinx**:
 
 - **Import save folder**: select the *Link's Awakening* save folder containing `savedata0.bin`
   (or another `savedataN.bin`) and the game's other `.bin` files.

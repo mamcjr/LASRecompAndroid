@@ -9,9 +9,9 @@ Para as versões de PC (Windows, macOS, Linux), os recursos e o randomizer, veja
 [repositório original](https://github.com/peiikai/LASRecomp).
 
 > [!IMPORTANT]
-> Assim como o original, este port foi feito quase inteiramente com IA: o trabalho de portabilidade foi escrito pelo
-> Claude (Opus 5.5, da Anthropic, via Claude Code), dirigido, testado e revisado por uma pessoa. Você executa o código
-> por sua conta.
+> Assim como o original, este port foi feito quase inteiramente com IA: começou com Claude (Opus 5.5,
+> da Anthropic, via Claude Code), com desenvolvimento posterior auxiliado por **GPT Astra** e **GPT Sol 6.1**
+> (OpenAI, via Codex), dirigido, testado e revisado por uma pessoa. Você executa o código por sua conta.
 
 > [!WARNING]
 > **Experimental.** Baixe o APK na página de [Releases](https://github.com/mamcjr/LASRecompAndroid/releases): todo o
@@ -23,9 +23,23 @@ Para as versões de PC (Windows, macOS, Linux), os recursos e o randomizer, veja
 > obtida legalmente, dos arquivos extraídos de *Link's Awakening* **v1.0.0**. Não serão dadas instruções de como
 > obtê-los.
 
+## Novidades da 0.3.8
+
+![Ícone Android aventureiro](docs/icon/android-hero.png)
+
+![Novo fundo da ilha com Android](docs/artwork/android-island.png)
+
+- **Menu touch:** categorias laterais, descrições junto das opções, controles maiores, seletores e rolagem por arraste, com botão fixo para voltar.
+- **Otimizações:** reaproveitamento de pipelines, buffers de conversão de texturas e cópias de leitura na arena; comparação exata para texturas estáveis e tradução de shaders compute em fila. Compiladores de shaders configuráveis.
+- **ADPF estável:** mantém a medição anterior por tempo decorrido e a sessão sincronizada. No teste do usuário a 50% com Turnip, os intervalos capturados melhoraram de cerca de 52-58 FPS para 58,9-59,9 FPS. Ainda há picos isolados; não é benchmark controlado nem garantia para outros aparelhos.
+- **Inicialização após atualização:** ferramentas internas só são extraídas quando o conteúdo muda.
+- **Artes novas:** ícone Android aventureiro e fundo original de ilha gerados com OpenAI. São ilustrações de fã, não assets extraídos do jogo.
+
+Validação: build de release no PC, 22 verificações dos caches, 12 verificações simuladas de gestos e 28 testes de transferência de saves. O usuário testou o frametime no aparelho com Turnip. O caminho Qualcomm/Mali e todos os fluxos do menu ainda precisam de validação mais ampla. [Otimizações](docs/ANDROID-OPTIMIZATIONS.md) · [Menu touch](docs/ANDROID-TOUCH-SETTINGS.md).
+
 ## Importar e exportar saves
 
-Na tela inicial, abra **Settings → Prelaunch → Saves - Eden / Yuzu / Ryujinx**:
+Na tela inicial, abra **Settings → Saves & files → Saves - Eden / Yuzu / Ryujinx**:
 
 - **Import save folder**: selecione a pasta de saves de *Link's Awakening*, que contém `savedata0.bin`
   (ou outro `savedataN.bin`) e os demais arquivos `.bin` do jogo.

@@ -50,6 +50,7 @@ struct QEvent {
     bool down;
     float value, x, y;
     int button;
+    bool touch;
     char text[32];
 };
 static pthread_mutex_t q_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -239,13 +240,14 @@ bool menu_handle_event(const SDL_Event *e) {
     }
     case SDL_EVENT_MOUSE_MOTION:
         if (!capturing()) return false;
-        { QEvent q = {}; q.kind = QEvent::MOUSE_POS; q.x = e->motion.x * g_pixel_density; q.y = e->motion.y * g_pixel_density; push(q); }
+        { QEvent q = {}; q.kind = QEvent::MOUSE_POS; q.touch = e->motion.which == SDL_TOUCH_MOUSEID; q.x = e->motion.x * g_pixel_density; q.y = e->motion.y * g_pixel_density; push(q); }
         return true;
     case SDL_EVENT_MOUSE_BUTTON_DOWN: case SDL_EVENT_MOUSE_BUTTON_UP:
         if (!capturing()) return false;
         {
             QEvent q = {};
             q.kind = QEvent::MOUSE_BUTTON;
+            q.touch = e->button.which == SDL_TOUCH_MOUSEID;
             q.button = e->button.button == SDL_BUTTON_LEFT ? 0 : e->button.button == SDL_BUTTON_RIGHT ? 1 : 2;
             q.down = e->type == SDL_EVENT_MOUSE_BUTTON_DOWN;
             push(q);
@@ -391,8 +393,8 @@ static void drain_events(ImGuiIO &io) {
         switch (q.kind) {
         case QEvent::KEY: io.AddKeyEvent(q.key, q.down); break;
         case QEvent::ANALOG: io.AddKeyAnalogEvent(q.key, q.value > 0.1f, q.value); break;
-        case QEvent::MOUSE_POS: io.AddMousePosEvent(q.x, q.y); break;
-        case QEvent::MOUSE_BUTTON: io.AddMouseButtonEvent(q.button, q.down); break;
+        case QEvent::MOUSE_POS: io.AddMouseSourceEvent(q.touch ? ImGuiMouseSource_TouchScreen : ImGuiMouseSource_Mouse); io.AddMousePosEvent(q.x, q.y); break;
+        case QEvent::MOUSE_BUTTON: io.AddMouseSourceEvent(q.touch ? ImGuiMouseSource_TouchScreen : ImGuiMouseSource_Mouse); io.AddMouseButtonEvent(q.button, q.down); break;
         case QEvent::WHEEL: io.AddMouseWheelEvent(q.x, q.y); break;
         case QEvent::TEXT: io.AddInputCharactersUTF8(q.text); break;
         }
@@ -777,6 +779,30 @@ extern "C" int menu_keyboard_run(const char *initial, int max_len, char *out, in
 // The tab bar and its pages, into the current window: the in-game menu, and the start screen's Settings (in_game
 // false: nothing of the game is loaded yet - the tabs that need it are greyed out; prelaunch: the start screen's own
 // first tab, game files and fonts, drawn by launcher.mm).
+static void settings_page(int id, float scale, bool in_game, void (*prelaunch)(float)) {
+    switch (id) {
+    case -1: prelaunch(scale); break;
+    case 0: tab_display(); break;
+    case 1: tab_audio(); break;
+    case 2:
+        if (game_in_play()) save_editor_draw(scale);
+        else ImGui::TextDisabled("Load a save file and get into the game to edit it.");
+        break;
+    case 3: rando_tab_draw(scale); break;
+    case 4: if (warp_tab_draw(scale)) set_open(false); break;
+    case 5: cheats_draw(scale); break;
+    case 6: difficulty_draw(scale); break;
+    case 7: tab_cosmetics(); break;
+    case 8: tab_about(); break;
+    case 9: tab_quit(scale, in_game); break;
+    }
+}
+
+#ifdef __ANDROID__
+static bool g_touch_settings_back;
+extern "C" bool menu_settings_back_requested() { bool back = g_touch_settings_back; g_touch_settings_back = false; return back; }
+#endif
+
 static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     // (id: the page; -1 = Prelaunch)
     struct Tab { const char *name; int id; bool on; };
@@ -793,6 +819,68 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
 #endif
         if (i != 9 || !prelaunch) tabs[ntabs++] = {names[i], i, in_game || (i != 2 && i != 4 && i != 5)};
     }
+#ifdef __ANDROID__
+    // Touch navigation uses large category rows. The existing tab ids remain valid for controllers and test hooks.
+    if (g_tab_request_ext >= 0) { g_tab_request = g_tab_request_ext; g_tab_request_ext = -1; }
+    for (int i = 0; i < ntabs; i++) if (tabs[i].id == g_tab_request && tabs[i].on) g_tab = tabs[i].id;
+    bool available = false;
+    for (int i = 0; i < ntabs; i++) available |= tabs[i].id == g_tab && tabs[i].on;
+    if (!available) g_tab = prelaunch ? -1 : 8;
+    bool popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
+    if (!popup && !ui_text_busy()) {
+        int step = ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? 1 : ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? -1 : 0;
+        if (step) {
+            int index = 0;
+            for (int i = 0; i < ntabs; i++) if (tabs[i].id == g_tab) index = i;
+            do index = (index + step + ntabs) % ntabs; while (!tabs[index].on);
+            g_tab = tabs[index].id;
+        }
+    }
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(18 * scale, 18 * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(14 * scale, 14 * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 26 * scale);
+    float height = fmaxf(1, ImGui::GetContentRegionAvail().y - 86 * scale);
+    float rail = fminf(ImGui::GetContentRegionAvail().x * 0.3f, 280 * scale);
+    ImGui::BeginChild("##categories", ImVec2(rail, height), ImGuiChildFlags_Borders);
+    ui_touch_scroll();
+    static bool more;
+    static int last_touch_tab = -99;
+    for (int i = 0; i < ntabs; i++) if (last_touch_tab != g_tab && tabs[i].id == g_tab && tabs[i].id > 1 && tabs[i].id != 8) more = true;
+    last_touch_tab = g_tab;
+    const int primary[] = {0, 1, 8, -1};
+    auto category = [&](int id) {
+        for (int i = 0; i < ntabs; i++) if (tabs[i].id == id) {
+            const Tab &t = tabs[i];
+            ImGui::BeginDisabled(!t.on);
+            const char *name = id == -1 ? "Saves & files" : t.name;
+            if (g_focus_tab == id || (g_focus_tab == -100 && id == g_tab)) { ImGui::SetKeyboardFocusHere(); g_focus_tab = -99; }
+            if (ImGui::Selectable(name, g_tab == id, 0, ImVec2(0, 64 * scale))) g_tab = id;
+            ImGui::EndDisabled();
+        }
+    };
+    for (int id : primary) category(id);
+    if (ImGui::Selectable(more ? "Less options" : "More options", false, 0, ImVec2(0, 64 * scale))) more = !more;
+    if (more) for (int i = 0; i < ntabs; i++) {
+        int id = tabs[i].id;
+        if (id != -1 && id != 0 && id != 1 && id != 8) category(id);
+    }
+    ImGui::EndChild();
+    ImGui::SameLine();
+    ImGui::BeginChild("##touchpage", ImVec2(0, height), ImGuiChildFlags_AlwaysUseWindowPadding);
+    ui_touch_scroll();
+    ImGui::PushID(g_tab);
+    settings_page(g_tab, scale, in_game, prelaunch);
+    ImGui::PopID();
+    ImGui::EndChild();
+    if (ImGui::Button(prelaunch ? "Back to start" : "Back to game", ImVec2(-1, 64 * scale))) {
+        if (prelaunch) g_touch_settings_back = true;
+        else set_open(false);
+    }
+    ImGui::PopStyleVar(3);
+    g_tab_request = -2;
+    opt_focus_first(false);
+    return;
+#endif
     int cur = 0;  // g_tab / g_tab_request hold ids
     for (int i = 0; i < ntabs; i++) if (tabs[i].id == g_tab) cur = i;
     if (!tabs[cur].on) cur = 0;
@@ -872,22 +960,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                     ImGui::SetKeyboardFocusHere();
                     ImGui::SetNavCursorVisible(true);
                 }
-                switch (t.id) {
-                case -1: prelaunch(scale); break;
-                case 0: tab_display(); break;
-                case 1: tab_audio(); break;
-                case 2:
-                    if (game_in_play()) save_editor_draw(scale);
-                    else ImGui::TextDisabled("Load a save file and get into the game to edit it.");
-                    break;
-                case 3: rando_tab_draw(scale); break;
-                case 4: if (warp_tab_draw(scale)) set_open(false); break;
-                case 5: cheats_draw(scale); break;
-                case 6: difficulty_draw(scale); break;
-                case 7: tab_cosmetics(); break;
-                case 8: tab_about(); break;
-                case 9: tab_quit(scale, in_game); break;
-                }
+                settings_page(t.id, scale, in_game, prelaunch);
                 static const char *scroll_test = getenv("LARECOMP_MENU_SCROLL");  // test hook: page scroll, 0..1
                 if (scroll_test) ImGui::SetScrollY(ImGui::GetScrollMaxY() * (float)atof(scroll_test));
                 ImGui::EndChild();
@@ -1003,7 +1076,10 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     if (open) {
         // dim the game behind the menu
         ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), io.DisplaySize, IM_COL32(0, 0, 0, 110));
-        float w = fminf(io.DisplaySize.x * 0.9f, 1500 * scale), h = io.DisplaySize.y - 2 * 18 * scale;  // (all the height: a slim margin)
+        float w = fminf(io.DisplaySize.x * 0.9f, 1500 * scale), h = io.DisplaySize.y - 2 * 18 * scale;
+#ifdef __ANDROID__
+        w = io.DisplaySize.x * 0.94f;
+#endif  // (all the height: a slim margin)
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
         ImGui::Begin("##menu", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);

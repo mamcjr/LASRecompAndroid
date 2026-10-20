@@ -165,15 +165,20 @@ public class LASRecompActivity extends SDLActivity {
         }
     }
 
-    // ---- the game code's builder: assets/gen, unpacked once per installed version (runtime/gamebuild.c)
+    // ---- the game code's builder: assets/gen, unpacked only when its bundled content changes (runtime/gamebuild.c)
     private void unpackGen(File dir) throws IOException {
         String[] top = getAssets().list("gen");
         if (top == null || top.length == 0) return;  // (an APK without it: android/deps/build_gen_deps.sh not run)
         String stamp;
-        try {
-            stamp = String.valueOf(getPackageManager().getPackageInfo(getPackageName(), 0).lastUpdateTime);
-        } catch (Exception e) {
-            stamp = "?";
+        try (InputStream in = getAssets().open("gen.id")) {
+            stamp = "sha256:" + new String(in.readAllBytes(), java.nio.charset.StandardCharsets.US_ASCII).trim();
+        } catch (IOException missingFingerprint) {
+            // Compatibility with APKs built before gen.id was introduced.
+            try {
+                stamp = "install:" + getPackageManager().getPackageInfo(getPackageName(), 0).lastUpdateTime;
+            } catch (Exception e) {
+                throw new IOException("Could not identify the bundled game builder", e);
+            }
         }
         File st = new File(dir, ".stamp");
         if (st.exists() && stamp.equals(readSmall(st))) return;
