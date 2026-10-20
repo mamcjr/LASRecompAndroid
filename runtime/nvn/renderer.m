@@ -1918,7 +1918,9 @@ static void draw(CmdRec *r, bool indexed) {
         // Full-screen overlays without textures (fades, flashes) cover the whole window too.
         bool fullscreen_quad = r->x[2] <= 6 && st.viewport[0][0] == 0 && st.viewport[0][1] == 0 &&
                                st.viewport[0][2] >= st.rt.color[0]->width && st.viewport[0][3] >= st.rt.color[0]->height;
-        bool fullscreen_fill = pr->fi->ntex == 0 && fullscreen_quad;
+        extern bool widescreen_ui_pane_partial(const float *u, uint64_t size);  // (a smaller layout pane: boxed UI)
+        bool fullscreen_fill = pr->fi->ntex == 0 && fullscreen_quad &&
+                               !widescreen_ui_pane_partial((const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size);
         // A full-screen quad sampling a reshaped (screen-shaped) texture is a scene background too, even a
         // downscaled one: the blurred scene behind the pause menu reads a 192x108 copy.
         // (single-texture draws only: the menu's frosted panels sample the same blurred copy but are UI pieces)
