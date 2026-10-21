@@ -1,6 +1,7 @@
 MIT License
 
 Copyright (c) 2026 Peiikai
+Copyright (c) 2026 mamcjr and LASRecompAndroid contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -20,5 +21,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-This license covers LAS Recomp's own code. It does not cover The Legend of Zelda: Link's Awakening or any other
-Nintendo property, nor the third-party components in third_party/, which keep their own licenses.
+This license covers the original LAS Recomp code and the original code changes in LASRecompAndroid.
+The original LAS Recomp copyright notice is retained above; the additional notice identifies contributions
+to this Android fork. This license does not cover The Legend of Zelda: Link's Awakening or any other Nintendo
+property, nor third-party components, fonts or artwork with separate terms, which keep their own licenses.

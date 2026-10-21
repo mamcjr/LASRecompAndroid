@@ -1,0 +1,26 @@
+name: Feature request / Sugestão
+description: Suggest an improvement to the Android port.
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: Reports in Portuguese or English are welcome. Search existing issues before submitting a duplicate.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve / Problema a resolver
+      description: Describe the situation and who would benefit.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Suggested change / Alteração sugerida
+      description: Explain the desired behavior. Mockups or screenshots are welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and context / Alternativas e contexto
+      description: Include relevant devices, settings or limitations if known. Do not attach game files or private information.

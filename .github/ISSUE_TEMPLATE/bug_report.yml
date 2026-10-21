@@ -1,0 +1,57 @@
+name: Bug report / Relatar problema
+description: Report an Android crash, rendering, performance, touch or save problem.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Reports in Portuguese or English are welcome. Please search existing issues first.
+        Do not attach game files, generated game code, signing keys or private information.
+  - type: input
+    id: version
+    attributes:
+      label: App version / Versão do app
+      placeholder: Release version, or commit and build type for a local build
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and Android version / Aparelho e versão do Android
+      placeholder: Phone model, Android version, SoC and GPU
+    validations:
+      required: true
+  - type: input
+    id: driver
+    attributes:
+      label: Vulkan driver / Driver Vulkan
+      placeholder: System driver, or custom driver name and version
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps / Passos para reproduzir
+      description: Include the scene and, if relevant, the randomizer seed ID and settings.
+      placeholder: |
+        1. Open...
+        2. Select...
+        3. The problem occurs when...
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior / Resultado esperado e observado
+    validations:
+      required: true
+  - type: textarea
+    id: settings
+    attributes:
+      label: Settings and performance / Configurações e desempenho
+      description: Include resolution, Auto/30/60 FPS, antialiasing, upscaler and enabled diagnostic flags. For comparisons, include the method, duration and frametime results if available.
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs and screenshots / Logs e capturas
+      description: Attach a relevant excerpt, screenshot or short clip. Remove private information. Do not upload game files or save archives here.

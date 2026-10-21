@@ -246,8 +246,16 @@ Awakening* são marcas registradas da Nintendo. Nenhum arquivo, código, recurso
 repositório ou em qualquer build. Você precisa fornecer a sua própria cópia, obtida legalmente, dos arquivos do jogo
 para jogar.
 
+## Contribuições e suporte
+
+Relate problemas e sugestões do Android nas [Issues deste fork](https://github.com/mamcjr/LASRecompAndroid/issues).
+Português e inglês são bem-vindos. Consulte [CONTRIBUTING.md](CONTRIBUTING.md) para saber quais informações do
+aparelho incluir, como desenvolver para Android e como validar e enviar alterações.
+
 ## Licença
 
-O código é aberto sob a [Licença MIT](LICENSE), como no projeto original. Os componentes de terceiros mantêm as suas
-próprias licenças (acima, e no [README original](https://github.com/peiikai/LASRecomp#license)). A licença cobre
+O código é aberto sob a [Licença MIT](LICENSE). O aviso original de copyright de Peiikai foi preservado;
+um aviso adicional identifica as contribuições de mamcjr e dos colaboradores do LASRecompAndroid.
+Os componentes de terceiros mantêm as suas próprias licenças (acima, e no
+[README original](https://github.com/peiikai/LASRecomp#license)). A licença cobre
 apenas o código deste projeto: ela não concede nada sobre o jogo da Nintendo, que você mesmo precisa fornecer.

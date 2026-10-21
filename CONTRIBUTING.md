@@ -1,7 +1,8 @@
-# Contributing to LAS Recomp
+# Contributing to LAS Recomp for Android
 
-Thanks for wanting to help! Bug reports, randomizer logic fixes, testing on different hardware and code
-contributions are all welcome.
+This repository maintains the Android port of [LAS Recomp](https://github.com/peiikai/LASRecomp) by Peiikai.
+Android bug reports, touch UI improvements, documentation, testing, randomizer fixes and code contributions
+are welcome. Reports and discussions in **Portuguese or English** are welcome.
 
 > [!NOTE]
 > This project is developed mostly with AI (see the README). Contributions written by hand, with AI assistance or
@@ -21,25 +22,42 @@ Pull requests that include Nintendo files can't be merged. Screenshots and short
 
 ## Reporting bugs
 
-Report bugs either on the [Discord](https://discord.gg/DhrgdYqdcY) or as a
-[GitHub issue](https://github.com/peiikai/LASRecomp/issues) - whichever you prefer. Please include:
+Search the [existing issues](https://github.com/mamcjr/LASRecompAndroid/issues), then open a report in this
+fork's issue tracker. The upstream project's Discord and issue tracker are not this fork's support channels.
+For desktop builds and upstream development, see the [original repository](https://github.com/peiikai/LASRecomp).
+Please include:
 
-- your platform (macOS / Windows), hardware (CPU, GPU) and window size / aspect ratio
+- app version, or commit and build type if you built it yourself
+- phone model, Android version, SoC/GPU and Vulkan driver name/version (including whether it is the system driver)
+- internal resolution, frame-rate mode (Auto / 30 / 60), antialiasing, upscaler and relevant diagnostic flags
 - what you did, what happened, and what you expected
 - for randomizer problems: the **seed ID** (Randomizer tab, Copy button), the settings, and where you got stuck
   (area / room, which items you had). A seed ID reproduces the exact seed on the same LAS Recomp version.
 - a screenshot or short clip if it's visual
-- for crashes: the log the app prints to the terminal (run it from a terminal to capture it)
+- for crashes: the relevant Android log excerpt, with personal paths, device identifiers and credentials removed
+
+Do not upload save archives unless a maintainer requests them and you have reviewed their contents. Never
+commit signing keys, keystore passwords or local SDK configuration.
 
 ## Building
 
-See the README's "Building from source" for macOS and [docs/BUILD-windows.md](docs/BUILD-windows.md) for Windows.
-In short: set up your own v1.0.0 game files on the start screen, `make gen` once to recompile the game code from
-them, then `make -j10`. The randomizer needs its Python environment in
-`third_party/LAS-Randomizer/venv`.
+Follow the Android dependency and SDK setup in the [English README](README.md#building-from-source) or
+[Portuguese README](README.pt-BR.md). Scripts under `android/deps/` prepare the native dependencies and the
+on-device game builder. From `android/lasrecomp/`, build a development APK:
+
+```powershell
+.\gradlew.bat :app:assembleDebug
+```
+
+On a Unix shell, use `./gradlew :app:assembleDebug`. Use your own legally obtained v1.0.0 game files for setup.
+Release signing keys are not needed to contribute. Back up your saves before replacing an installed app with
+a build signed by a different key.
 
 ## Project layout
 
+- `android/lasrecomp/` - Gradle project, Android activity and APK packaging.
+- `android/deps/` - native dependencies and on-device builder scripts.
+- `runtime/platform/android.c` - Android integration and performance hints.
 - `tools/gen.py` - the recompiler: translates the game's executables into C (`generated/`, never committed).
   `tools/patches.py` holds code patches applied during generation; every patch site checks the original instruction
   word, so a wrong address fails loudly instead of silently.
@@ -52,20 +70,35 @@ them, then `make -j10`. The randomizer needs its Python environment in
 - `tools/rando/` - randomizer tooling around LAS-Randomizer: the headless driver (`las_headless.py`), dungeon room
   shuffle (`dungeon_gen.py`, `room_logic.py`), entrances, pots / bushes / digs, shop, souls, pets.
 - `third_party/LAS-Randomizer` - the vendored randomizer (MIT, with local changes marked "LAS Recomp" in comments).
+- `tools/test_*.py` - focused PC checks; each script documents its requirements.
+- `docs/` - Android implementation notes, measurements and feature documentation.
 
 ## Testing your change
 
-- Build cleanly on your platform (`make -j10`). If you touch shared rendering code, say which backend you tested -
-  a Metal change usually needs a Vulkan counterpart and the other way round.
-- Test in game, and look at the result: a fix isn't verified until you've seen it work.
-- Scripted test runs: `tools/shot.sh <frame> [seconds]` runs the game with `LARECOMP_*` environment hooks (scripted
-  input, warps, seeds, scratch saves via `tools/fresh_save.sh`) and saves a screenshot. Many debug hooks are
-  documented where they're defined - grep for `getenv("LARECOMP_`. Test runs use a scratch copy of the settings
-  file; give them a scratch save folder too (`LARECOMP_SAVE_DIR`) so your own saves stay untouched.
+- Build the affected Android code and run relevant focused checks. If you touch shared rendering code, identify
+  the platforms/backends built and tested, and what remains unverified.
+- Agree device installation, game restarts and gameplay tests with the device owner. Preserve unsaved progress,
+  back up settings and use an isolated save directory (`LARECOMP_SAVE_DIR`) for automated runs.
+- Validate the in-game result when device testing is available and authorized. State clearly when a change has
+  only been checked on the PC; do not describe that as device validation.
+- Android test hooks use `LARECOMP_*` environment variables, documented where they are defined. Keep copies of
+  the settings and saves for scripted runs, and restore the original configuration afterward. Desktop helper
+  scripts such as `tools/shot.sh` do not replace Android device validation.
 - Randomizer changes: generate several seeds with different settings and check they complete (every location
   reachable). For dungeon room shuffle, `tools/doorjump_test.sh <seed>` walks every mismatched doorway.
 - State that belongs to a seed must be reset when the player switches seeds in place: use an `RT_ON_RESET` hook
   (see `runtime/hle.h`).
+
+## Performance changes
+
+Preserve the validated ADPF baseline while isolating other variables. Compare the same scene, resolution,
+driver and frame-rate settings, with stated warm-up time, capture duration and thermal conditions if known.
+Report frametime percentiles and long frames when available; average FPS alone does not prove smoother play.
+The overlay's GPU-wait percentage is not GPU utilization.
+
+Diagnostic logs and GPU profiling can change timings. Record enabled flags and keep profiling captures separate
+from normal frametime measurements. Leave unproven experiments disabled by default. See the
+[Android optimization notes](docs/ANDROID-OPTIMIZATIONS.md).
 
 ## Code style
 
@@ -74,6 +107,8 @@ them, then `make -j10`. The randomizer needs its Python environment in
 - Keep randomizer and game-facing text in the game's own style: pickup messages go through the game's message box,
   not custom pop-ups; settings get short labels, not paragraphs.
 - New randomizer options must keep older seed IDs loading (see the seed ID notes in `runtime/ui/rando_tab.mm`).
+- Keep Android-specific code behind the appropriate platform guards. Preserve settings and save compatibility,
+  and keep touch controls usable on a phone.
 
 ## Pull requests
 
@@ -81,6 +116,14 @@ them, then `make -j10`. The randomizer needs its Python environment in
 - Describe what changed, why, and how you tested it (platform, seeds, screenshots).
 - Don't include personal paths or information in code, comments or commit messages.
 
+Submit pull requests to [mamcjr/LASRecompAndroid](https://github.com/mamcjr/LASRecompAndroid/pulls).
+Review AI-assisted changes and name the tools used when they materially contributed to the work.
+An APK release is a separate maintainer action; documentation changes and experimental work do not by themselves
+authorize publishing a new build.
+
 ## License
 
-By contributing, you agree that your contributions are licensed under the project's [MIT License](LICENSE).
+Original LAS Recomp code retains Peiikai's copyright and attribution. Android fork contributions are identified
+separately in [LICENSE](LICENSE). By contributing original code, you agree to license that contribution under
+the project's MIT License. Preserve existing notices and the separate licenses of third-party code, fonts and
+artwork; Nintendo's game files are not covered by this project's license.

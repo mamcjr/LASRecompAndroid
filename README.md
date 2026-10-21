@@ -239,8 +239,16 @@ This is a fan project. It is not affiliated with, endorsed by or sponsored by Ni
 *Link's Awakening* are trademarks of Nintendo. No game files, game code, assets or fonts are included, in this
 repository or in any build. You must provide your own legally obtained copy of the game files to play.
 
+## Contributing and support
+
+Report Android bugs and suggestions in this fork's [Issues](https://github.com/mamcjr/LASRecompAndroid/issues).
+Portuguese and English are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for device details to include,
+Android development, validation and pull request guidance.
+
 ## License
 
-The code is open source under the [MIT License](LICENSE), as in the original project. Third-party components keep
-their own licenses (above, and in the [original README](https://github.com/peiikai/LASRecomp#license)). The license
+The code is open source under the [MIT License](LICENSE). The original LAS Recomp copyright notice for Peiikai
+is preserved; an additional notice identifies contributions by mamcjr and LASRecompAndroid contributors.
+Third-party components keep their own licenses (above, and in the
+[original README](https://github.com/peiikai/LASRecomp#license)). The license
 covers this project's code only: it grants nothing for Nintendo's game, which you must supply yourself.
