@@ -618,6 +618,30 @@ static bool texture_unchanged(TexBackend *b, const uint8_t *mem, uint64_t size) 
 }
 
 uint64_t prof_tex_checks, prof_tex_samples, prof_tex_full, prof_tex_full_bytes, prof_tex_dyn, prof_tex_watch_skips;
+// Opt-in CPU measurements only: no GPU queries, flushes or waits. Called on the texture upload path.
+static bool texture_trace_on(void) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("LARECOMP_TEXTURE_TRACE"); on = e && atoi(e) != 0; }
+    return on;
+}
+enum { TEX_TRACE_NATIVE, TEX_TRACE_BC, TEX_TRACE_ASTC };
+static void texture_trace_record(int kind, uint64_t source, uint64_t upload, uint64_t decode_ns) {
+    if (!texture_trace_on()) return;
+    static uint64_t since, levels[3], source_bytes[3], upload_bytes[3], decode[3], max_decode[3];
+    uint64_t now = SDL_GetTicksNS();
+    if (!since) since = now;
+    levels[kind]++; source_bytes[kind] += source; upload_bytes[kind] += upload; decode[kind] += decode_ns;
+    if (decode_ns > max_decode[kind]) max_decode[kind] = decode_ns;
+    if (now - since < 2000000000ull) return;
+    static const char *const names[] = {"native", "bc-cpu", "astc-cpu"};
+    for (int i = 0; i < 3; i++) {
+        LOG("[texture-trace] window %.2fs frame %llu kind %s levels %llu source %.2fMiB staging %.2fMiB cpu-decode %.3fms max-level %.3fms\n",
+            (now - since) / 1e9, (unsigned long long)vk_frame_counter(), names[i], (unsigned long long)levels[i],
+            source_bytes[i] / 1048576.0, upload_bytes[i] / 1048576.0, decode[i] / 1e6, max_decode[i] / 1e6);
+        levels[i] = source_bytes[i] = upload_bytes[i] = decode[i] = max_decode[i] = 0;
+    }
+    since = now;
+}
 static void upload_texture(NvnTexture *t, TexBackend *b) {
     if (!t->addr || t->target == 10) return;
     uint64_t frame = vk_frame_counter();
@@ -692,12 +716,15 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
                 else tegra_deswizzle(src, blocks, l.wb, l.hb, 1, 16, l.block_height_log2, l.block_depth_log2);
                 if (b->tp > 0 && layer == 0) texpatch_apply(b->tp - 1, lv, blocks, l.w, l.h, l.wb * 16);
                 VkSpan s = vk_transient((uint64_t)l.w * l.h * 4, 16);
+                uint64_t decode_start = texture_trace_on() ? SDL_GetTicksNS() : 0;
                 astc_decode_ldr(blocks, l.w, l.h, b->astc_bw, b->astc_bh, b->astc_srgb, s.ptr);
+                uint64_t decode_ns = decode_start ? SDL_GetTicksNS() - decode_start : 0;
                 VkBufferImageCopy rg = {.bufferOffset = s.off, .bufferRowLength = l.w, .bufferImageHeight = l.h,
                                         .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, lv, layer, 1},
                                         .imageExtent = {l.w < level_w(b, lv) ? l.w : level_w(b, lv), l.h < level_h(b, lv) ? l.h : level_h(b, lv), 1}};
                 vk_dl_note_upload((void *)b->image, rg.imageExtent.width, rg.imageExtent.height, rg.imageSubresource.mipLevel);
                 vkCmdCopyBufferToImage(cb, s.buf, b->image, VK_IMAGE_LAYOUT_GENERAL, 1, &rg);
+                texture_trace_record(TEX_TRACE_ASTC, (uint64_t)l.wb * l.hb * 16, (uint64_t)l.w * l.h * 4, decode_ns);
                 continue;
             }
 #ifdef __ANDROID__
@@ -710,12 +737,15 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
                 else tegra_deswizzle(src, blocks, l.wb, l.hb, 1, bsize, l.block_height_log2, l.block_depth_log2);
                 if (b->tp > 0 && layer == 0) texpatch_apply(b->tp - 1, lv, blocks, l.w, l.h, l.wb * bsize);
                 VkSpan s = vk_transient((uint64_t)l.wb * 4 * l.hb * 4 * bpp, 16);
+                uint64_t decode_start = texture_trace_on() ? SDL_GetTicksNS() : 0;
                 bc_decode(b->bc_vf, blocks, l.wb, l.hb, bsize, s.ptr, bpp);
+                uint64_t decode_ns = decode_start ? SDL_GetTicksNS() - decode_start : 0;
                 VkBufferImageCopy rg = {.bufferOffset = s.off, .bufferRowLength = l.wb * 4, .bufferImageHeight = l.hb * 4,
                                         .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, lv, layer, 1},
                                         .imageExtent = {l.w < level_w(b, lv) ? l.w : level_w(b, lv), l.h < level_h(b, lv) ? l.h : level_h(b, lv), 1}};
                 vk_dl_note_upload((void *)b->image, rg.imageExtent.width, rg.imageExtent.height, rg.imageSubresource.mipLevel);
                 vkCmdCopyBufferToImage(cb, s.buf, b->image, VK_IMAGE_LAYOUT_GENERAL, 1, &rg);
+                texture_trace_record(TEX_TRACE_BC, (uint64_t)l.wb * l.hb * bsize, (uint64_t)l.wb * 4 * l.hb * 4 * bpp, decode_ns);
                 continue;
             }
 #endif
@@ -752,6 +782,7 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
             if (b->aspect == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) continue;  // packed D/S: no CPU layout
             vk_dl_note_upload((void *)b->image, rg.imageExtent.width, rg.imageExtent.height, rg.imageSubresource.mipLevel);
                 vkCmdCopyBufferToImage(cb, s.buf, b->image, VK_IMAGE_LAYOUT_GENERAL, 1, &rg);
+            texture_trace_record(TEX_TRACE_NATIVE, sz, (uint64_t)out_row * l.hb * l.d, 0);
         }
     }
 }

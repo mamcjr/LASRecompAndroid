@@ -24,6 +24,7 @@
 
 uint64_t maxwell_gmem_base, maxwell_gmem_size;
 bool maxwell_gmem_map_all;
+bool maxwell_no_int64;
 bool maxwell_gmem_miss_log;
 unsigned maxwell_gmem_miss_stages = ~0u;
 #define GMISS_ON(st) (maxwell_gmem_miss_log && (maxwell_gmem_miss_stages >> (st) & 1u))
@@ -1143,8 +1144,14 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
     } else if (OPM(0x1c00000000000000ull, 0xfe00000000000000ull)) {  // IADD32I (CC bit 52, X bit 53)
         bool wcc = bits(w, 52, 1), x = bits(w, 53, 1);
         if (wcc || x) c->uses_cc = true;
-        sp(&c->body, "    { ulong sum = ulong(%s%s) + ulong(0x%08xu)%s;%s\n", bits(w, 56, 1) ? "-" : "", R(a), (uint32_t)bits(w, 20, 32),
-           x ? " + ulong(cc)" : "", wcc ? " cc = uint(sum >> 32) & 1u;" : "");
+        if (c->glsl && maxwell_no_int64) {
+            sp(&c->body, "    { uint ca, cb; uint sum = uaddCarry(%s%s, 0x%08xu, ca); sum = uaddCarry(sum, %s, cb);\n",
+                bits(w, 56, 1) ? "-" : "", R(a), (uint32_t)bits(w, 20, 32), x ? "cc" : "0u");
+            if (wcc) sp(&c->body, "      cc = (ca + cb) & 1u;\n");
+        } else {
+            sp(&c->body, "    { ulong sum = ulong(%s%s) + ulong(0x%08xu)%s;%s\n", bits(w, 56, 1) ? "-" : "", R(a), (uint32_t)bits(w, 20, 32),
+               x ? " + ulong(cc)" : "", wcc ? " cc = uint(sum >> 32) & 1u;" : "");
+        }
         if (d != RZ) { c->reg_used[d] = 1; sp(&c->body, "      r%d = uint(sum);\n", d); }
         sp(&c->body, "    }\n");
     } else if (OPM(0x5cc0000000000000ull, 0xfff0000000000000ull) || OPM(0x4cc0000000000000ull, 0xfff0000000000000ull) ||
@@ -1152,9 +1159,16 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         bool wcc3 = bits(w, 47, 1), x3 = bits(w, 48, 1);
         if (wcc3 || x3) {  // carry in/out (64-bit address math)
             c->uses_cc = true;
-            sp(&c->body, "    { ulong sum = ulong(%s%s) + ulong(%s%s) + ulong(%s%s)%s;\n", bits(w, 51, 1) ? "-" : "", R(a),
-               bits(w, 50, 1) ? "-" : "", B(false), bits(w, 49, 1) ? "-" : "", R((int)bits(w, 39, 8)), x3 ? " + ulong(cc)" : "");
-            if (wcc3) sp(&c->body, "      cc = uint(sum >> 32) & 1u;\n");
+            if (c->glsl && maxwell_no_int64) {
+                sp(&c->body, "    { uint ca, cb, ci; uint sum = uaddCarry(%s%s, %s%s, ca); sum = uaddCarry(sum, %s%s, cb); "
+                    "sum = uaddCarry(sum, %s, ci);\n", bits(w, 51, 1) ? "-" : "", R(a),
+                    bits(w, 50, 1) ? "-" : "", B(false), bits(w, 49, 1) ? "-" : "", R((int)bits(w, 39, 8)), x3 ? "cc" : "0u");
+                if (wcc3) sp(&c->body, "      cc = (ca + cb + ci) & 1u;\n");
+            } else {
+                sp(&c->body, "    { ulong sum = ulong(%s%s) + ulong(%s%s) + ulong(%s%s)%s;\n", bits(w, 51, 1) ? "-" : "", R(a),
+                   bits(w, 50, 1) ? "-" : "", B(false), bits(w, 49, 1) ? "-" : "", R((int)bits(w, 39, 8)), x3 ? " + ulong(cc)" : "");
+                if (wcc3) sp(&c->body, "      cc = uint(sum >> 32) & 1u;\n");
+            }
             if (d != RZ) { c->reg_used[d] = 1; sp(&c->body, "      r%d = uint(sum);\n", d); }
             sp(&c->body, "    }\n");
         } else {
@@ -1406,7 +1420,8 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         bool right = (w >> 56) == 0x5c || (w >> 57) == (0x38 >> 1);
         const char *sh = ((w >> 60) == 3) ? B(false) : R((int)bits(w, 20, 8));
         const char *hi = R((int)bits(w, 39, 8));
-        if (right) sprintf(t, "uint((((ulong(%s) << 32) | ulong(%s)) >> (%s & 31u)))", hi, R(a), sh);
+        if (c->glsl && maxwell_no_int64) sprintf(t, "%s(%s, %s, %s)", right ? "shfr32" : "shfl32", R(a), hi, sh);
+        else if (right) sprintf(t, "uint((((ulong(%s) << 32) | ulong(%s)) >> (%s & 31u)))", hi, R(a), sh);
         else sprintf(t, "uint((((ulong(%s) << 32) | ulong(%s)) << (%s & 31u)) >> 32)", hi, R(a), sh);
         set_reg(c, d, t);
     } else if (OPM(0xeed0000000000000ull, 0xfff8000000000000ull) || OPM(0xeed8000000000000ull, 0xfff8000000000000ull)) {  // LDG / STG
@@ -1419,8 +1434,22 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         if (a == RZ) sprintf(addr, "ulong(%lld)", (long long)off);
         else if (wide) sprintf(addr, "((ulong(%s) << 32 | ulong(%s)) + ulong(%lld))", R(a + 1), R(a), (long long)off);
         else sprintf(addr, "(ulong(%s) + ulong(%lld))", R(a), (long long)off);
-        sp(&c->body, "    { ulong ga = %s - 0x%llxul; bool ok = ga < 0x%llxul;\n", addr,
-           (unsigned long long)maxwell_gmem_base, (unsigned long long)maxwell_gmem_size);
+        if (c->glsl && maxwell_no_int64) {
+            // Keep the full high word until after signed offset addition and base subtraction.
+            // Only the checked heap-relative offset is 32-bit (the guest heap is at most 3.25 GiB).
+            if (maxwell_gmem_size > 0x100000000ull) fail(c, "32-bit shader heap exceeds 4 GiB");
+            const char *lo = a == RZ ? "0u" : R(a);
+            const char *hi = a != RZ && wide ? R(a + 1) : "0u";
+            sp(&c->body, "    { uint ac; uint al = uaddCarry(%s, 0x%08xu, ac); uint ah = %s + 0x%08xu + ac; "
+                "uint ga = al - 0x%08xu; uint gh = ah - 0x%08xu - uint(al < 0x%08xu); bool ok = gh == 0u",
+                lo, (uint32_t)off, hi, off < 0 ? 0xFFFFFFFFu : 0u,
+                (uint32_t)maxwell_gmem_base, (uint32_t)(maxwell_gmem_base >> 32), (uint32_t)maxwell_gmem_base);
+            if (maxwell_gmem_size < 0x100000000ull) sp(&c->body, " && ga < 0x%08xu", (uint32_t)maxwell_gmem_size);
+            sp(&c->body, ";\n");
+        } else {
+            sp(&c->body, "    { ulong ga = %s - 0x%llxul; bool ok = ga < 0x%llxul;\n", addr,
+               (unsigned long long)maxwell_gmem_base, (unsigned long long)maxwell_gmem_size);
+        }
         static const char *const ld_small[] = {"uint(gmem[ga])", "uint(int(char(gmem[ga])))",
                                                "uint(*(device ushort *)(gmem + ga))", "uint(int(*(device short *)(gmem + ga)))"};
         int nw = size == 5 ? 2 : size >= 6 ? 4 : 1;
@@ -1691,7 +1720,10 @@ static void glsl_rewrite(Ctx *c, Str *o, const char *src) {
         if (*p >= '0' && *p <= '9') {  // number (0x..u, 1.0f, ...)
             const char *e = p;
             while (id_char(*e) || *e == '.') e++;
-            sp(o, "%.*s", (int)(e - p), p);
+            if (maxwell_no_int64 && e - p >= 2 && e[-2] == 'u' && e[-1] == 'l') {
+                if (strtoull(p, NULL, 0) > 0xFFFFFFFFull) { fail(c, "64-bit literal in 32-bit shader"); return; }
+                sp(o, "%.*su", (int)(e - p - 2), p);
+            } else sp(o, "%.*s", (int)(e - p), p);
             p = e;
             continue;
         }
@@ -1742,15 +1774,18 @@ static void glsl_rewrite(Ctx *c, Str *o, const char *src) {
             if (num && atoi(id + 1) > 255) { fail(c, "register %s out of range", id); return; }
         }
         const char *rep = id;
+        if (maxwell_no_int64 && !strcmp(id, "ulong")) { fail(c, "unlowered 64-bit shader operation"); return; }
         for (size_t i = 0; i < sizeof map / sizeof map[0]; i++)
             if (!strcmp(id, map[i][0])) { rep = map[i][1]; break; }
         sp(o, "%s", rep);
     }
 }
 
+static const char glsl_int32_helpers[] =
+    "uint shfr32(uint lo, uint hi, uint n) { n &= 31u; return n == 0u ? lo : (lo >> n) | (hi << (32u - n)); }\n"
+    "uint shfl32(uint lo, uint hi, uint n) { n &= 31u; return n == 0u ? hi : (hi << n) | (lo >> (32u - n)); }\n";
+
 static const char glsl_prelude[] =
-    "#version 460\n"
-    "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n"
     "#extension GL_KHR_shader_subgroup_basic : require\n"
     "#extension GL_KHR_shader_subgroup_shuffle : require\n"
     "#extension GL_KHR_shader_subgroup_shuffle_relative : require\n"
@@ -1813,8 +1848,8 @@ static const char *glsl_sampler_type(const ShaderTexture *t) {
 // shader code (blob + max_size) - jumps through a table in it: every target is pc + 8 + imm + one of its words. All
 // its words that land on an instruction after the BRX become labels (a superset of the table's), and the list goes to
 // resolve_stacks / structure(). Without it every instruction is a label (the light list's compute shader: 354 blocks).
-static bool brx_table(Ctx *c, const uint64_t *code, size_t i, size_t end, const uint32_t *cb1, uint8_t *label) {
-    if (!cb1 || c->nbrx == 4) return false;
+static bool brx_table(Ctx *c, const uint64_t *code, size_t i, size_t end, const uint32_t *cb1, size_t cb_bytes, uint8_t *label) {
+    if (!cb1 || cb_bytes < sizeof *cb1 || c->nbrx == 4) return false;
     uint64_t w = code[i];
     int ra = (int)bits(w, 8, 8);
     if (ra == RZ) return false;
@@ -1832,7 +1867,9 @@ static bool brx_table(Ctx *c, const uint64_t *code, size_t i, size_t end, const 
     int64_t imm = sbits(w, 20, 24);
     int n = 0;
     uint32_t *t = c->brx[c->nbrx].t;
-    for (int j = 0; j < 1024; j++) {
+    size_t words = cb_bytes / sizeof *cb1;
+    if (words > 1024) words = 1024;
+    for (size_t j = 0; j < words; j++) {
         uint32_t tt = (uint32_t)((int64_t)i * 8 + 8 + (int64_t)cb1[j] + imm);
         if (((tt >> 3) & 3u) == 0u) tt += 8u;
         if (tt & 7u || tt <= i * 8 || tt / 8 >= end) continue;
@@ -2206,7 +2243,10 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     if (c->fail) { free(body.buf); free(c->body.buf); free(c); return info; }
     int set = stage == STAGE_FRAGMENT ? 1 : 0;
     Str s = {0};
+    sp(&s, "#version 460\n");
+    if (!maxwell_no_int64) sp(&s, "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n");
     sp(&s, "%s", glsl_prelude);
+    if (maxwell_no_int64) sp(&s, "%s", glsl_int32_helpers);
     if (maxwell_native_half && stage != STAGE_VERTEX) {
         // (maxwell_native_half) halves by the GPU's own conversion outside vertex shaders: the bitwise h2f (kept for
         // the positions a depth pre-pass and its colour pass must agree on) is a dozen operations with branches per
@@ -2254,8 +2294,8 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
                "if (g >= gmap[i].x && o < gmap[i].y) return gmap[i].z + (o >> 2); } return 0xFFFFFFFFu; }\n", GMAP_MAX);
         if (GMISS_ON(stage)) {
             sp(&s, "layout(std430, set = %d, binding = %d) buffer GMiss { uint w[]; } gmiss_;\n", set, GMISS_BUFFER_INDEX);
-            sp(&s, "uint gmiss(uint64_t ga) { uint k = atomicAdd(gmiss_.w[0], 1u); if (k < 64u) gmiss_.w[1u + k] = uint(ga); "
-                   "return 0u; }\n");
+            sp(&s, "uint gmiss(%s ga) { uint k = atomicAdd(gmiss_.w[0], 1u); if (k < 64u) gmiss_.w[1u + k] = uint(ga); "
+                   "return 0u; }\n", maxwell_no_int64 ? "uint" : "uint64_t");
         }
     }
     if (c->uses_rscale && stage != STAGE_VERTEX) {
@@ -2384,6 +2424,10 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
 }
 
 ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, const ShaderKey *key) {
+    return maxwell_translate_bounded(blob, max_size, 0, stage, key);
+}
+
+ShaderInfo *maxwell_translate_bounded(const uint8_t *blob, size_t max_size, size_t const_size, int stage, const ShaderKey *key) {
     ShaderInfo *info = calloc(1, sizeof *info);
     info->stage = stage;
     Ctx *c = calloc(1, sizeof *c);
@@ -2435,7 +2479,7 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
             // before it - how the compiler emits switches. Labels everywhere else split the straight code that
             // follows into blocks the GPU's compiler can't schedule (Adreno: an SSAO pass 20 ms instead of ~1)
             bool table = maxwell_brx_window && c->glsl && max_size < 0x10000 &&
-                         brx_table(c, (const uint64_t *)code, i, end, (const uint32_t *)(blob + max_size), label);
+                         brx_table(c, (const uint64_t *)code, i, end, (const uint32_t *)(blob + max_size), const_size, label);
             if (maxwell_brx_window && !table)
                 for (size_t k = i; k-- > 0;) {
                     if (k % 4 == 0) continue;

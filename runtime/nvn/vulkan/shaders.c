@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 
 #include "shaders.h"
+#include "shader_cache.h"
 
 void vk_shaders_init(void) {  // (compilers are per thread: check shaderc works at all)
     shaderc_compiler_t c = shaderc_compiler_initialize();
@@ -17,40 +18,46 @@ static shaderc_shader_kind kind_of(int stage) {
     return stage == STAGE_VERTEX ? shaderc_vertex_shader : stage == STAGE_FRAGMENT ? shaderc_fragment_shader : shaderc_compute_shader;
 }
 
-// SPIR-V disk cache: cache/spirv/<hash of stage + source>.spv, so a known shader costs a file read instead of a
+// SPIR-V disk cache: cache/spirv/<hash of stage + source + compile mode>.spv, so a known shader costs a file read instead of a
 // GLSL compile (the driver's pipeline cache only covers the step after this one).
+#ifndef __ANDROID__  // (Android: shader_cache.h vk_shader_source_hash, which also keys LARECOMP_VK_OPT)
 static uint64_t src_hash(const char *src, int stage) {
     uint64_t h = (0xcbf29ce484222325ull ^ (uint64_t)stage) + 3;  // + version of the post-processing (no_contraction)
     for (const char *p = src; *p; p++) { h ^= (uint8_t)*p; h *= 0x100000001B3ull; }
     return h;
 }
+#endif
 
 static uint32_t *cache_load(uint64_t h, size_t *nwords) {
     char path[64];
     snprintf(path, sizeof path, "cache/spirv/%016llx.spv", (unsigned long long)h);
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
-    fseek(f, 0, SEEK_END);
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return NULL; }
     long n = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    uint32_t *d = n > 20 && n % 4 == 0 ? malloc((size_t)n) : NULL;
+    if (fseek(f, 0, SEEK_SET) != 0) { fclose(f); return NULL; }
+    uint32_t *d = n > 20 && n <= 16 * 1024 * 1024 && n % 4 == 0 ? malloc((size_t)n) : NULL;
     if (d && fread(d, 1, (size_t)n, f) != (size_t)n) { free(d); d = NULL; }
     fclose(f);
-    if (d && d[0] != 0x07230203) { free(d); d = NULL; }
+    if (d && !vk_shader_cache_framed(d, (size_t)n / 4)) {
+        LOG("[shader-cache] ignoring malformed entry %016llx; recompiling\n", (unsigned long long)h);
+        free(d); d = NULL;
+    }
     if (d) *nwords = (size_t)n / 4;
     return d;
 }
 
+static pthread_once_t cache_dirs_once = PTHREAD_ONCE_INIT;
+static void cache_dirs_init(void) { mkdir("cache", 0755); mkdir("cache/spirv", 0755); }
 static void cache_store(uint64_t h, const uint32_t *spv, size_t nwords) {
-    static int made;
-    if (!made) { made = 1; mkdir("cache", 0755); mkdir("cache/spirv", 0755); }
+    pthread_once(&cache_dirs_once, cache_dirs_init);
     char path[64], tmp[80];
     snprintf(path, sizeof path, "cache/spirv/%016llx.spv", (unsigned long long)h);
-    snprintf(tmp, sizeof tmp, "%s.%llx", path, (unsigned long long)(uintptr_t)&made ^ (unsigned long long)(uintptr_t)spv);
+    snprintf(tmp, sizeof tmp, "%s.%llx", path, (unsigned long long)(uintptr_t)&cache_dirs_once ^ (unsigned long long)(uintptr_t)spv);
     FILE *f = fopen(tmp, "wb");
     if (!f) return;
     bool ok = fwrite(spv, 4, nwords, f) == nwords;
-    fclose(f);
+    if (fclose(f) != 0) ok = false;
     if (!ok || rename(tmp, path) != 0) remove(tmp);  // (another thread may have stored it first)
 }
 
@@ -114,16 +121,20 @@ static uint32_t *no_contraction(uint32_t *spv, size_t *nwords) {
 // their depths stopped matching (EQUAL test: black holes in foliage), and it was most of the compile time; the
 // driver optimises anyway. LARECOMP_VK_OPT=1 turns it back on (experiments).
 uint32_t *vk_glsl_to_spirv(const char *src, int stage, const char *name, size_t *nwords) {
+    bool optimized = getenv("LARECOMP_VK_OPT") != NULL;
+#ifdef __ANDROID__
+    uint64_t h = vk_shader_source_hash(src, stage, optimized);
+#else
     uint64_t h = src_hash(src, stage);
-    static int nocache = -1;
-    if (nocache < 0) nocache = getenv("LARECOMP_VK_NO_SPIRV_CACHE") != NULL;
+#endif
+    bool nocache = getenv("LARECOMP_VK_NO_SPIRV_CACHE") != NULL;
     uint32_t *out = nocache ? NULL : cache_load(h, nwords);
     if (out) return out;
     static __thread shaderc_compiler_t comp;
     if (!comp) comp = shaderc_compiler_initialize();
     shaderc_compile_options_t o = shaderc_compile_options_initialize();
     shaderc_compile_options_set_target_env(o, shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_3);
-    shaderc_compile_options_set_optimization_level(o, getenv("LARECOMP_VK_OPT") ? shaderc_optimization_level_performance
+    shaderc_compile_options_set_optimization_level(o, optimized ? shaderc_optimization_level_performance
                                                                                   : shaderc_optimization_level_zero);
     shaderc_compilation_result_t r = shaderc_compile_into_spv(comp, src, strlen(src), kind_of(stage), name, "main", o);
     shaderc_compile_options_release(o);
@@ -145,7 +156,9 @@ uint32_t *vk_glsl_to_spirv(const char *src, int stage, const char *name, size_t 
 VkShaderModule vk_module(const uint32_t *spv, size_t nwords) {
     VkShaderModuleCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = nwords * 4, .pCode = spv};
     VkShaderModule m;
-    return vkCreateShaderModule(g_vk.dev, &ci, NULL, &m) == VK_SUCCESS ? m : VK_NULL_HANDLE;
+    VkResult result = vkCreateShaderModule(g_vk.dev, &ci, NULL, &m);
+    if (result != VK_SUCCESS) LOG("[shader] vkCreateShaderModule failed: %d (%zu words)\n", result, nwords);
+    return result == VK_SUCCESS ? m : VK_NULL_HANDLE;
 }
 
 VkShaderModule vk_compile_glsl(const char *src, int stage, const char *name) {

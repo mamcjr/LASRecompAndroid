@@ -12,6 +12,8 @@
 #include "../../settings.h"
 #include "../../ui/menu.h"
 #include "vk.h"
+#include "timing_trace.h"
+#include "device_compat.h"
 #include "../output_scale.h"
 #include "../renderer.h"
 
@@ -78,6 +80,53 @@ static bool has_ext(VkExtensionProperties *e, uint32_t n, const char *name) {
 }
 
 // Discrete GPU first (LARECOMP_GPU=<index> picks one), needs Vulkan 1.3 and a queue that can present.
+#ifdef __ANDROID__
+// (Android: a GPU whose queues can't present is skipped rather than fatal, and the fatal message says what to report)
+static void pick_device(void) {
+    uint32_t n = 0;
+    vkEnumeratePhysicalDevices(g_vk.inst, &n, NULL);
+    if (!n) FATAL("no Vulkan device\n");
+    VkPhysicalDevice *pd = calloc(n, sizeof *pd);
+    vkEnumeratePhysicalDevices(g_vk.inst, &n, pd);
+    int want = getenv("LARECOMP_GPU") ? atoi(getenv("LARECOMP_GPU")) : -1, best = -1, best_score = -1;
+    uint32_t best_queue = UINT32_MAX;
+    bool have_api = false;
+    for (uint32_t i = 0; i < n; i++) {
+        VkPhysicalDeviceProperties p;
+        vkGetPhysicalDeviceProperties(pd[i], &p);
+        LOG("[vk] gpu %u: %s (api %u.%u.%u)\n", i, p.deviceName, VK_API_VERSION_MAJOR(p.apiVersion),
+            VK_API_VERSION_MINOR(p.apiVersion), VK_API_VERSION_PATCH(p.apiVersion));
+        if (p.apiVersion < VK_API_VERSION_1_3) continue;
+        have_api = true;
+        uint32_t nq = 0, present_queue = UINT32_MAX;
+        vkGetPhysicalDeviceQueueFamilyProperties(pd[i], &nq, NULL);
+        VkQueueFamilyProperties *qp = calloc(nq, sizeof *qp);
+        if (nq && !qp) FATAL("could not allocate Vulkan queue information\n");
+        vkGetPhysicalDeviceQueueFamilyProperties(pd[i], &nq, qp);
+        for (uint32_t q = 0; q < nq; q++) {
+            VkBool32 present = VK_FALSE;
+            VkResult result = vkGetPhysicalDeviceSurfaceSupportKHR(pd[i], q, g_vk.surface, &present);
+            if (result != VK_SUCCESS) LOG("[vk-cap] gpu %u queue %u surface query failed: %d\n", i, q, result);
+            if (vk_backend_queue_supported(&qp[q], result, present)) { present_queue = q; break; }
+        }
+        free(qp);
+        if (present_queue == UINT32_MAX) {
+            LOG("[vk-cap] skipping %s: no graphics+compute queue can present to this surface\n", p.deviceName);
+            continue;
+        }
+        int score = p.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 3 : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? 2 : 1;
+        if ((int)i == want) score = 100;
+        if (score > best_score) { best_score = score; best = (int)i; best_queue = present_queue; }
+    }
+    if (best < 0) FATAL("%s\n", have_api ? "No Vulkan 1.3 GPU has a graphics+compute queue that can present to the screen. Check the selected driver."
+                                        : "No Vulkan 1.3 GPU was found. Check the selected driver and report your phone model and Android version.");
+    g_vk.phys = pd[best];
+    free(pd);
+    vkGetPhysicalDeviceProperties(g_vk.phys, &g_vk.props);
+    g_vk.qfam = best_queue;
+    LOG("[vk] using %s\n", g_vk.props.deviceName);
+}
+#else
 static void pick_device(void) {
     uint32_t n = 0;
     vkEnumeratePhysicalDevices(g_vk.inst, &n, NULL);
@@ -113,6 +162,7 @@ static void pick_device(void) {
     if (g_vk.qfam == UINT32_MAX) FATAL("no graphics+present queue\n");
     LOG("[vk] using %s\n", g_vk.props.deviceName);
 }
+#endif
 
 static bool g_fault_ext;
 // After VK_ERROR_DEVICE_LOST: what the driver says faulted (VK_EXT_device_fault), into the log.
@@ -145,22 +195,60 @@ static void create_device(void) {
     vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, NULL);
     VkExtensionProperties *ep = calloc(ne, sizeof *ep);
     vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, ep);
+#ifdef __ANDROID__
+    // An advertised extension does not imply every optional feature bit is supported.
+    VkPhysicalDeviceCustomBorderColorFeaturesEXT border_have = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_FEATURES_EXT};
+    VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT divisor_have = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_FEATURES_EXT};
+    VkPhysicalDeviceFaultFeaturesEXT fault_have = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT};
+    VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR executable_have = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR};
+    VkPhysicalDeviceFeatures2 optional = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+#define QUERY_OPTIONAL(name, feature) do { if (has_ext(ep, ne, name)) { \
+        feature.pNext = optional.pNext; optional.pNext = &feature; } } while (0)
+    QUERY_OPTIONAL(VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME, border_have);
+    QUERY_OPTIONAL(VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME, divisor_have);
+    QUERY_OPTIONAL(VK_EXT_DEVICE_FAULT_EXTENSION_NAME, fault_have);
+    QUERY_OPTIONAL(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME, executable_have);
+#undef QUERY_OPTIONAL
+    vkGetPhysicalDeviceFeatures2(g_vk.phys, &optional);
+#endif
     const char *ext[8];
     uint32_t n_ext = 0;
     ext[n_ext++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
     g_vk.custom_border = has_ext(ep, ne, VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME);
+#ifdef __ANDROID__
+    if (g_vk.custom_border && !vk_backend_border_supported(&border_have)) {
+        LOG("[vk-cap] custom border disabled: renderer needs customBorderColors and customBorderColorWithoutFormat\n");
+        g_vk.custom_border = false;
+    }
+#endif
     if (g_vk.custom_border) ext[n_ext++] = VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME;
     g_vk.divisor = has_ext(ep, ne, VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME);
+#ifdef __ANDROID__
+    if (g_vk.divisor && !divisor_have.vertexAttributeInstanceRateDivisor) {
+        LOG("[vk-cap] instance divisor extension disabled: vertexAttributeInstanceRateDivisor unavailable\n");
+        g_vk.divisor = false;
+    }
+#endif
     if (g_vk.divisor) ext[n_ext++] = VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME;
     g_vk.host_import = has_ext(ep, ne, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);  // guest heap as a GPU buffer (exec.c)
     if (g_vk.host_import) ext[n_ext++] = VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
     bool fault = has_ext(ep, ne, VK_EXT_DEVICE_FAULT_EXTENSION_NAME);  // device-lost diagnostics (vk_device_fault_report)
+#ifdef __ANDROID__
+    if (fault && !fault_have.deviceFault) {
+        LOG("[vk-cap] device-fault diagnostics disabled: deviceFault unavailable\n");
+        fault = false;
+    }
+#endif
     if (fault) ext[n_ext++] = VK_EXT_DEVICE_FAULT_EXTENSION_NAME;
     g_fault_ext = fault;
 #ifdef __ANDROID__
     // LARECOMP_SHADER_STATS=1: each graphics pipeline's compiled shaders described in the log (registers, waves,
     // spills, instructions: exec.c build_pipeline), for finding what makes a translated shader slow on this GPU
-    g_vk.exec_stats = getenv("LARECOMP_SHADER_STATS") && has_ext(ep, ne, VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME);
+    g_vk.exec_stats = getenv("LARECOMP_SHADER_STATS") &&
+                      has_ext(ep, ne, VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME) && executable_have.pipelineExecutableInfo;
     if (g_vk.exec_stats) ext[n_ext++] = VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME;
     // the guest heap as GPU memory mapped at its own address (exec.c vk_heap_place; Turnip has it)
     g_vk.map_placed = has_ext(ep, ne, VK_EXT_MAP_MEMORY_PLACED_EXTENSION_NAME) && has_ext(ep, ne, VK_KHR_MAP_MEMORY_2_EXTENSION_NAME);
@@ -173,7 +261,32 @@ static void create_device(void) {
 
     // features the backend relies on (all present on current desktop drivers)
     VkPhysicalDeviceFeatures2 have = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+#ifdef __ANDROID__
+    VkPhysicalDeviceVulkan13Features h13 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
+    VkPhysicalDeviceVulkan12Features h12 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, .pNext = &h13};
+    VkPhysicalDeviceVulkan11Features h11 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, .pNext = &h12};
+    have.pNext = &h11;
+#endif
     vkGetPhysicalDeviceFeatures2(g_vk.phys, &have);
+#ifdef __ANDROID__
+    VkPhysicalDeviceDriverProperties driver = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+    VkPhysicalDeviceProperties2 properties = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &driver};
+    vkGetPhysicalDeviceProperties2(g_vk.phys, &properties);
+    LOG("[vk-cap] gpu %s vendor %#x device %#x api %u.%u.%u driver-id %u name %s info %s\n",
+        g_vk.props.deviceName, g_vk.props.vendorID, g_vk.props.deviceID, VK_API_VERSION_MAJOR(g_vk.props.apiVersion),
+        VK_API_VERSION_MINOR(g_vk.props.apiVersion), VK_API_VERSION_PATCH(g_vk.props.apiVersion),
+        (unsigned)driver.driverID, driver.driverName, driver.driverInfo);
+    LOG("[vk-cap] storage16 %u timeline %u mirror-clamp %u scalar %u dynamic-rendering %u sync2 %u demote %u terminate %u maintenance4 %u int64 %u int8 %u storage8 %u uniform-storage8 %u BC %u ASTC %u timestamps %u\n",
+        h11.storageBuffer16BitAccess, h12.timelineSemaphore, h12.samplerMirrorClampToEdge, h12.scalarBlockLayout,
+        h13.dynamicRendering, h13.synchronization2, h13.shaderDemoteToHelperInvocation, h13.shaderTerminateInvocation,
+        h13.maintenance4, have.features.shaderInt64, h12.shaderInt8, h12.storageBuffer8BitAccess,
+        h12.uniformAndStorageBuffer8BitAccess, have.features.textureCompressionBC, have.features.textureCompressionASTC_LDR,
+        g_vk.props.limits.timestampComputeAndGraphics);
+    const char *missing = vk_missing_backend_feature(&h11, &h12, &h13);
+    if (missing) FATAL("Vulkan driver on %s lacks a feature required by this renderer: %s.\n"
+                       "Driver: %s. Include this message, phone model and app version in your bug report.\n",
+                       g_vk.props.deviceName, missing, driver.driverName);
+#endif
     VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT div = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_FEATURES_EXT,
         .vertexAttributeInstanceRateDivisor = VK_TRUE, .vertexAttributeInstanceRateZeroDivisor = VK_FALSE};
@@ -198,9 +311,6 @@ static void create_device(void) {
 #ifdef __ANDROID__
     {   // Adreno has no uniformAndStorageBuffer8BitAccess, and no shader uses 8-bit uniform buffers
         // (docs/ANDROID-PORT.md, Fase 0): the 8-bit features only when the driver has them
-        VkPhysicalDeviceVulkan12Features h12 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
-        VkPhysicalDeviceFeatures2 h2 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &h12};
-        vkGetPhysicalDeviceFeatures2(g_vk.phys, &h2);
         f12.shaderInt8 = h12.shaderInt8;
         f12.uniformAndStorageBuffer8BitAccess = h12.uniformAndStorageBuffer8BitAccess;
         f12.storageBuffer8BitAccess = h12.storageBuffer8BitAccess;
@@ -215,6 +325,7 @@ static void create_device(void) {
     b->textureCompressionASTC_LDR = h->textureCompressionASTC_LDR;  // (Adreno: the game's ASTC textures as they are)
 #endif
     b->shaderInt64 = h->shaderInt64;
+    g_vk.shader_int64 = h->shaderInt64;
     b->depthBiasClamp = h->depthBiasClamp;
     b->depthClamp = h->depthClamp;
     b->largePoints = h->largePoints;
@@ -225,7 +336,11 @@ static void create_device(void) {
     b->vertexPipelineStoresAndAtomics = h->vertexPipelineStoresAndAtomics;
     b->robustBufferAccess = h->robustBufferAccess;  // guest shaders index cbufs freely: keep OOB reads harmless
     b->shaderClipDistance = h->shaderClipDistance;
+#ifdef __ANDROID__
+    if (!h->shaderInt64) LOG("[vk] no shaderInt64: translating shader address/carry math to 32-bit words\n");
+#else
     if (!h->shaderInt64) LOG("[vk] warning: no shaderInt64 (64-bit address math in shaders)\n");
+#endif
 #ifdef __ANDROID__
     VkPhysicalDeviceMapMemoryPlacedFeaturesEXT placed = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_FEATURES_EXT};
     if (g_vk.map_placed) {
@@ -281,16 +396,32 @@ static void create_device(void) {
     void *data = NULL;
     FILE *fp = fopen("cache/vk_pipelines.bin", "rb");
     if (fp) {
+#ifdef __ANDROID__  // (a size cap and the public header checked: a file from another driver or a cut-off write)
+        long length = -1;
+        if (!fseek(fp, 0, SEEK_END)) length = ftell(fp);
+        if (length >= 32 && (unsigned long)length <= VK_BACKEND_PIPELINE_CACHE_MAX && !fseek(fp, 0, SEEK_SET)) {
+            data = malloc((size_t)length);
+            if (data && fread(data, 1, (size_t)length, fp) == (size_t)length &&
+                vk_backend_cache_compatible(data, (size_t)length, &g_vk.props)) sz = (size_t)length;
+        }
+        if (!sz) { LOG("[vk-cache] ignoring unreadable, malformed or incompatible pipeline cache; starting empty\n");
+            free(data); data = NULL; }
+#else
         fseek(fp, 0, SEEK_END);
         sz = (size_t)ftell(fp);
         fseek(fp, 0, SEEK_SET);
         data = malloc(sz);
         if (fread(data, 1, sz, fp) != sz) sz = 0;
+#endif
         fclose(fp);
     }
     VkPipelineCacheCreateInfo pc = {.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO, .initialDataSize = sz,
                                     .pInitialData = data};
     if (vkCreatePipelineCache(g_vk.dev, &pc, NULL, &g_vk.pcache) != VK_SUCCESS) {
+#ifdef __ANDROID__
+        LOG("[vk-cache] driver rejected pipeline cache; retrying empty\n");
+        pc.pInitialData = NULL;
+#endif
         pc.initialDataSize = 0;
         VK_CHECK(vkCreatePipelineCache(g_vk.dev, &pc, NULL, &g_vk.pcache));
     }
@@ -314,6 +445,7 @@ void vk_pipeline_cache_save(void) {
 }
 
 // ================================================================== swapchain
+static bool swapchain_readback = true;  // (Android: false where the surface can't be a transfer source)
 static VkPresentModeKHR present_mode(void) {
     // MAILBOX by default: the game paces itself (vi.c's emulated 60 Hz vsync), and with FIFO every submission
     // queued behind the one waiting for a window image, so the game's fence waits followed the presentation engine:
@@ -349,32 +481,63 @@ static void create_swapchain(void) {
 #endif
     if (!ext.width || !ext.height) return;  // minimised
     uint32_t nf = 0;
+#ifdef __ANDROID__
+    VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(g_vk.phys, g_vk.surface, &nf, NULL));
+    if (!nf) FATAL("Vulkan driver reports no display surface formats. Check the selected driver.\n");
+    VkSurfaceFormatKHR fmts[64];
+    if (nf > 64) nf = 64;
+    VkResult format_result = vkGetPhysicalDeviceSurfaceFormatsKHR(g_vk.phys, g_vk.surface, &nf, fmts);
+    if ((format_result != VK_SUCCESS && format_result != VK_INCOMPLETE) || !nf)
+        FATAL("Vulkan surface format query failed: %d.\n", format_result);
+#else
     vkGetPhysicalDeviceSurfaceFormatsKHR(g_vk.phys, g_vk.surface, &nf, NULL);
     VkSurfaceFormatKHR fmts[64];
     if (nf > 64) nf = 64;
     vkGetPhysicalDeviceSurfaceFormatsKHR(g_vk.phys, g_vk.surface, &nf, fmts);
+#endif
     // scanout shows the bytes the game wrote (see the raw views in the present pass): a UNORM swapchain like Metal's
     VkSurfaceFormatKHR sf = fmts[0];
+#ifdef __ANDROID__
+    if (nf == 1 && sf.format == VK_FORMAT_UNDEFINED) sf.format = VK_FORMAT_B8G8R8A8_UNORM;
+#endif
     for (uint32_t i = 0; i < nf; i++)
         if (fmts[i].format == VK_FORMAT_B8G8R8A8_UNORM && fmts[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) { sf = fmts[i]; break; }
     uint32_t count = caps.minImageCount + 1;
     if (caps.maxImageCount && count > caps.maxImageCount) count = caps.maxImageCount;
     if (count > 8) count = 8;
+#ifdef __ANDROID__  // (only the usages and composition the surface supports: drivers differ)
+    if (count < caps.minImageCount) FATAL("Surface needs %u swapchain images; renderer supports at most 8.\n", caps.minImageCount);
+    VkImageUsageFlags usage = vk_backend_swapchain_usage(caps.supportedUsageFlags);
+    VkCompositeAlphaFlagBitsKHR alpha = vk_backend_composite_alpha(caps.supportedCompositeAlpha);
+    if (!usage || !alpha) FATAL("Vulkan surface lacks supported color rendering or composition (usage %#x alpha %#x).\n",
+                               caps.supportedUsageFlags, caps.supportedCompositeAlpha);
+    swapchain_readback = (usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
+    if (!swapchain_readback) LOG("[vk-cap] window screenshots unavailable: surface has no transfer-source usage\n");
+#else
+    VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    VkCompositeAlphaFlagBitsKHR alpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+#endif
     VkSwapchainKHR old = g_vk.swapchain;
     VkSwapchainCreateInfoKHR ci = {
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR, .surface = g_vk.surface, .minImageCount = count,
         .imageFormat = sf.format, .imageColorSpace = sf.colorSpace, .imageExtent = ext, .imageArrayLayers = 1,
-        .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+        .imageUsage = usage,
         .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE, .preTransform = transform,
-        .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, .presentMode = present_mode(), .clipped = VK_TRUE,
+        .compositeAlpha = alpha, .presentMode = present_mode(), .clipped = VK_TRUE,
         .oldSwapchain = old};
     VK_CHECK(vkCreateSwapchainKHR(g_vk.dev, &ci, NULL, &g_vk.swapchain));
     for (uint32_t i = 0; i < g_vk.sc_count; i++) vkDestroyImageView(g_vk.dev, g_vk.sc_views[i], NULL);
     if (old) vkDestroySwapchainKHR(g_vk.dev, old, NULL);
     g_vk.sc_format = sf.format;
     g_vk.sc_extent = ext;
+#ifdef __ANDROID__
+    VK_CHECK(vkGetSwapchainImagesKHR(g_vk.dev, g_vk.swapchain, &g_vk.sc_count, NULL));
+    if (g_vk.sc_count > 8) FATAL("Driver created %u swapchain images; renderer supports at most 8.\n", g_vk.sc_count);
+    VK_CHECK(vkGetSwapchainImagesKHR(g_vk.dev, g_vk.swapchain, &g_vk.sc_count, g_vk.sc_images));
+#else
     g_vk.sc_count = 8;
     vkGetSwapchainImagesKHR(g_vk.dev, g_vk.swapchain, &g_vk.sc_count, g_vk.sc_images);
+#endif
     for (uint32_t i = 0; i < g_vk.sc_count; i++) {
         VkImageViewCreateInfo vi = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, .image = g_vk.sc_images[i],
                                     .viewType = VK_IMAGE_VIEW_TYPE_2D, .format = sf.format,
@@ -469,13 +632,22 @@ bool vk_frame_begin(const float clear[4]) {
     if (trace) LOG("[vk] frame begin %dx%d (swapchain %ux%u)\n", w, h, g_vk.sc_extent.width, g_vk.sc_extent.height);
     slot = (slot + 1) % FRAMES;
     if (!acquire_sem[slot]) acquire_sem[slot] = binary_semaphore();
+#ifdef __ANDROID__
+    bool timing = vk_timing_trace_on();
+    uint64_t trace_start = timing ? SDL_GetTicksNS() : 0;
+#endif
     vk_wait_seq(slot_seq[slot]);
+#ifdef __ANDROID__
+    if (timing) vk_timing_trace_wait(VK_TIMING_SLOT, SDL_GetTicksNS() - trace_start);
+    trace_start = timing ? SDL_GetTicksNS() : 0;
+#endif
     VkResult r = vkAcquireNextImageKHR(g_vk.dev, g_vk.swapchain, UINT64_MAX, acquire_sem[slot], VK_NULL_HANDLE, &cur_frame.image);
     if (r == VK_ERROR_OUT_OF_DATE_KHR) {
         recreate_swapchain();
         r = vkAcquireNextImageKHR(g_vk.dev, g_vk.swapchain, UINT64_MAX, acquire_sem[slot], VK_NULL_HANDLE, &cur_frame.image);
     }
 #ifdef __ANDROID__
+    if (timing) vk_timing_trace_wait(VK_TIMING_ACQUIRE, SDL_GetTicksNS() - trace_start);
     if (r == VK_ERROR_SURFACE_LOST_KHR) { surface_lost = true; return false; }  // (made again at the next frame)
 #endif
     if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) { LOG("[vk] acquire failed: %d\n", r); return false; }
@@ -534,6 +706,10 @@ static void save_window_image(VkCommandBuffer cb, VkSpan *out) {
 // End rendering into the window image and present it. shot_path: also save the window image as PNG.
 void vk_frame_end(const char *shot_path) {
     if (!cur_frame.ok) return;
+    if (shot_path && !swapchain_readback) {
+        LOG("[vk] window screenshot skipped: unsupported surface readback\n");
+        shot_path = NULL;
+    }
     VkCommandBuffer cb = vk_cmd();
     vkCmdEndRendering(cb);
     VkSpan shot = {0};
@@ -545,8 +721,12 @@ void vk_frame_end(const char *shot_path) {
     vk_submit_extra(cur_frame.acquired, done_sem[img], VK_NULL_HANDLE);
     VkPresentInfoKHR pi = {.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, .waitSemaphoreCount = 1, .pWaitSemaphores = &done_sem[img],
                            .swapchainCount = 1, .pSwapchains = &g_vk.swapchain, .pImageIndices = &img};
+#ifdef __ANDROID__
+    uint64_t trace_start = vk_timing_trace_on() ? SDL_GetTicksNS() : 0;
+#endif
     VkResult r = vkQueuePresentKHR(g_vk.queue, &pi);
 #ifdef __ANDROID__
+    if (trace_start) vk_timing_trace_wait(VK_TIMING_PRESENT, SDL_GetTicksNS() - trace_start);
     if (r == VK_ERROR_OUT_OF_DATE_KHR) recreate_swapchain();  // (SUBOPTIMAL: every frame of an unrotated swapchain)
     else if (r == VK_ERROR_SURFACE_LOST_KHR) surface_lost = true;
 #else
@@ -565,6 +745,15 @@ void vk_frame_end(const char *shot_path) {
 }
 
 void vk_save_png(const char *path, const uint8_t *rgba, uint32_t w, uint32_t h) {
+#ifdef __ANDROID__
+    // Resolve debug captures against the writable data root instead of Android SDL's relative-path/asset lookup.
+    char absolute[1400];
+    if (path[0] != '/') {
+        int n = snprintf(absolute, sizeof absolute, "%s/%s", rt_data_root(), path);
+        if (n < 0 || (size_t)n >= sizeof absolute) { LOG("[vk] screenshot path too long\n"); return; }
+        path = absolute;
+    }
+#endif
     SDL_Surface *s = SDL_CreateSurfaceFrom((int)w, (int)h, SDL_PIXELFORMAT_ABGR8888, (void *)rgba, (int)w * 4);
     if (!s || !SDL_SavePNG(s, path)) LOG("[vk] saving %s failed: %s\n", path, SDL_GetError());
     else LOG("[vk] saved %s (%ux%u)\n", path, w, h);
@@ -665,6 +854,21 @@ void backend_present(NvnTexture *t) {
         // no GPU timer here (-1): dynamic resolution goes by the frame time
         OutScale os;
         output_scale(dw, dh, widescreen_allowed(), SDL_GetTicksNS() / 1e9, -1, &os);
+#ifdef __ANDROID__
+        static int matrix_trace = -1;
+        static uint64_t matrix_last;
+        if (matrix_trace < 0) matrix_trace = getenv("LARECOMP_BENCHMARK_CONFIG") != NULL;
+        if (matrix_trace) {
+            uint64_t now = plat_now_ns();
+            if (now - matrix_last >= 2000000000ull) {
+                matrix_last = now;
+                LOG("[matrix-scale] monotonic-ns %llu frame %llu res %d upscale %d aa %d aspect %d render %.0fx%.0f dynamic %.2f\n",
+                    (unsigned long long)now, (unsigned long long)total_frames, g_settings.res_mode,
+                    g_settings.upscaler, g_settings.antialias, g_settings.aspect,
+                    os.sx * 1920.0, os.sy * 1080.0, output_scale_dynamic_factor());
+            }
+        }
+#endif
         double sx = os.sx, sy = os.sy, vx = os.vx, vy = os.vy, vw = os.vw, vh = os.vh, shape = os.shape;
         // interiors / dungeons: their 16:9 centre, or the part inside a room wider than one screen
         extern void widescreen_present_crop(uint64_t, double, float *, double *, double *, double *, double *);
@@ -694,6 +898,7 @@ void backend_present(NvnTexture *t) {
     total_frames++;
     g_frame_counter++;
 #ifdef __ANDROID__
+    vk_timing_trace_frame(total_frames);
     if (!vk_async_on()) present_game_half();  // (same place as before; LARECOMP_VK_ASYNC: on the game's thread)
 #else
     extern void vk_pace_frame(void);

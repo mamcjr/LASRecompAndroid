@@ -21,7 +21,8 @@
 //  - clip space exactly as the MSL output (key->flip_y / depth_minus_one epilogue unchanged): the renderer uses
 //    a negative-height viewport so Vulkan matches Metal's y-up NDC, clip z in [0, 1].
 //  - compute: `layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;` (spec constants 0..2).
-//  - extensions: GL_EXT_shader_explicit_arithmetic_types_int64 (64-bit carry / address math -> shaderInt64),
+//  - extensions: GL_EXT_shader_explicit_arithmetic_types_int64 when maxwell_no_int64 is false;
+//    otherwise carry/address math uses 32-bit words without the Int64 SPIR-V capability.
 //    GL_KHR_shader_subgroup_basic/_shuffle/_shuffle_relative (SHFL, FSWZADD lane: fragment/compute subgroup
 //    support), GL_EXT_texture_shadow_lod (explicit-LOD array / cube shadow lookups).
 //  - not in GLSL: the maxwell_dbg_vs position dump (buffer 29) is MSL only.
@@ -92,6 +93,8 @@ extern uint64_t maxwell_gmem_base, maxwell_gmem_size;
 // (GLSL) every stage's global memory through the GMap table, not only compute: set by a backend that can't wrap the
 // guest heap in a buffer (Android: no VK_EXT_external_memory_host; vulkan/exec.c copies the bound ranges instead)
 extern bool maxwell_gmem_map_all;
+// Vulkan drivers without shaderInt64: preserve address/carry semantics using 32-bit words.
+extern bool maxwell_no_int64;
 // (diagnostics, Android copy mode) a mapped access outside the table records its heap offset at the end of the gfast_
 // buffer (the arena: exec.c) instead of reading the heap binding, which isn't there
 extern bool maxwell_gmem_miss_log;
@@ -131,6 +134,8 @@ extern const uint8_t *maxwell_dbg_vs;
 
 // code: shader binary (with the 0x50-byte SPH header for graphics stages)
 ShaderInfo *maxwell_translate(const uint8_t *code, size_t max_size, int stage, const ShaderKey *key);
+// Constants immediately following code, with their actual readable byte count (zero disables table inspection).
+ShaderInfo *maxwell_translate_bounded(const uint8_t *code, size_t max_size, size_t const_size, int stage, const ShaderKey *key);
 void maxwell_free(ShaderInfo *s);
 // Disassemble for debugging (writes text to f).
 void maxwell_disassemble(const uint8_t *code, size_t max_size, int stage, void *file);

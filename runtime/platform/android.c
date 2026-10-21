@@ -12,6 +12,7 @@
 #include <pthread.h>
 #include <sched.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -144,6 +145,18 @@ bool plat_exe_path(char *buf, size_t size) {
 void plat_exec(char *const argv[]) { (void)argv; }  // (an app process can't replace itself: the caller reports it)
 
 // ---- diagnostics
+// The fatal path stays on the calling thread. Keep its reason through the backtrace so an Android tester can
+// capture the actual error without needing adb; raw signal faults still use the generic notice below.
+static __thread char fatal_message[1024];
+void rt_fatal_message(const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    vsnprintf(fatal_message, sizeof fatal_message, format, args);
+    va_end(args);
+    fprintf(stderr, "FATAL: %s", fatal_message);
+    rt_fatal_trace();
+}
+
 const char *plat_symbol(uint64_t pc, uint64_t *offset) {
     Dl_info di = {0};
     if (!dladdr((void *)(uintptr_t)pc, &di) || !di.dli_sname) return NULL;
@@ -153,8 +166,11 @@ const char *plat_symbol(uint64_t pc, uint64_t *offset) {
 
 void plat_fatal_notice(void) {
     fflush(stderr);
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "LAS Recomp", "LAS Recomp stopped because of an error.\n\n"
-                             "Details: logcat, tag LASRecomp.", NULL);
+    char message[1400];
+    snprintf(message, sizeof message, "LAS Recomp for Android stopped because of an error.\n\n%s\n\n"
+             "Please include a screenshot of this message and your app/driver version in your bug report.\n"
+             "More details: logcat, tag LASRecomp.", fatal_message[0] ? fatal_message : "The runtime encountered a fatal error.");
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "LAS Recomp for Android", message, NULL);
 }
 
 const char *rt_host_fn_name(uint64_t pc, uint64_t *offset);  // runtime/dispatch.c

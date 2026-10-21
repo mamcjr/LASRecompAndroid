@@ -1,0 +1,17 @@
+{
+  "id": "mabe-village-v1",
+  "level": "Field",
+  "start_frame": 4200,
+  "start_position": [30.75, 10.5, 131.25],
+  "position_tolerance": 1.0,
+  "loops": 4,
+  "pause_frames": 120,
+  "legs": [
+    {"name": "rua-oeste", "stick": "STICK_LEFT", "frames": 120, "checkpoint": [21.75, 10.5, 131.25]},
+    {"name": "rua-leste", "stick": "STICK_RIGHT", "frames": 240, "checkpoint": [39.75, 10.5, 131.25]},
+    {"name": "retorno-centro", "stick": "STICK_LEFT", "frames": 120, "checkpoint": [30.75, 10.5, 131.25]},
+    {"name": "gramado-norte", "stick": "STICK_UP", "frames": 60, "checkpoint": [30.75, 10.5, 126.75]},
+    {"name": "gramado-sul", "stick": "STICK_DOWN", "frames": 120, "checkpoint": [30.75, 10.5, 135.75]},
+    {"name": "retorno-inicio", "stick": "STICK_UP", "frames": 60, "checkpoint": [30.75, 10.5, 131.25]}
+  ]
+}

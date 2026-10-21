@@ -67,6 +67,8 @@ public class LASRecompActivity extends SDLActivity {
     private static native void nativeImportBegin(String name);
     private static native void nativeImportProgress(long done, long total);
     private static native void nativeImportDone(int result);
+    private static native void nativeImportFailure(String reason);
+    private static native void nativeImportChecking();
     private static native void nativeDriverPicked(String name);
     private static native void nativeSaveTransferDone(String message);
 
@@ -396,12 +398,13 @@ public class LASRecompActivity extends SDLActivity {
         String[] cols = {DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
                          DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_SIZE};
         try (Cursor c = getContentResolver().query(u, cols, null, null, null)) {
-            while (c != null && c.moveToNext()) {
+            if (c == null) throw new IllegalStateException("Could not list the selected folder. Select a local game folder and retry.");
+            while (c.moveToNext()) {
                 Doc d = new Doc();
                 d.id = c.getString(0);
                 d.name = c.getString(1);
                 d.dir = DocumentsContract.Document.MIME_TYPE_DIR.equals(c.getString(2));
-                d.size = c.isNull(3) ? 0 : c.getLong(3);
+                d.size = c.isNull(3) ? -1 : c.getLong(3);
                 out.add(d);
             }
         }
@@ -431,9 +434,13 @@ public class LASRecompActivity extends SDLActivity {
         }
     }
 
-    private long treeBytes(Uri tree, Doc dir) {
+    private long treeBytes(Uri tree, Doc dir) throws IOException {
         long n = 0;
-        for (Doc k : children(tree, dir.id)) n += k.dir ? treeBytes(tree, k) : k.size;
+        for (Doc k : children(tree, dir.id)) {
+            if (!k.dir && k.size < 0) throw new IOException("The file provider did not report a size for " + k.name +
+                    ". Copy the extracted game files to a local folder and select it again.");
+            n = Math.addExact(n, k.dir ? treeBytes(tree, k) : k.size);
+        }
         return n;
     }
 
@@ -451,14 +458,18 @@ public class LASRecompActivity extends SDLActivity {
             try (InputStream in = cr.openInputStream(DocumentsContract.buildDocumentUriUsingTree(tree, k.id));
                  OutputStream o = new FileOutputStream(dst)) {
                 byte[] buf = new byte[1 << 20];
+                long fileBytes = 0;
                 for (int r; (r = in.read(buf)) > 0; ) {
                     o.write(buf, 0, r);
+                    fileBytes += r;
                     copied += r;
                     if (copied - reported > (16 << 20)) {
                         reported = copied;
                         nativeImportProgress(copied, total);
                     }
                 }
+                if (k.size >= 0 && fileBytes != k.size)
+                    throw new IOException("Incomplete copy of " + k.name + ". Select the local game folder and retry.");
             }
         }
     }
@@ -466,6 +477,7 @@ public class LASRecompActivity extends SDLActivity {
     private void importGame(Uri tree) {
         int result;
         try {
+            nativeImportChecking();
             exefs = romfs = null;
             packages = false;
             Doc root = new Doc();
@@ -486,18 +498,38 @@ public class LASRecompActivity extends SDLActivity {
                 nativeImportDone(4);
                 return;
             }
+            File dataRoot = getExternalFilesDir(null);
+            if (dataRoot == null) throw new IOException("App storage is unavailable. Check the phone storage and retry.");
+            File games = new File(dataRoot, "extracted");
+            if ("com.android.externalstorage.documents".equals(tree.getAuthority())) {
+                for (Doc source : new Doc[] {exefs, romfs}) {
+                    if (source.id.startsWith("primary:")) {
+                        File local = new File(android.os.Environment.getExternalStorageDirectory(), source.id.substring(8));
+                        if (ImportStorage.isInside(local, games))
+                            throw new IOException("Choose your original game dump, not the app's imported game folder.");
+                    }
+                }
+            }
+            copied = reported = 0;
+            long romfsBytes = treeBytes(tree, romfs), exefsBytes = treeBytes(tree, exefs);
+            total = Math.addExact(romfsBytes, exefsBytes);
+            long needed = ImportStorage.requiredBytes(exefsBytes, romfsBytes);
+            long available = games.getParentFile().getUsableSpace();
+            if (available < needed) {
+                nativeImportFailure(ImportStorage.spaceMessage(needed, available));
+                return;
+            }
+            // Check before nativeImportBegin removes an earlier import. Do not count that deletion as free space.
             String name = DocumentsContract.getTreeDocumentId(tree);
             nativeImportBegin(name.substring(name.lastIndexOf(':') + 1));
-            File games = new File(getExternalFilesDir(null), "extracted");
-            copied = reported = 0;
-            total = treeBytes(tree, romfs) + treeBytes(tree, exefs);
             copyTree(tree, exefs, new File(games, "exefs"));
             copyTree(tree, romfs, new File(games, "romfs"));
             nativeImportProgress(copied, total);
             result = 0;
         } catch (Exception e) {
             Log.e(TAG, "game files: " + e);
-            result = 5;
+            nativeImportFailure(e.getMessage() != null ? e.getMessage() : "Could not read or copy the selected game folder.");
+            return;
         }
         nativeImportDone(result);
     }

@@ -922,7 +922,8 @@ static Prog *get_program(NvnProgram *p, ShaderKey *vkey, ShaderKey *fkey) {
     // the compiler constants follow the code, so they bound the instruction scan
     size_t vmax = p->stages[0].const_offset ? p->stages[0].const_offset : 0x10000;
     size_t fmax = p->stages[1].const_offset ? p->stages[1].const_offset : 0x10000;
-    pr->vi = maxwell_translate((const uint8_t *)(uintptr_t)p->stages[0].code_addr, vmax, STAGE_VERTEX, vkey);
+    pr->vi = maxwell_translate_bounded((const uint8_t *)(uintptr_t)p->stages[0].code_addr, vmax,
+                                    p->stages[0].const_offset ? p->stages[0].const_size : 0, STAGE_VERTEX, vkey);
     if (!pr->vi->msl) {
         LOG("[shader] VS translate failed: %s (code %llx)\n", pr->vi->error, p->stages[0].code_addr);
         char path[128];
@@ -933,7 +934,8 @@ static Prog *get_program(NvnProgram *p, ShaderKey *vkey, ShaderKey *fkey) {
         return nil;
     }
     fkey->vs_out_mask = pr->vi->out_mask;
-    pr->fi = maxwell_translate((const uint8_t *)(uintptr_t)p->stages[1].code_addr, fmax, STAGE_FRAGMENT, fkey);
+    pr->fi = maxwell_translate_bounded((const uint8_t *)(uintptr_t)p->stages[1].code_addr, fmax,
+                                    p->stages[1].const_offset ? p->stages[1].const_size : 0, STAGE_FRAGMENT, fkey);
     if (!pr->fi->msl) { LOG("[shader] FS translate failed: %s\n", pr->fi->error); pr->failed = true; return nil; }
     if (getenv("LARECOMP_SAVE_MSL")) {
         mkdir("build/msl", 0755);
@@ -1340,7 +1342,8 @@ static CsProg *compute_program(NvnProgram *p) {
     maxwell_gmem_base = HEAP_BASE;
     maxwell_gmem_size = HEAP_MAX;
     ShaderKey k = {0};
-    cp->si = maxwell_translate((const uint8_t *)(uintptr_t)ss->code_addr, ss->const_offset ? ss->const_offset : 0x10000, STAGE_COMPUTE, &k);
+    cp->si = maxwell_translate_bounded((const uint8_t *)(uintptr_t)ss->code_addr, ss->const_offset ? ss->const_offset : 0x10000,
+                                    ss->const_offset ? ss->const_size : 0, STAGE_COMPUTE, &k);
     if (!cp->si->msl) { LOG("[compute] translate failed: %s (code %llx)\n", cp->si->error, ss->code_addr); cp->failed = true; return NULL; }
     for (int i = 0; i < 3; i++) {
         cp->local[i] = ss->control ? *(const uint32_t *)(ss->control + 0x748 + 4 * i) : 1;

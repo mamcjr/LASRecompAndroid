@@ -22,6 +22,8 @@ Settings g_settings = {
     .reverb = true,
     .movie_audio = true,
 #ifdef __ANDROID__
+    .fps_mode = 1,       // compatibility-first startup: fixed 30, unless the saved configuration chooses otherwise
+    .res_mode = RES_Q50,
     .show_fps = true,  // (the performance overlay, ui/perf_overlay.mm: on until turned off in the menu)
     .touch_controls = true,
     .touch_pos = {{-1, -1}, {-1, -1}, {-1, -1}, {-1, -1}, {-1, -1}, {-1, -1}, {-1, -1}, {-1, -1}, {-1, -1}, {-1, -1},

@@ -13,6 +13,7 @@
 #include "../../kernel.h"
 #include "shaders.h"
 #include "vk.h"
+#include "timing_trace.h"
 #include "../renderer.h"
 #include "../../settings.h"
 #include "../../paths.h"
@@ -107,6 +108,9 @@ void vk_wait_seq(uint64_t seq) {
     stat_wait_ns += SDL_GetTicksNS() - t0;
     cum_wait += SDL_GetTicksNS() - t0;
     wait_account(SDL_GetTicksNS() - t0);
+#ifdef __ANDROID__
+    if (vk_timing_trace_on()) vk_timing_trace_wait(VK_TIMING_TIMELINE, SDL_GetTicksNS() - t0);
+#endif
     if (r == VK_TIMEOUT) LOG("[vk] GPU did not finish submission %llu within 10 s (device lost?)\n", (unsigned long long)seq);
     else if (r == VK_SUCCESS) cq_resolve_done(seq);  // (the game reads its timing counters after waiting)
 #ifdef __ANDROID__
@@ -144,7 +148,13 @@ static _Atomic uint64_t gpu_busy_total;  // (GPU ns working, all submissions so 
 #else
 #define CQ_QUERIES CQ_MAX
 #endif
-typedef struct { VkQueryPool pool; uint32_t n; uint64_t seq; uint64_t *out[CQ_MAX]; bool ts; } CounterQ;
+typedef struct {
+    VkQueryPool pool; uint32_t n; uint64_t seq; uint64_t *out[CQ_MAX]; bool ts;
+#ifdef __ANDROID__
+    uint64_t frame[CQ_MAX], host_ns[CQ_MAX];  // opt-in diagnostics: identity at command execution, not query resolution
+    bool presentation;
+#endif
+} CounterQ;
 static CounterQ cq[SUBS];
 static pthread_mutex_t cq_lock = PTHREAD_MUTEX_INITIALIZER;
 static int64_t cq_offset;  // host ns - GPU ns (the smallest seen)
@@ -177,9 +187,10 @@ static int vk_counter_mode(void) {
 // LARECOMP_PACE=0: off.
 #define PACE_SLOW_NS 20000000ull
 extern __thread uint64_t g_blocked_ns;  // kernel.c: this thread's time blocked in waits / sleeps
-static bool pace_slow;
+// Written by the game's presenting thread, read while resolving GPU counters on the render thread.
+static _Atomic bool pace_slow;
 static uint64_t stat_pace_over;
-static int pace_on = -1;
+static _Atomic int pace_on = -1;
 
 void vk_pace_frame(void) {
     if (pace_on < 0) { const char *e = getenv("LARECOMP_PACE"); pace_on = !e || atoi(e) != 0; }
@@ -187,6 +198,26 @@ void vk_pace_frame(void) {
     static uint8_t over[60];
     static int idx, nover, calm;
     static double avg;  // busy ms, moving average (~20 frames)
+#ifdef __ANDROID__
+    static uint64_t slow_since, probe_at, probe_wait = 10000000000ull;
+    static int last_mode = -1, last_resolution = -1;
+    // A failed trial describes the old workload. Reconsider Auto immediately when the user changes resolution
+    // or returns from a fixed FPS mode; otherwise its old exponential backoff can keep the new workload at 30
+    // for up to 80 seconds. Keep ordinary hitches from restarting trials (and causing repeated oscillation).
+    bool changed = last_mode != g_settings.fps_mode || last_resolution != g_settings.res_mode;
+    last_mode = g_settings.fps_mode;
+    last_resolution = g_settings.res_mode;
+    if (changed) {
+        memset(over, 0, sizeof over);
+        idx = nover = calm = 0;
+        avg = 0;
+        slow_since = probe_at = 0;
+        probe_wait = 10000000000ull;
+        pace_slow = pace_on && g_settings.fps_mode == 1;
+        last = 0;  // discard the transition frame's timing, including menu time and resource reallocation
+        LOG("[pace] settings changed: fresh %s pacing history\n", g_settings.fps_mode ? "fixed" : "auto");
+    }
+#endif
     uint64_t now = plat_now_ns(), w = g_blocked_ns;
     uint64_t p = now - last, wt = w - last_wait;
     bool first = !last;
@@ -258,6 +289,30 @@ void vk_pace_frame(void) {
     // (or one that missed its vsync, whatever held it: with the render thread both halves can fit and the frame still
     // take two vsyncs - slow motion all the same)
     int o = steps == 1 && (busy > 16.2 || p > 20000000ull);
+    // Low-volume diagnostics: distinguish real work from a late presentation without per-frame logcat traffic.
+    // Deliberately independent of ADPF and of the decision below.
+    static int trace = -1;
+    if (trace < 0) { const char *e = getenv("LARECOMP_PACE_TRACE"); trace = e && atoi(e) != 0; }
+    if (trace) {
+        static uint64_t since;
+        static int n, one, late_only, work_over, slow_n;
+        static double game_sum, render_sum, period_sum, blocked_sum, busy_max;
+        if (!since) since = now;
+        n++; one += steps == 1; slow_n += pace_slow;
+        late_only += steps == 1 && p > 20000000ull && busy <= 16.2;
+        work_over += steps == 1 && busy > 16.2;
+        game_sum += game_busy; render_sum += render_busy;
+        period_sum += p / 1e6; blocked_sum += wt / 1e6;
+        if (busy > busy_max) busy_max = busy;
+        if (now - since >= 2000000000ull) {
+            LOG("[pace-trace] n %d one %d late-only %d work-over %d forced30 %d period %.2f blocked %.2f game %.2f render %.2f max %.2f avg-step %.2f over %d retry %.0f\n",
+                n, one, late_only, work_over, slow_n, period_sum / n, blocked_sum / n, game_sum / n,
+                render_sum / n, busy_max, avg, nover, probe_wait / 1e9);
+            since = now;
+            n = one = late_only = work_over = slow_n = 0;
+            game_sum = render_sum = period_sum = blocked_sum = busy_max = 0;
+        }
+    }
 #else
     int o = busy > 16.2;
 #endif
@@ -279,7 +334,6 @@ void vk_pace_frame(void) {
     // passes there - one hitch (a pipeline compile) kept the overworld at 30 for good. Every probe_wait seconds at
     // 30 the game's own choice comes back for a trial; frames that don't fit within 3 s bring the 30 back (each
     // failed trial doubles the wait, up to 80 s; a trial that holds resets it).
-    static uint64_t slow_since, probe_at, probe_wait = 10000000000ull;
     if (pace_slow && !slow_since) slow_since = now;
     if (probe_at && now - probe_at < 1000000000ull) nover = 0, memset(over, 0, sizeof over);  // (the game switching)
     if (probe_at && !pace_slow && now - probe_at >= 3000000000ull) probe_at = 0, probe_wait = 10000000000ull;
@@ -302,7 +356,7 @@ void vk_pace_frame(void) {
             pace_slow = false, nover = 0;
             memset(over, 0, sizeof over);
             probe_at = now;
-            LOG("[pace] 2 s with headroom: back to the game's own choice\n");
+            LOG("[pace] 120 frames with headroom: back to the game's own choice\n");
         }
 #else
         if (calm >= 120) {
@@ -355,18 +409,24 @@ static void cq_resolve(int i) {  // (cq_lock held) submission slot i is done: it
     if (q->ts) {
         q->ts = false;
         uint64_t se[2];
-        if (vkGetQueryPoolResults(g_vk.dev, q->pool, CQ_MAX, 2, sizeof se, se, 8, VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
+        VkResult result = vkGetQueryPoolResults(g_vk.dev, q->pool, CQ_MAX, 2, sizeof se, se, 8, VK_QUERY_RESULT_64_BIT);
+        if (result == VK_SUCCESS) {
             double per = g_vk.props.limits.timestampPeriod;
             int64_t s0 = (int64_t)((double)se[0] * per), s1 = (int64_t)((double)se[1] * per);
             if (last_end >= 0 && s0 > last_end) idle += s0 - last_end;
-            if (s1 > s0) gpu_busy_total += (uint64_t)(s1 - (s0 > last_end ? s0 : last_end > s1 ? s1 : last_end));
+            if (s1 > s0) {
+                uint64_t ns = (uint64_t)(s1 - (s0 > last_end ? s0 : last_end > s1 ? s1 : last_end));
+                gpu_busy_total += ns;
+                vk_timing_trace_submission(ns, q->presentation);
+            }
             if (s1 > last_end) last_end = s1;
-        }
+        } else vk_timing_trace_query_failure(result, 0, q->seq);
     }
 #endif
     if (!q->n) return;
     uint64_t t[CQ_MAX];
-    if (vkGetQueryPoolResults(g_vk.dev, q->pool, 0, q->n, sizeof t, t, 8, VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
+    VkResult result = vkGetQueryPoolResults(g_vk.dev, q->pool, 0, q->n, sizeof t, t, 8, VK_QUERY_RESULT_64_BIT);
+    if (result == VK_SUCCESS) {
         double per = g_vk.props.limits.timestampPeriod;
         int64_t cand = (int64_t)plat_now_ns() - (int64_t)((double)t[q->n - 1] * per);
         if (!cq_calibrated || cand < cq_offset) cq_offset = cand, cq_calibrated = true;
@@ -376,6 +436,7 @@ static void cq_resolve(int i) {  // (cq_lock held) submission slot i is done: it
             uint64_t gpu = ns_to_gpu_ticks((uint64_t)((int64_t)((double)t[k] * per) + cq_offset));
             const uint64_t *start = k ? q->out[k - 1] : NULL;
 #ifdef __ANDROID__
+            bool idle_matched = false;
             {   // a pair's end (16 bytes after a start seen before): the start's value + the busy time in between
                 static struct { uint64_t *out; uint64_t val; int64_t raw, idle; } seen[4];
                 static int nseen;
@@ -386,6 +447,7 @@ static void cq_resolve(int i) {  // (cq_lock held) submission slot i is done: it
                         uint64_t v = seen[j].val + ns_to_gpu_ticks((uint64_t)(busy > 0 ? busy : 0));
                         if (v < gpu) gpu = v;
                         start = seen[j].out;
+                        idle_matched = true;
                         break;
                     }
                 seen[nseen & 3].out = q->out[k];
@@ -397,10 +459,22 @@ static void cq_resolve(int i) {  // (cq_lock held) submission slot i is done: it
 #endif
             if (log) LOG("[counter] seq %llu #%u at %llx host %.3f gpu %.3f ms\n", (unsigned long long)q->seq, k,
                          (unsigned long long)(uintptr_t)q->out[k], q->out[k][1] * 625.0 / 384 / 1e6, gpu * 625.0 / 384 / 1e6);
-            q->out[k][1] = pace_end_counter(start, q->out[k], gpu);
+            uint64_t delivered = pace_end_counter(start, q->out[k], gpu);
+#ifdef __ANDROID__
+            if (vk_timing_trace_on()) {
+                VkTimingCounter sample = {.address = (uint64_t)(uintptr_t)q->out[k], .frame = q->frame[k],
+                    .seq = q->seq, .host_ns = q->host_ns[k], .raw_ns = (int64_t)((double)t[k] * per), .idle_ns = idle,
+                    .gpu_ticks = gpu, .delivered_ticks = delivered, .idle_matched = idle_matched};
+                vk_timing_trace_counter(&sample);
+            }
+#endif
+            q->out[k][1] = delivered;
         }
         stat_counters_gpu += q->n;
     }
+#ifdef __ANDROID__
+    else vk_timing_trace_query_failure(result, q->n, q->seq);
+#endif
     q->n = 0;
 }
 
@@ -454,6 +528,30 @@ static void begin_cb(VkCommandBuffer *cb, bool *begun) {
 }
 
 static void gp_mark(VkCommandBuffer cb, const char *fmt, ...);
+static void upload_begin_barrier(VkCommandBuffer cb) {
+#ifdef __ANDROID__
+    static int narrow = -1;
+    if (narrow < 0) {
+        const char *e = getenv("LARECOMP_VK_UPLOAD_BARRIER");
+        narrow = e && atoi(e) != 0;  // experimental: no repeatable frame-time benefit established yet
+    }
+    if (narrow) {
+        // This buffer only records copies, clears and initial image-layout transitions. Prior submissions may
+        // still read or write the upload destinations: retain ALL_COMMANDS on the source side (including WAR
+        // execution ordering), but only the following transfer reads/writes need to wait. Image initialization
+        // supplies its own image barrier; the end-of-upload publication barrier remains conservative.
+        VkMemoryBarrier2 mb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                               .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                               .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+                               .dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+                               .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT};
+        VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &mb};
+        vkCmdPipelineBarrier2(cb, &di);
+        return;
+    }
+#endif
+    vk_full_barrier(cb);
+}
 VkCommandBuffer vk_cmd(void) {
     Sub *s = sub();
     if (!s->main_begun) {
@@ -491,7 +589,7 @@ VkCommandBuffer vk_upload_cmd(void) {
         begin_cb(&s->upload, &s->upload_begun);
         // after everything submitted before it: a submission's commands may start while the previous one's still run,
         // and these copies overwrite what those may read (textures being replaced, vertex cache pages)
-        vk_full_barrier(s->upload);
+        upload_begin_barrier(s->upload);
     }
     return s->upload;
 }
@@ -590,6 +688,7 @@ void vk_submit_extra(VkSemaphore wait, VkSemaphore signal, VkCommandBuffer extra
         vkCmdWriteTimestamp2(s->main, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, cq[cur_sub].pool, CQ_MAX + 1);
         pthread_mutex_lock(&cq_lock);
         cq[cur_sub].ts = true;
+        cq[cur_sub].presentation = wait != VK_NULL_HANDLE || signal != VK_NULL_HANDLE;
         pthread_mutex_unlock(&cq_lock);
     }
 #endif
@@ -608,7 +707,13 @@ void vk_submit_extra(VkSemaphore wait, VkSemaphore signal, VkCommandBuffer extra
     {
         PROF_T0();
         dl_note("submit %llu", (unsigned long long)submit_seq + 1);
+#ifdef __ANDROID__
+        uint64_t trace_start = vk_timing_trace_on() ? SDL_GetTicksNS() : 0;
+#endif
         VkResult sr = vkQueueSubmit2(g_vk.queue, 1, &si, VK_NULL_HANDLE);
+#ifdef __ANDROID__
+        if (trace_start) vk_timing_trace_wait(VK_TIMING_SUBMIT, SDL_GetTicksNS() - trace_start);
+#endif
         if (sr == VK_ERROR_DEVICE_LOST) vk_devlost_dump();
         VK_CHECK(sr);
         PROF_ADD(prof_submit);
@@ -671,6 +776,9 @@ void renderer_wait_seq(uint64_t seq) {
     uint64_t s = submit_seq;
     pthread_mutex_unlock(&seq_lock);
     wait_why = seq > s ? "SyncWait (fence not submitted yet)" : "SyncWait";
+#ifdef __ANDROID__
+    vk_timing_trace_fence(seq, s);
+#endif
     static int log = -1;  // LARECOMP_LOG_SYNCSEQ=1: which submission each SyncWait waits for (vs the last one) and how long
     if (log < 0) log = getenv("LARECOMP_LOG_SYNCSEQ") != NULL;
     uint64_t t0 = log ? SDL_GetTicksNS() : 0;
@@ -1459,13 +1567,35 @@ static void clear(int index, int kind, const void *color, uint32_t mask, bool de
 
 // ================================================================== programs
 #define MAX_BIND 96
+#ifdef __ANDROID__
+// Reflection is immutable once a program is published. Partition its bindings once, rather than scanning both
+// stages twice per draw. Only metadata is reused: live buffers, texture views and UBO contents are still resolved.
+typedef struct { uint8_t regular[MAX_BIND], deferred[MAX_BIND]; int nregular, ndeferred; } DescriptorPlan;
+static void descriptor_plan(const VkBindingInfo *binds, int count, uint32_t set, DescriptorPlan *plan) {
+    plan->nregular = plan->ndeferred = 0;
+    for (int i = 0; i < count; i++) {
+        const VkBindingInfo *b = &binds[i];
+        if (b->set != set) continue;
+        if ((b->type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER && b->binding >= 32) ||
+            (b->type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER && b->binding < 17) || b->type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+            plan->regular[plan->nregular++] = (uint8_t)i;
+        else if (b->type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER &&
+                 (b->binding == 18 || b->binding == 19 || b->binding == GMAP_BUFFER_INDEX))
+            plan->deferred[plan->ndeferred++] = (uint8_t)i;
+    }
+}
+#endif
 typedef struct {
     ShaderInfo *vi, *fi;
-    uint64_t code[2], cmax[2];  // translation inputs (copied: translated on the translator thread)
+    uint64_t code[2], cmax[2];  // guest addresses retained for translation and diagnostics
+    size_t const_bytes[2];
     ShaderKey vkey, fkey;
     VkShaderModule vs, fs;
     VkBindingInfo binds[MAX_BIND];
     int nbinds;
+#ifdef __ANDROID__
+    DescriptorPlan descriptor_plans[2];
+#endif
     VkDescriptorSetLayout set_layout[2];
     VkPipelineLayout layout;
     bool vs_uses_vid;
@@ -1473,6 +1603,9 @@ typedef struct {
 } Prog;
 
 static VkPipelineLayout make_layout(Prog *p, int nsets, VkShaderStageFlags s0, VkShaderStageFlags s1) {
+#ifdef __ANDROID__
+    for (int set = 0; set < nsets; set++) descriptor_plan(p->binds, p->nbinds, (uint32_t)set, &p->descriptor_plans[set]);
+#endif
     p->set_layout[0] = vk_set_layout(p->binds, p->nbinds, 0, s0);
     if (nsets > 1) p->set_layout[1] = vk_set_layout(p->binds, p->nbinds, 1, s1);
     VkPipelineLayoutCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = (uint32_t)nsets,
@@ -1536,6 +1669,13 @@ static void compile_program(void *arg) {
     p->fs = vk_module(sf, nf);
     free(sv);
     free(sf);
+    if (!p->vs || !p->fs) {
+        if (p->vs) vkDestroyShaderModule(g_vk.dev, p->vs, NULL);
+        if (p->fs) vkDestroyShaderModule(g_vk.dev, p->fs, NULL);
+        p->vs = p->fs = VK_NULL_HANDLE;
+        atomic_store(&p->state, 2);
+        return;
+    }
     p->layout = make_layout(p, 2, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT);
     atomic_fetch_add(&stat_compiles, 1);
     atomic_store(&p->state, p->vs && p->fs ? 1 : 2);
@@ -1577,6 +1717,7 @@ static void translate_program(void *arg) {
     maxwell_gmem_base = HEAP_BASE;
     maxwell_gmem_size = HEAP_MAX;
 #ifdef __ANDROID__
+    maxwell_no_int64 = !g_vk.shader_int64 || getenv("LARECOMP_VK_INT32") != NULL;
     maxwell_gmem_map_all = gcopy_mode;
     maxwell_gmem_miss_log = gcopy_mode && !getenv("LARECOMP_NO_GMISS");
     if (getenv("LARECOMP_GMISS_STAGES"))  // (a test: which stages log misses - 1 vertex, 2 fragment, 32 compute)
@@ -1589,10 +1730,10 @@ static void translate_program(void *arg) {
     maxwell_native_half = !getenv("LARECOMP_BITWISE_HALF");
     maxwell_fast_minmax = !getenv("LARECOMP_SAFE_MATH");
 #endif
-    p->vi = maxwell_translate((const uint8_t *)(uintptr_t)p->code[0], p->cmax[0], STAGE_VERTEX, &p->vkey);
+    p->vi = maxwell_translate_bounded((const uint8_t *)(uintptr_t)p->code[0], p->cmax[0], p->const_bytes[0], STAGE_VERTEX, &p->vkey);
     if (p->vi->msl) {
         p->fkey.vs_out_mask = p->vi->out_mask;
-        p->fi = maxwell_translate((const uint8_t *)(uintptr_t)p->code[1], p->cmax[1], STAGE_FRAGMENT, &p->fkey);
+        p->fi = maxwell_translate_bounded((const uint8_t *)(uintptr_t)p->code[1], p->cmax[1], p->const_bytes[1], STAGE_FRAGMENT, &p->fkey);
     }
     pthread_mutex_unlock(&translate_lock);
     if (!p->vi->msl) {
@@ -1654,6 +1795,7 @@ static Prog *get_program(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey) {
     for (int i = 0; i < 2; i++) {
         p->code[i] = np->stages[i].code_addr;
         p->cmax[i] = np->stages[i].const_offset ? np->stages[i].const_offset : 0x10000;
+        p->const_bytes[i] = np->stages[i].const_offset ? np->stages[i].const_size : 0;
     }
     p->vkey = *vkey;
     p->fkey = *fkey;
@@ -3358,14 +3500,28 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
     int n = 0;
     int sg = stage == 1 ? 1 : 0;
 #ifdef __ANDROID__
+    static int planned = -1;
+    if (planned < 0) {
+        const char *e = getenv("LARECOMP_VK_DESCRIPTOR_PLAN");
+        planned = e && atoi(e) != 0;  // experimental: keep the measured stable path as the default
+    }
+    const DescriptorPlan *plan = &p->descriptor_plans[set];
+#endif
+#ifdef __ANDROID__
     float rs[66][4];  // (filled when the shader has the table: binding 18 below)
 #else
     float rs[66][4] = {{1, 1, 0, 0}};  // ([65]: mirror mode, renderer.m)
     if (rscale_row0) memcpy(rs[0], rscale_row0, 16);
     rs[65][0] = g_mirror_w;
 #endif
+#ifdef __ANDROID__
+    int regular_count = planned ? plan->nregular : p->nbinds;
+    for (int i = 0; i < regular_count; i++) {
+        VkBindingInfo *b = &p->binds[planned ? plan->regular[i] : i];
+#else
     for (int i = 0; i < p->nbinds; i++) {
         VkBindingInfo *b = &p->binds[i];
+#endif
         if (b->set != set) continue;
         w[n] = (VkWriteDescriptorSet){.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds, .dstBinding = b->binding,
                                       .descriptorCount = 1, .descriptorType = b->type};
@@ -3408,8 +3564,14 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
         }
         n++;
     }
+#ifdef __ANDROID__
+    int deferred_count = planned ? plan->ndeferred : p->nbinds;
+    for (int i = 0; i < deferred_count; i++) {
+        VkBindingInfo *b = &p->binds[planned ? plan->deferred[i] : i];
+#else
     for (int i = 0; i < p->nbinds; i++) {
         VkBindingInfo *b = &p->binds[i];
+#endif
         if (b->set != set || b->type != VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ||
             (b->binding != 18 && b->binding != 19 && b->binding != GMAP_BUFFER_INDEX)) continue;
         w[n] = (VkWriteDescriptorSet){.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds, .dstBinding = b->binding,
@@ -3470,7 +3632,7 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
 }
 
 // ================================================================== compute
-typedef struct { Prog p; ShaderInfo *si; VkPipeline pipe; uint32_t local[3]; uint8_t *code; uint64_t addr, cmax; bool copy_mode; } CsProg;
+typedef struct { Prog p; ShaderInfo *si; VkPipeline pipe; uint32_t local[3]; uint8_t *code; uint64_t addr, cmax; size_t const_bytes; bool copy_mode; } CsProg;
 
 static void build_compute(void *arg) {
     CsProg *cp = arg;
@@ -3480,6 +3642,7 @@ static void build_compute(void *arg) {
     cp->p.nbinds = vk_reflect(spv, n, cp->p.binds, MAX_BIND);
     VkShaderModule m = vk_module(spv, n);
     free(spv);
+    if (!m) { atomic_store(&cp->p.state, 2); return; }
     cp->p.layout = make_layout(&cp->p, 1, VK_SHADER_STAGE_COMPUTE_BIT, 0);
     VkSpecializationMapEntry me[3] = {{0, 0, 4}, {1, 4, 4}, {2, 8, 4}};
     VkSpecializationInfo spec = {3, me, 12, cp->local};
@@ -3502,6 +3665,7 @@ static void translate_compute(void *arg) {
     maxwell_gmem_base = HEAP_BASE;
     maxwell_gmem_size = HEAP_MAX;
 #ifdef __ANDROID__
+    maxwell_no_int64 = !g_vk.shader_int64 || getenv("LARECOMP_VK_INT32") != NULL;
     maxwell_gmem_map_all = cp->copy_mode;
     maxwell_gmem_miss_log = cp->copy_mode && !getenv("LARECOMP_NO_GMISS");
     if (getenv("LARECOMP_GMISS_STAGES"))  // (a test: which stages log misses - 1 vertex, 2 fragment, 32 compute)
@@ -3516,7 +3680,7 @@ static void translate_compute(void *arg) {
 #endif
     ShaderKey k = {0};
     k.glsl = 1;
-    cp->si = maxwell_translate(cp->code, cp->cmax, STAGE_COMPUTE, &k);
+    cp->si = maxwell_translate_bounded(cp->code, cp->cmax, cp->const_bytes, STAGE_COMPUTE, &k);
     pthread_mutex_unlock(&translate_lock);
     free(cp->code); cp->code = NULL;
     cp->p.vi = cp->si;
@@ -3542,9 +3706,12 @@ static CsProg *compute_program(NvnProgram *np) {
 #ifdef __ANDROID__
     cp->copy_mode = gcopy_mode;
 #endif
-    cp->code = malloc(cp->cmax);
+    // BRX analysis inspects at most 1024 constant words after the code; own that range too.
+    cp->const_bytes = ss->const_offset ? ss->const_size : 0;
+    if (cp->const_bytes > 4096) cp->const_bytes = 4096;
+    cp->code = malloc(cp->cmax + cp->const_bytes);
     if (!cp->code) { atomic_store(&cp->p.state, 2); return cp; }
-    memcpy(cp->code, (const void *)(uintptr_t)cp->addr, cp->cmax);
+    memcpy(cp->code, (const void *)(uintptr_t)cp->addr, cp->cmax + cp->const_bytes);
     for (int i = 0; i < 3; i++) {
         cp->local[i] = ss->control ? *(const uint32_t *)(ss->control + 0x748 + 4 * i) : 1;
         if (!cp->local[i]) cp->local[i] = 1;
@@ -4928,8 +5095,14 @@ static void exec_list(uint64_t handle, int depth) {
                 pthread_mutex_lock(&cq_lock);
                 if (q->pool && q->n < CQ_MAX) {
                     vkCmdWriteTimestamp2(cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, q->pool, q->n);
+#ifdef __ANDROID__
+                    if (vk_timing_trace_on()) { q->frame[q->n] = vk_frame_counter(); q->host_ns[q->n] = plat_now_ns(); }
+#endif
                     q->out[q->n++] = out;
                 }
+#ifdef __ANDROID__
+                else vk_timing_trace_query_failure(-1, 1, q->seq);
+#endif
                 pthread_mutex_unlock(&cq_lock);
             }
             break;

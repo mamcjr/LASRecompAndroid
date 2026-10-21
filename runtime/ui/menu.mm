@@ -477,11 +477,20 @@ static void tab_display(void) {
                "On-screen buttons and stick while no controller is connected. The back button opens this menu.");
     {
         static const char *fr[] = {"Auto (30 / 60)", "30 fps", "60 fps"};
+#ifdef __ANDROID__
+        opt_choice("Frame rate", &g_settings.fps_mode, fr, 3, 1,
+                   "The game runs in steps of a 60 Hz clock: at 60 fps one step per frame, at 30 fps two. Auto: the "
+                   "game picks, as on the Switch, and drops to 30 where 60 doesn't fit. 30 fps: targets a fixed 30; "
+                   "actual performance depends on your device and settings. "
+                   "60 fps: always 60 - where a frame takes longer, the game runs in slow motion (it can't run above "
+                   "60: it would speed up).");
+#else
         opt_choice("Frame rate", &g_settings.fps_mode, fr, 3, 0,
                    "The game runs in steps of a 60 Hz clock: at 60 fps one step per frame, at 30 fps two. Auto: the "
                    "game picks, as on the Switch, and drops to 30 where 60 doesn't fit. 30 fps: always 30, steady. "
                    "60 fps: always 60 - where a frame takes longer, the game runs in slow motion (it can't run above "
                    "60: it would speed up).");
+#endif
     }
 #endif
 
@@ -492,9 +501,11 @@ static void tab_display(void) {
 #ifdef __ANDROID__  // (3x / 4x: 4K / 8K, beyond a phone)
     static const char *res[] = {"25%", "50%", "75%", "Match display", "Dynamic", "1x", "2x"};
     static const int res_mode[] = {RES_Q25, RES_Q50, RES_Q75, RES_MATCH, RES_DYNAMIC, 1, 2};
+    enum { RES_DEFAULT_AT = 1 };
 #else
     static const char *res[] = {"25%", "50%", "75%", "Match display", "Dynamic", "1x", "2x", "3x", "4x"};
     static const int res_mode[] = {RES_Q25, RES_Q50, RES_Q75, RES_MATCH, RES_DYNAMIC, 1, 2, 3, 4};
+    enum { RES_DEFAULT_AT = 3 };
 #endif
     enum { RES_MATCH_AT = 3 };
     enum { NRES = sizeof res_mode / sizeof res_mode[0] };
@@ -510,7 +521,7 @@ static void tab_display(void) {
                                       "%.0f x %.0f.", 1920.0 * sx, 1080.0 * sy);
         if (g_settings.res_mode == RES_DYNAMIC)
             snprintf(d + n, sizeof d - n, " Dynamic: %.0f%% of the display right now.", output_scale_dynamic_factor() * 100);
-        if (opt_choice("Internal resolution", &ri, res, NRES, RES_MATCH_AT, d, false)) g_settings.res_mode = res_mode[ri];
+        if (opt_choice("Internal resolution", &ri, res, NRES, RES_DEFAULT_AT, d, false)) g_settings.res_mode = res_mode[ri];
     }
     {   // each OS's own upscaler next to bilinear (UPSCALE_SHARP: MetalFX on macOS, AMD FSR 1 on Windows)
 #ifdef __APPLE__

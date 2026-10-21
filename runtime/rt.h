@@ -8,7 +8,12 @@
 #include "platform.h"
 
 #define LOG(...) fprintf(stderr, __VA_ARGS__)
+#ifdef __ANDROID__
+void rt_fatal_message(const char *format, ...) __attribute__((noreturn, format(printf, 1, 2)));
+#define FATAL(...) rt_fatal_message(__VA_ARGS__)
+#else
 #define FATAL(...) (fprintf(stderr, "FATAL: " __VA_ARGS__), rt_fatal_trace())
+#endif
 
 // ---- address space layout (guest addresses == host addresses)
 // macOS reserves 0x2_0000_0000-0x70_0000_0000, and guest addresses must fit in 39 bits, so the

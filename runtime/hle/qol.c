@@ -196,7 +196,8 @@ static void setting_at_tick(void) {
     if (now == last) return;
     char buf[512];
     snprintf(buf, sizeof buf, "%s", spec);
-    for (char *save = NULL, *tok = strtok_r(buf, ",", &save); tok; tok = strtok_r(NULL, ",", &save)) {
+    // '|' avoids the comma separator used by Android's intent environment parser.
+    for (char *save = NULL, *tok = strtok_r(buf, ",|", &save); tok; tok = strtok_r(NULL, ",|", &save)) {
         unsigned long f;
         char key[32];
         int v;

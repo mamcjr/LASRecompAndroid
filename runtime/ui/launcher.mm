@@ -294,7 +294,12 @@ static bool build_game_code(void) {
     bool ok = gamebuild_run(g_root.c_str(), &o, why, sizeof why);
     if (!ok) {
         fprintf(stderr, "[launcher] game code: %s\n", why);
+#ifdef __ANDROID__  // (the reason on screen: a tester can report it without adb)
+        if (why[0]) set_job("The game code didn't build", true, why);
+        else set_failure(FAIL_BUILD);
+#else
         set_failure(FAIL_BUILD);
+#endif
     }
     return ok;
 }
@@ -316,7 +321,7 @@ static void *extract_thread(void *) {
         char why[256] = "";
         if (!romfs_build((g_root + "/romfs").c_str(), (g_root + "/romfs.bin").c_str(), setup_progress, why, sizeof why)) {
             fprintf(stderr, "[launcher] romfs image: %s\n", why);
-            set_failure(FAIL_COPY);
+            set_job("Could not build the game data image", true, why[0] ? why : "Check free storage and import the game folder again.");
             goto done;
         }
         if (!build_game_code()) goto done;
@@ -356,7 +361,11 @@ static void *extract_thread(void *) {
         char why[256] = "";
         if (!romfs_build((g_root + "/romfs").c_str(), (g_root + "/romfs.bin").c_str(), setup_progress, why, sizeof why)) {
             fprintf(stderr, "[launcher] romfs image: %s\n", why);
+#ifdef __ANDROID__
+            set_job("Could not build the game data image", true, why[0] ? why : "Check free storage and import the game folder again.");
+#else
             set_failure(FAIL_COPY);
+#endif
             goto done;
         }
         if (!build_game_code()) goto done;
@@ -449,6 +458,14 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_lasrecomp_LASRecompActivity_nativ
     return memcmp(b, BUILD_ID, 8) == 0 ? JNI_TRUE : JNI_FALSE;
 }
 
+extern "C" JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeImportChecking(JNIEnv *, jclass) {
+    pthread_mutex_lock(&g_lock);
+    g_busy = true;
+    pthread_mutex_unlock(&g_lock);
+    g_done = 0, g_total = 0, g_phase_base = 0, g_build_frac = -1, g_copy_skipped = false;
+    set_job("Checking game files and free storage...");
+}
+
 extern "C" JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeImportBegin(JNIEnv *env, jclass, jstring name) {
     const char *n = env->GetStringUTFChars(name, NULL);
     pthread_mutex_lock(&g_lock);
@@ -468,6 +485,15 @@ extern "C" JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeImp
 }
 
 // 0 copied, 1 cancelled, 2 no game files found, 3 game packages instead of files, 4 another version, 5 copy failed
+extern "C" JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeImportFailure(JNIEnv *env, jclass, jstring reason) {
+    const char *message = env->GetStringUTFChars(reason, NULL);
+    set_job("Setup didn't finish", true, message ? message : "Could not import game files. Please try again.");
+    if (message) env->ReleaseStringUTFChars(reason, message);
+    pthread_mutex_lock(&g_lock);
+    g_busy = false;
+    pthread_mutex_unlock(&g_lock);
+}
+
 extern "C" JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeImportDone(JNIEnv *, jclass, jint result) {
     if (result == 0) {
         g_android_imported = true;

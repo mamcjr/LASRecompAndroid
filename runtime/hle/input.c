@@ -9,6 +9,9 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef __ANDROID__
+#include <time.h>
+#endif
 
 #include "../hle.h"
 #include "../nvn/nvn.h"
@@ -320,7 +323,30 @@ static void host_test_frame(uint64_t frame) {
 }
 
 static uint64_t g_pad_obj;
+#ifdef __ANDROID__
+// Optional CPU frame boundaries in the same clock domain as SurfaceFlinger latency timestamps.
+// These mark the input/game thread, not the completion of a GPU frame.
+static void benchmark_markers(uint64_t frame) {
+    static const char *next;
+    static bool initialized;
+    if (!initialized) { next = getenv("LARECOMP_BENCHMARK_MARKERS"); initialized = true; }
+    while (next && *next) {
+        char *end;
+        unsigned long long at = strtoull(next, &end, 10);
+        if (end == next || (*end && *end != ',')) { next = NULL; return; }
+        if (frame < at) return;
+        next = *end ? end + 1 : NULL;
+        struct timespec now;
+        if (clock_gettime(CLOCK_MONOTONIC, &now) == 0)
+            LOG("[benchmark] frame %llu requested %llu monotonic-ns %llu\n",
+                (unsigned long long)frame, at,
+                (unsigned long long)now.tv_sec * 1000000000ull + (unsigned long long)now.tv_nsec);
+    }
+}
+#endif
 volatile int g_inject_plus;  // frames to hold Plus for the game (movie.c: A/B skip the opening on rando seeds)
+#include "benchmark_route.h"
+#include "benchmark_settings.h"
 RT_ON_RESET(input_reboot_reset) { g_pad_obj = 0; g_inject_plus = 0; }  // (reboot: the controller object was guest memory)
 void input_frame(uint64_t frame) {
     if (g_pad_obj && getenv("LARECOMP_DUMP_PAD") && frame % 600 == 0) {
@@ -339,6 +365,10 @@ void input_frame(uint64_t frame) {
     extern void watch_arm(void);
     watch_arm();
     host_test_frame(frame);
+#ifdef __ANDROID__
+    benchmark_markers(frame);
+    benchmark_settings(frame);
+#endif
     const char *spec = getenv("LARECOMP_INPUT");
     if (!spec) return;
     static const char *const names[] = {"A", "B", "X", "Y", "LSTICK", "RSTICK", "L", "R", "ZL", "ZR", "PLUS",
@@ -373,6 +403,9 @@ void input_frame(uint64_t frame) {
         extern uint64_t g_test_buttons, g_test_buttons_until;  // (LARECOMP_PLACE action script)
         if (frame < g_test_buttons_until) b |= g_test_buttons;
     }
+#ifdef __ANDROID__
+    benchmark_route(frame, &lx, &ly, &b);
+#endif
     script_buttons = b;
     script_lx = lx;
     script_ly = ly;

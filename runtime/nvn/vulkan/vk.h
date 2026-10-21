@@ -42,7 +42,7 @@ typedef struct {
     VkPipelineCache pcache;
     VkSemaphore timeline;      // value = last completed submission number
     VkCommandPool pool;        // render thread only
-    bool custom_border, divisor, host_import;
+    bool custom_border, divisor, host_import, shader_int64;
 #ifdef __ANDROID__
     bool map_placed;              // VK_EXT_map_memory_placed: the guest heap mapped as GPU memory (exec.c vk_heap_place)
     uint64_t placed_align;
