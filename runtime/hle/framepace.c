@@ -17,7 +17,38 @@
 extern volatile uint64_t g_vsync_count;  // runtime/hle/vi.c
 uint64_t g_frame_steps_late;             // (stats) frames that advanced more than one step
 
+#ifdef __ANDROID__
+#include "../settings.h"
+// Frame rate 30 (Video): the frame timer picks its interval from the vsyncs a frame really took, clamped to its
+// state's minimum (+0x4e2) and maximum (+0x4e3); its GPU time only lets it step down. A frame that fits one vsync
+// (Turnip with the render thread) brought the 60 fps mode back however slow the counters said the GPU was. So for
+// the fixed 30 the minimum is raised to the maximum - the game's own 30 fps mode, two world steps a frame - and put
+// back for Auto / 60. (We are inside the frame timer here, tools/patches.py FRAME_STEPS_SITE: x23 is its state.)
+static void fixed_30(void) {
+    static uint64_t obj;
+    static int saved = -1;  // the game's own minimum while raised
+    Cpu *c = kernel_current_cpu();
+    uint64_t sys = c ? c->x[23] : 0;
+    if (!sys) return;
+    uint8_t *min = (uint8_t *)(uintptr_t)(sys + 0x4e2), max = *(uint8_t *)(uintptr_t)(sys + 0x4e3);
+    if (g_settings.fps_mode == 1) {
+        if (saved < 0 || obj != sys) {
+            saved = *min, obj = sys;
+            LOG("[pace] frame rate 30: the game's minimum interval %u -> %u\n", saved, max);
+        }
+        *min = max;
+    } else if (saved >= 0 && obj == sys) {
+        *min = (uint8_t)saved;
+        saved = -1;
+        LOG("[pace] the game's minimum interval back to %u\n", *min);
+    }
+}
+#endif
+
 uint32_t rt_frame_steps(uint32_t interval) {
+#ifdef __ANDROID__
+    fixed_30();
+#endif
     static int on = -1, max_steps, forced;
     if (on < 0) {
         const char *e = ENV("LARECOMP_FRAMEPACE");

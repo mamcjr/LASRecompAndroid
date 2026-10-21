@@ -184,7 +184,7 @@ static bool apply_tilt(int removed) {  // false: not set up yet (or not the name
 }
 
 // LARECOMP_SETTING_AT="frame:key=value,..." (test): flip an in-game menu toggle at that presented frame, as the menu
-// would (move_360, blur_removal, dpad_move).
+// would (move_360, blur_removal, dpad_move; Android also frame_rate=30/60/0).
 static void setting_at_tick(void) {
     static const char *spec;
     static int init;
@@ -202,6 +202,13 @@ static void setting_at_tick(void) {
         char key[32];
         int v;
         if (sscanf(tok, "%lu:%31[a-z_0-9]=%d", &f, key, &v) != 3 || f <= last || f > now) continue;
+#ifdef __ANDROID__
+        if (!strcmp(key, "frame_rate")) {  // (Video: Frame rate - 30, 60, anything else Auto)
+            g_settings.fps_mode = v == 30 ? 1 : v == 60 ? 2 : 0;
+            LOG("[qol] test: f%llu frame_rate = %d\n", (unsigned long long)now, v);
+            continue;
+        }
+#endif
         bool *b = !strcmp(key, "move_360") ? &g_settings.move_360 : !strcmp(key, "blur_removal") ? &g_settings.blur_removal :
                   !strcmp(key, "dpad_move") ? &g_settings.dpad_move : NULL;
         if (b) { *b = v != 0; LOG("[qol] test: f%llu %s = %d\n", (unsigned long long)now, key, v); }

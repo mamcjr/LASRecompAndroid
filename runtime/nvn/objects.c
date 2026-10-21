@@ -694,9 +694,30 @@ NVN(nvnQueueAcquireTexture) {
     w->next = (w->next + 1) % (w->active ? w->active : 1);
     RET(0);
 }
+#ifdef __ANDROID__
+#include "../settings.h"
+#endif
 NVN(nvnQueuePresentTexture) {
     NvnWindow *w = HOST(NvnWindow, A(1));
     int i = (int)A(2);
+#ifdef __ANDROID__
+    // Frame rate 30 (Video): the game keeps its 30 fps mode only while its frames really span its present interval -
+    // its frame timer (main+0xc910) counts the vsyncs since the last frame, and its GPU time (the counters, vulkan/
+    // exec.c pace_end_counter) only keeps it from stepping back down. The Switch's present holds the next frame for
+    // the interval; ours didn't, so a fast frame (Turnip with the render thread, POCO F7 Ultra) fit one vsync and the
+    // game went back to 60. Held here only for the fixed 30: Auto stays as it was.
+    if (g_settings.fps_mode == 1 && w->interval >= 2) {
+        extern volatile uint64_t g_vsync_count;  // runtime/hle/vi.c
+        static uint64_t last;
+        uint64_t due = last + (uint64_t)w->interval;
+        if (__atomic_load_n(&g_vsync_count, __ATOMIC_RELAXED) < due) {
+            kernel_blocking_begin();  // (a long wait: core 0 to the game's other threads, kernel.c)
+            while (__atomic_load_n(&g_vsync_count, __ATOMIC_RELAXED) < due) plat_sleep_until_ns(plat_now_ns() + 500000);
+            kernel_blocking_end();
+        }
+        last = __atomic_load_n(&g_vsync_count, __ATOMIC_RELAXED);
+    }
+#endif
     if (i >= 0 && i < w->num) backend_present(HOST(NvnTexture, w->textures[i]));
 }
 
