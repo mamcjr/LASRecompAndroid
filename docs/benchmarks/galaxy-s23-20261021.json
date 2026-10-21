@@ -1,0 +1,815 @@
+{
+  "device": "SM-S911B",
+  "android": "16",
+  "date": "2026-10-21",
+  "build_sha256": "6b7c9c7769ec74ea69b1c7012a151cfc724f09b3055412ca85a80dee26107d75",
+  "adpf": "unchanged",
+  "memory_path": "LARECOMP_VK_NO_PLACED=1 for both drivers",
+  "drivers": {
+    "turnip": "Turnip Adreno (TM) 740"
+  },
+  "settle_s": 10.0,
+  "measure_s": 30.0,
+  "rows": [
+    {
+      "profile": {
+        "id": 1,
+        "resolution": "50%",
+        "res_mode": 12,
+        "aspect": "16:9",
+        "aspect_mode": 1,
+        "upscaler": "Bilinear",
+        "upscaler_mode": 0,
+        "aa": "Off",
+        "aa_mode": 0,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 31.279002341722208,
+        "covered_s": 29.70043577,
+        "intervals": 929
+      }
+    },
+    {
+      "profile": {
+        "id": 2,
+        "resolution": "50%",
+        "res_mode": 12,
+        "aspect": "16:9",
+        "aspect_mode": 1,
+        "upscaler": "Bilinear",
+        "upscaler_mode": 0,
+        "aa": "SMAA",
+        "aa_mode": 1,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 30.370915165916934,
+        "covered_s": 29.732393478000002,
+        "intervals": 903
+      }
+    },
+    {
+      "profile": {
+        "id": 3,
+        "resolution": "50%",
+        "res_mode": 12,
+        "aspect": "16:9",
+        "aspect_mode": 1,
+        "upscaler": "FSR1",
+        "upscaler_mode": 2,
+        "aa": "Off",
+        "aa_mode": 0,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 31.141669278154303,
+        "covered_s": 29.57452254,
+        "intervals": 921
+      }
+    },
+    {
+      "profile": {
+        "id": 4,
+        "resolution": "50%",
+        "res_mode": 12,
+        "aspect": "16:9",
+        "aspect_mode": 1,
+        "upscaler": "FSR1",
+        "upscaler_mode": 2,
+        "aa": "SMAA",
+        "aa_mode": 1,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 32.28128578564119,
+        "covered_s": 29.583703894,
+        "intervals": 955
+      }
+    },
+    {
+      "profile": {
+        "id": 5,
+        "resolution": "50%",
+        "res_mode": 12,
+        "aspect": "Unlocked",
+        "aspect_mode": 0,
+        "upscaler": "Bilinear",
+        "upscaler_mode": 0,
+        "aa": "Off",
+        "aa_mode": 0,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 29.922499092459557,
+        "covered_s": 29.041691916,
+        "intervals": 869
+      }
+    },
+    {
+      "profile": {
+        "id": 6,
+        "resolution": "50%",
+        "res_mode": 12,
+        "aspect": "Unlocked",
+        "aspect_mode": 0,
+        "upscaler": "Bilinear",
+        "upscaler_mode": 0,
+        "aa": "SMAA",
+        "aa_mode": 1,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 29.813253756037515,
+        "covered_s": 29.751868322,
+        "intervals": 887
+      }
+    },
+    {
+      "profile": {
+        "id": 7,
+        "resolution": "50%",
+        "res_mode": 12,
+        "aspect": "Unlocked",
+        "aspect_mode": 0,
+        "upscaler": "FSR1",
+        "upscaler_mode": 2,
+        "aa": "Off",
+        "aa_mode": 0,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 29.29600447018662,
+        "covered_s": 29.150732854,
+        "intervals": 854
+      }
+    },
+    {
+      "profile": {
+        "id": 8,
+        "resolution": "50%",
+        "res_mode": 12,
+        "aspect": "Unlocked",
+        "aspect_mode": 0,
+        "upscaler": "FSR1",
+        "upscaler_mode": 2,
+        "aa": "SMAA",
+        "aa_mode": 1,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 27.239945128834357,
+        "covered_s": 29.515477956999998,
+        "intervals": 804
+      }
+    },
+    {
+      "profile": {
+        "id": 9,
+        "resolution": "75%",
+        "res_mode": 10,
+        "aspect": "16:9",
+        "aspect_mode": 1,
+        "upscaler": "Bilinear",
+        "upscaler_mode": 0,
+        "aa": "Off",
+        "aa_mode": 0,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 29.97430054615663,
+        "covered_s": 29.758826185999997,
+        "intervals": 892
+      }
+    },
+    {
+      "profile": {
+        "id": 10,
+        "resolution": "75%",
+        "res_mode": 10,
+        "aspect": "16:9",
+        "aspect_mode": 1,
+        "upscaler": "Bilinear",
+        "upscaler_mode": 0,
+        "aa": "SMAA",
+        "aa_mode": 1,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 30.00016318070822,
+        "covered_s": 29.733171604,
+        "intervals": 892
+      }
+    },
+    {
+      "profile": {
+        "id": 11,
+        "resolution": "75%",
+        "res_mode": 10,
+        "aspect": "16:9",
+        "aspect_mode": 1,
+        "upscaler": "FSR1",
+        "upscaler_mode": 2,
+        "aa": "Off",
+        "aa_mode": 0,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 29.913274159852715,
+        "covered_s": 29.050648062,
+        "intervals": 869
+      }
+    },
+    {
+      "profile": {
+        "id": 12,
+        "resolution": "75%",
+        "res_mode": 10,
+        "aspect": "16:9",
+        "aspect_mode": 1,
+        "upscaler": "FSR1",
+        "upscaler_mode": 2,
+        "aa": "SMAA",
+        "aa_mode": 1,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 29.682332462265286,
+        "covered_s": 29.141914676,
+        "intervals": 865
+      }
+    },
+    {
+      "profile": {
+        "id": 13,
+        "resolution": "75%",
+        "res_mode": 10,
+        "aspect": "Unlocked",
+        "aspect_mode": 0,
+        "upscaler": "Bilinear",
+        "upscaler_mode": 0,
+        "aa": "Off",
+        "aa_mode": 0,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 26.31824399351327,
+        "covered_s": 29.067288843,
+        "intervals": 765
+      }
+    },
+    {
+      "profile": {
+        "id": 14,
+        "resolution": "75%",
+        "res_mode": 10,
+        "aspect": "Unlocked",
+        "aspect_mode": 0,
+        "upscaler": "Bilinear",
+        "upscaler_mode": 0,
+        "aa": "SMAA",
+        "aa_mode": 1,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 24.255904255947126,
+        "covered_s": 29.724721552,
+        "intervals": 721
+      }
+    },
+    {
+      "profile": {
+        "id": 15,
+        "resolution": "75%",
+        "res_mode": 10,
+        "aspect": "Unlocked",
+        "aspect_mode": 0,
+        "upscaler": "FSR1",
+        "upscaler_mode": 2,
+        "aa": "Off",
+        "aa_mode": 0,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 23.273412623602205,
+        "covered_s": 29.217889572,
+        "intervals": 680
+      }
+    },
+    {
+      "profile": {
+        "id": 16,
+        "resolution": "75%",
+        "res_mode": 10,
+        "aspect": "Unlocked",
+        "aspect_mode": 0,
+        "upscaler": "FSR1",
+        "upscaler_mode": 2,
+        "aa": "SMAA",
+        "aa_mode": 1,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 22.612086644827944,
+        "covered_s": 29.143705769,
+        "intervals": 659
+      }
+    },
+    {
+      "profile": {
+        "id": 17,
+        "resolution": "1x",
+        "res_mode": 1,
+        "aspect": "16:9",
+        "aspect_mode": 1,
+        "upscaler": "Bilinear",
+        "upscaler_mode": 0,
+        "aa": "Off",
+        "aa_mode": 0,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 25.208328659933006,
+        "covered_s": 29.117360769999998,
+        "intervals": 734
+      }
+    },
+    {
+      "profile": {
+        "id": 18,
+        "resolution": "1x",
+        "res_mode": 1,
+        "aspect": "16:9",
+        "aspect_mode": 1,
+        "upscaler": "Bilinear",
+        "upscaler_mode": 0,
+        "aa": "SMAA",
+        "aa_mode": 1,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 23.750818099746912,
+        "covered_s": 29.725291863,
+        "intervals": 706
+      }
+    },
+    {
+      "profile": {
+        "id": 19,
+        "resolution": "1x",
+        "res_mode": 1,
+        "aspect": "16:9",
+        "aspect_mode": 1,
+        "upscaler": "FSR1",
+        "upscaler_mode": 2,
+        "aa": "Off",
+        "aa_mode": 0,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 25.311443326654505,
+        "covered_s": 29.749390039999998,
+        "intervals": 753
+      }
+    },
+    {
+      "profile": {
+        "id": 20,
+        "resolution": "1x",
+        "res_mode": 1,
+        "aspect": "16:9",
+        "aspect_mode": 1,
+        "upscaler": "FSR1",
+        "upscaler_mode": 2,
+        "aa": "SMAA",
+        "aa_mode": 1,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 23.330924397311254,
+        "covered_s": 29.317312437000002,
+        "intervals": 684
+      }
+    },
+    {
+      "profile": {
+        "id": 21,
+        "resolution": "1x",
+        "res_mode": 1,
+        "aspect": "Unlocked",
+        "aspect_mode": 0,
+        "upscaler": "Bilinear",
+        "upscaler_mode": 0,
+        "aa": "Off",
+        "aa_mode": 0,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 20.58790474218727,
+        "covered_s": 29.726191551,
+        "intervals": 612
+      }
+    },
+    {
+      "profile": {
+        "id": 22,
+        "resolution": "1x",
+        "res_mode": 1,
+        "aspect": "Unlocked",
+        "aspect_mode": 0,
+        "upscaler": "Bilinear",
+        "upscaler_mode": 0,
+        "aa": "SMAA",
+        "aa_mode": 1,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 20.0547190204182,
+        "covered_s": 29.668827541,
+        "intervals": 595
+      }
+    },
+    {
+      "profile": {
+        "id": 23,
+        "resolution": "1x",
+        "res_mode": 1,
+        "aspect": "Unlocked",
+        "aspect_mode": 0,
+        "upscaler": "FSR1",
+        "upscaler_mode": 2,
+        "aa": "Off",
+        "aa_mode": 0,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 20.156059624160868,
+        "covered_s": 29.718110144999997,
+        "intervals": 599
+      }
+    },
+    {
+      "profile": {
+        "id": 24,
+        "resolution": "1x",
+        "res_mode": 1,
+        "aspect": "Unlocked",
+        "aspect_mode": 0,
+        "upscaler": "FSR1",
+        "upscaler_mode": 2,
+        "aa": "SMAA",
+        "aa_mode": 1,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 21.496359114713982,
+        "covered_s": 29.493366603,
+        "intervals": 634
+      }
+    },
+    {
+      "profile": {
+        "id": 25,
+        "resolution": "Dynamic",
+        "res_mode": 9,
+        "aspect": "16:9",
+        "aspect_mode": 1,
+        "upscaler": "Bilinear",
+        "upscaler_mode": 0,
+        "aa": "Off",
+        "aa_mode": 0,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 29.925102942383575,
+        "covered_s": 29.707500145,
+        "intervals": 889
+      }
+    },
+    {
+      "profile": {
+        "id": 26,
+        "resolution": "Dynamic",
+        "res_mode": 9,
+        "aspect": "16:9",
+        "aspect_mode": 1,
+        "upscaler": "Bilinear",
+        "upscaler_mode": 0,
+        "aa": "SMAA",
+        "aa_mode": 1,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 29.97433217184128,
+        "covered_s": 29.658709155,
+        "intervals": 889
+      }
+    },
+    {
+      "profile": {
+        "id": 27,
+        "resolution": "Dynamic",
+        "res_mode": 9,
+        "aspect": "16:9",
+        "aspect_mode": 1,
+        "upscaler": "FSR1",
+        "upscaler_mode": 2,
+        "aa": "Off",
+        "aa_mode": 0,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 29.999776288732352,
+        "covered_s": 29.633554312,
+        "intervals": 889
+      }
+    },
+    {
+      "profile": {
+        "id": 28,
+        "resolution": "Dynamic",
+        "res_mode": 9,
+        "aspect": "16:9",
+        "aspect_mode": 1,
+        "upscaler": "FSR1",
+        "upscaler_mode": 2,
+        "aa": "SMAA",
+        "aa_mode": 1,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 29.966527404024315,
+        "covered_s": 29.733174885,
+        "intervals": 891
+      }
+    },
+    {
+      "profile": {
+        "id": 29,
+        "resolution": "Dynamic",
+        "res_mode": 9,
+        "aspect": "Unlocked",
+        "aspect_mode": 0,
+        "upscaler": "Bilinear",
+        "upscaler_mode": 0,
+        "aa": "Off",
+        "aa_mode": 0,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 29.956888913115442,
+        "covered_s": 29.675978790000002,
+        "intervals": 889
+      }
+    },
+    {
+      "profile": {
+        "id": 30,
+        "resolution": "Dynamic",
+        "res_mode": 9,
+        "aspect": "Unlocked",
+        "aspect_mode": 0,
+        "upscaler": "Bilinear",
+        "upscaler_mode": 0,
+        "aa": "SMAA",
+        "aa_mode": 1,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 29.9557864431928,
+        "covered_s": 29.47677577,
+        "intervals": 883
+      }
+    },
+    {
+      "profile": {
+        "id": 31,
+        "resolution": "Dynamic",
+        "res_mode": 9,
+        "aspect": "Unlocked",
+        "aspect_mode": 0,
+        "upscaler": "FSR1",
+        "upscaler_mode": 2,
+        "aa": "Off",
+        "aa_mode": 0,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 29.54872994207407,
+        "covered_s": 29.510574624,
+        "intervals": 872
+      }
+    },
+    {
+      "profile": {
+        "id": 32,
+        "resolution": "Dynamic",
+        "res_mode": 9,
+        "aspect": "Unlocked",
+        "aspect_mode": 0,
+        "upscaler": "FSR1",
+        "upscaler_mode": 2,
+        "aa": "SMAA",
+        "aa_mode": 1,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 28.29536588590434,
+        "covered_s": 29.651498531,
+        "intervals": 839
+      }
+    },
+    {
+      "profile": {
+        "id": 33,
+        "resolution": "Match Display",
+        "res_mode": 0,
+        "aspect": "16:9",
+        "aspect_mode": 1,
+        "upscaler": "Bilinear",
+        "upscaler_mode": 0,
+        "aa": "Off",
+        "aa_mode": 0,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 24.96415106636849,
+        "covered_s": 29.68256353,
+        "intervals": 741
+      }
+    },
+    {
+      "profile": {
+        "id": 34,
+        "resolution": "Match Display",
+        "res_mode": 0,
+        "aspect": "16:9",
+        "aspect_mode": 1,
+        "upscaler": "Bilinear",
+        "upscaler_mode": 0,
+        "aa": "SMAA",
+        "aa_mode": 1,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 23.742681801007418,
+        "covered_s": 29.735478322,
+        "intervals": 706
+      }
+    },
+    {
+      "profile": {
+        "id": 35,
+        "resolution": "Match Display",
+        "res_mode": 0,
+        "aspect": "16:9",
+        "aspect_mode": 1,
+        "upscaler": "FSR1",
+        "upscaler_mode": 2,
+        "aa": "Off",
+        "aa_mode": 0,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 26.947648309115113,
+        "covered_s": 29.501646707,
+        "intervals": 795
+      }
+    },
+    {
+      "profile": {
+        "id": 36,
+        "resolution": "Match Display",
+        "res_mode": 0,
+        "aspect": "16:9",
+        "aspect_mode": 1,
+        "upscaler": "FSR1",
+        "upscaler_mode": 2,
+        "aa": "SMAA",
+        "aa_mode": 1,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 24.765532254773007,
+        "covered_s": 29.516829781000002,
+        "intervals": 731
+      }
+    },
+    {
+      "profile": {
+        "id": 37,
+        "resolution": "Match Display",
+        "res_mode": 0,
+        "aspect": "Unlocked",
+        "aspect_mode": 0,
+        "upscaler": "Bilinear",
+        "upscaler_mode": 0,
+        "aa": "Off",
+        "aa_mode": 0,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 21.051611197019806,
+        "covered_s": 29.593934363,
+        "intervals": 623
+      }
+    },
+    {
+      "profile": {
+        "id": 38,
+        "resolution": "Match Display",
+        "res_mode": 0,
+        "aspect": "Unlocked",
+        "aspect_mode": 0,
+        "upscaler": "Bilinear",
+        "upscaler_mode": 0,
+        "aa": "SMAA",
+        "aa_mode": 1,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 20.675260843682675,
+        "covered_s": 29.552226916,
+        "intervals": 611
+      }
+    },
+    {
+      "profile": {
+        "id": 39,
+        "resolution": "Match Display",
+        "res_mode": 0,
+        "aspect": "Unlocked",
+        "aspect_mode": 0,
+        "upscaler": "FSR1",
+        "upscaler_mode": 2,
+        "aa": "Off",
+        "aa_mode": 0,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 20.45851080078556,
+        "covered_s": 29.08325077,
+        "intervals": 595
+      }
+    },
+    {
+      "profile": {
+        "id": 40,
+        "resolution": "Match Display",
+        "res_mode": 0,
+        "aspect": "Unlocked",
+        "aspect_mode": 0,
+        "upscaler": "FSR1",
+        "upscaler_mode": 2,
+        "aa": "SMAA",
+        "aa_mode": 1,
+        "frame_rate": "auto"
+      },
+      "turnip": {
+        "valid": true,
+        "fps": 20.24726782568904,
+        "covered_s": 29.534849104,
+        "intervals": 598
+      }
+    }
+  ]
+}

@@ -23,6 +23,19 @@ For the PC versions (Windows, macOS, Linux), features and the randomizer, see th
 > copy of the extracted game files of *Link's Awakening* **v1.0.0**. Instructions on how to obtain them will not be
 > provided.
 
+## New in 0.3.9
+
+Focused on compatibility with more phones and drivers.
+
+- **Stock drivers without `shaderInt64`** (e.g. Galaxy S23, Adreno 740): shader address and carry math now uses 32-bit words when the driver has no 64-bit integers. On the S23 with Qualcomm's driver, lighting, grass tufts and inventory text are back. Drivers that have the feature, such as Turnip, keep the native path. [Diagnosis](docs/ANDROID-S23-STOCK-RENDERING.md).
+- **Sturdier Vulkan startup:** the swapchain only requests usages and composition the surface supports; the pipeline cache is validated before use; optional features are queried before they are enabled. When something fails, the error dialog shows the reason on screen, no adb needed.
+- **Importing:** checks free space before copying, detects incomplete copies and refuses the app's own imported folder.
+- **New installs** start at a fixed 30 fps and 50% internal resolution. Existing saved settings still apply.
+- **Bug report form** asks at which stage the failure happens; a screenshot of the error dialog already helps.
+- **Measurement tools** (village benchmark route, settings matrix, GPU timing and texture traces), all off by default.
+
+Validation: on the Galaxy S23 with the stock driver, lighting, grass and text were checked visually in two loads, with the previous APK as a control. On PC, tests for the 32-bit shader translation, shader cache, constant tables and Vulkan startup. Mali GPUs still need testing on real hardware. [Compatibility](docs/ANDROID-COMPATIBILITY.md).
+
 ## New in 0.3.8
 
 Updated 0.3.8 APK: the start screen shows only **PLAY**, without the Vanilla/seed selector. The new background follows the game's toy-like miniature village style, with a small Android adventurer.
@@ -38,6 +51,66 @@ Updated 0.3.8 APK: the start screen shows only **PLAY**, without the Vanilla/see
 - **New artwork:** an Android adventurer icon and an original island-themed launcher background generated with OpenAI image generation. These are fan illustrations, not extracted game assets.
 
 Validation: release build on PC, 22 upload-cache checks , 12 simulated touch-gesture checks and 28 save-transfer checks; the user tested frametime on the connected Turnip device. Qualcomm/Mali copy-path behavior and all menu flows still require broader device testing. Details: [optimizations](docs/ANDROID-OPTIMIZATIONS.md), [touch settings](docs/ANDROID-TOUCH-SETTINGS.md).
+
+<!-- stationary-matrix-s23:start -->
+## Measured performance — Galaxy S23
+
+2026-10-21 · SM-S911B, Adreno 740, Android 16 · **Auto FPS**. Stationary Mabe Village scene, same position/save, one Turnip game run with all 40 combinations. Each profile had 10 s settling and 30 s collection. Values are average presentation FPS measured by Android. Auto lets the game choose 30/60 FPS; it does not unlock 120 FPS.
+
+**Test condition:** local diagnostic APK, Turnip v26.0.0 R8, unchanged ADPF and `LARECOMP_VK_NO_PLACED=1` with Turnip. Without that temporary memory workaround, Android killed Turnip for low memory on this S23, including after closing other apps. These results do not represent a fix already shipped in release 0.3.8.
+
+<details>
+<summary>Turnip FPS — 40 samples</summary>
+
+| Resolution | Aspect | Filter | AA | Turnip R8 |
+| --- | --- | --- | --- | ---: |
+| 50% | 16:9 | Bilinear | Off | 31.28 |
+| 50% | 16:9 | Bilinear | SMAA | 30.37 |
+| 50% | 16:9 | FSR1 | Off | 31.14 |
+| 50% | 16:9 | FSR1 | SMAA | 32.28 |
+| 50% | Unlocked | Bilinear | Off | 29.92 |
+| 50% | Unlocked | Bilinear | SMAA | 29.81 |
+| 50% | Unlocked | FSR1 | Off | 29.30 |
+| 50% | Unlocked | FSR1 | SMAA | 27.24 |
+| 75% | 16:9 | Bilinear | Off | 29.97 |
+| 75% | 16:9 | Bilinear | SMAA | 30.00 |
+| 75% | 16:9 | FSR1 | Off | 29.91 |
+| 75% | 16:9 | FSR1 | SMAA | 29.68 |
+| 75% | Unlocked | Bilinear | Off | 26.32 |
+| 75% | Unlocked | Bilinear | SMAA | 24.26 |
+| 75% | Unlocked | FSR1 | Off | 23.27 |
+| 75% | Unlocked | FSR1 | SMAA | 22.61 |
+| 1x | 16:9 | Bilinear | Off | 25.21 |
+| 1x | 16:9 | Bilinear | SMAA | 23.75 |
+| 1x | 16:9 | FSR1 | Off | 25.31 |
+| 1x | 16:9 | FSR1 | SMAA | 23.33 |
+| 1x | Unlocked | Bilinear | Off | 20.59 |
+| 1x | Unlocked | Bilinear | SMAA | 20.05 |
+| 1x | Unlocked | FSR1 | Off | 20.16 |
+| 1x | Unlocked | FSR1 | SMAA | 21.50 |
+| Dynamic | 16:9 | Bilinear | Off | 29.93 |
+| Dynamic | 16:9 | Bilinear | SMAA | 29.97 |
+| Dynamic | 16:9 | FSR1 | Off | 30.00 |
+| Dynamic | 16:9 | FSR1 | SMAA | 29.97 |
+| Dynamic | Unlocked | Bilinear | Off | 29.96 |
+| Dynamic | Unlocked | Bilinear | SMAA | 29.96 |
+| Dynamic | Unlocked | FSR1 | Off | 29.55 |
+| Dynamic | Unlocked | FSR1 | SMAA | 28.30 |
+| Match Display | 16:9 | Bilinear | Off | 24.96 |
+| Match Display | 16:9 | Bilinear | SMAA | 23.74 |
+| Match Display | 16:9 | FSR1 | Off | 26.95 |
+| Match Display | 16:9 | FSR1 | SMAA | 24.77 |
+| Match Display | Unlocked | Bilinear | Off | 21.05 |
+| Match Display | Unlocked | Bilinear | SMAA | 20.68 |
+| Match Display | Unlocked | FSR1 | Off | 20.46 |
+| Match Display | Unlocked | FSR1 | SMAA | 20.25 |
+
+</details>
+
+Without FSR1 = bilinear; enabled AA = SMAA. Dynamic changes resolution during the sample. This is a configuration sweep with one sample per combination; it does not establish moving-scene stability or a causal improvement from an individual setting. Order, temperature and caches can affect results. [Protocol and telemetry](docs/ANDROID-STATIONARY-MATRIX.md) · [FPS data](docs/benchmarks/galaxy-s23-20261021.json).
+
+Stock driver: comparison stopped because of incomplete rendering (reported lighting, grass and text issues). Its partial FPS results are excluded from this table. The cause (no `shaderInt64`) is fixed in 0.3.9; the stock-driver measurement has not been redone yet. POCO F7 Ultra testing is deferred while compatibility is investigated.
+<!-- stationary-matrix-s23:end -->
 
 ## Importing and exporting saves
 

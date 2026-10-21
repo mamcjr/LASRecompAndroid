@@ -23,6 +23,19 @@ Para as versões de PC (Windows, macOS, Linux), os recursos e o randomizer, veja
 > obtida legalmente, dos arquivos extraídos de *Link's Awakening* **v1.0.0**. Não serão dadas instruções de como
 > obtê-los.
 
+## Novidades da 0.3.9
+
+Foco em compatibilidade com mais celulares e drivers.
+
+- **Driver padrão sem `shaderInt64`** (ex.: Galaxy S23, Adreno 740): o cálculo de endereços e carry dos shaders passa a usar palavras de 32 bits quando o driver não tem inteiros de 64 bits. No S23 com o driver Qualcomm, voltaram a iluminação, as touceiras de grama e os textos do inventário. Drivers com o recurso, como o Turnip, continuam no caminho nativo. [Diagnóstico](docs/ANDROID-S23-STOCK-RENDERING.md).
+- **Inicialização Vulkan mais robusta:** a swapchain só pede usos e composição que a superfície suporta; o cache de pipelines é validado antes do uso; recursos opcionais são consultados antes de serem habilitados. Quando algo falha, a mensagem de erro mostra o motivo na tela, sem precisar de adb.
+- **Importação:** confere o espaço livre antes de copiar, detecta cópias incompletas e recusa a pasta que o próprio app já importou.
+- **Novas instalações** começam em 30 FPS fixos e 50% de resolução interna. Configurações já salvas continuam valendo.
+- **Formulário de bug** pergunta em qual etapa a falha acontece, e uma captura da mensagem de erro já ajuda.
+- **Ferramentas de medição** (rota de benchmark na vila, matriz de configurações, traces de tempo de GPU e texturas), todas desligadas por padrão.
+
+Validação: no Galaxy S23 com o driver padrão, iluminação, grama e textos conferidos visualmente em duas cargas, com o APK anterior como controle. No PC, testes do tradutor de shaders em 32 bits, do cache de shaders, das tabelas de constantes e da inicialização Vulkan. GPUs Mali ainda precisam de teste em aparelho real. [Compatibilidade](docs/ANDROID-COMPATIBILITY.md).
+
 ## Novidades da 0.3.8
 
 APK 0.3.8 atualizado: a tela inicial mostra apenas **PLAY**, sem o seletor Vanilla/seed. O novo fundo segue o visual de vila em miniatura do jogo, com um pequeno Android aventureiro.
@@ -38,6 +51,66 @@ APK 0.3.8 atualizado: a tela inicial mostra apenas **PLAY**, sem o seletor Vanil
 - **Artes novas:** ícone Android aventureiro e fundo original de ilha gerados com OpenAI. São ilustrações de fã, não assets extraídos do jogo.
 
 Validação: build de release no PC, 22 verificações dos caches, 12 verificações simuladas de gestos e 28 testes de transferência de saves. O usuário testou o frametime no aparelho com Turnip. O caminho Qualcomm/Mali e todos os fluxos do menu ainda precisam de validação mais ampla. [Otimizações](docs/ANDROID-OPTIMIZATIONS.md) · [Menu touch](docs/ANDROID-TOUCH-SETTINGS.md).
+
+<!-- stationary-matrix-s23:start -->
+## Desempenho medido — Galaxy S23
+
+21/10/2026 · SM-S911B, Adreno 740, Android 16 · **FPS em Auto**. Cena parada em Mabe Village, mesma posição/save, uma execução com Turnip e todas as 40 combinações. Cada perfil teve 10 s de acomodação e 30 s de coleta. Os valores são FPS médios de apresentação medidos pelo Android. Auto permite ao jogo escolher 30/60 FPS; não desbloqueia 120 FPS.
+
+**Condição de teste:** APK local de diagnóstico, Turnip v26.0.0 R8, ADPF preservado e `LARECOMP_VK_NO_PLACED=1` com Turnip. Sem esse contorno temporário de memória, o Turnip encerrou por falta de memória neste S23, inclusive após fechar outros apps. Esses números não representam uma correção já publicada na release 0.3.8.
+
+<details>
+<summary>FPS com Turnip — 40 amostras</summary>
+
+| Resolução | Aspecto | Filtro | AA | Turnip R8 |
+| --- | --- | --- | --- | ---: |
+| 50% | 16:9 | Bilinear | Desligado | 31,28 |
+| 50% | 16:9 | Bilinear | SMAA | 30,37 |
+| 50% | 16:9 | FSR1 | Desligado | 31,14 |
+| 50% | 16:9 | FSR1 | SMAA | 32,28 |
+| 50% | Unlocked | Bilinear | Desligado | 29,92 |
+| 50% | Unlocked | Bilinear | SMAA | 29,81 |
+| 50% | Unlocked | FSR1 | Desligado | 29,30 |
+| 50% | Unlocked | FSR1 | SMAA | 27,24 |
+| 75% | 16:9 | Bilinear | Desligado | 29,97 |
+| 75% | 16:9 | Bilinear | SMAA | 30,00 |
+| 75% | 16:9 | FSR1 | Desligado | 29,91 |
+| 75% | 16:9 | FSR1 | SMAA | 29,68 |
+| 75% | Unlocked | Bilinear | Desligado | 26,32 |
+| 75% | Unlocked | Bilinear | SMAA | 24,26 |
+| 75% | Unlocked | FSR1 | Desligado | 23,27 |
+| 75% | Unlocked | FSR1 | SMAA | 22,61 |
+| 1x | 16:9 | Bilinear | Desligado | 25,21 |
+| 1x | 16:9 | Bilinear | SMAA | 23,75 |
+| 1x | 16:9 | FSR1 | Desligado | 25,31 |
+| 1x | 16:9 | FSR1 | SMAA | 23,33 |
+| 1x | Unlocked | Bilinear | Desligado | 20,59 |
+| 1x | Unlocked | Bilinear | SMAA | 20,05 |
+| 1x | Unlocked | FSR1 | Desligado | 20,16 |
+| 1x | Unlocked | FSR1 | SMAA | 21,50 |
+| Dynamic | 16:9 | Bilinear | Desligado | 29,93 |
+| Dynamic | 16:9 | Bilinear | SMAA | 29,97 |
+| Dynamic | 16:9 | FSR1 | Desligado | 30,00 |
+| Dynamic | 16:9 | FSR1 | SMAA | 29,97 |
+| Dynamic | Unlocked | Bilinear | Desligado | 29,96 |
+| Dynamic | Unlocked | Bilinear | SMAA | 29,96 |
+| Dynamic | Unlocked | FSR1 | Desligado | 29,55 |
+| Dynamic | Unlocked | FSR1 | SMAA | 28,30 |
+| Match Display | 16:9 | Bilinear | Desligado | 24,96 |
+| Match Display | 16:9 | Bilinear | SMAA | 23,74 |
+| Match Display | 16:9 | FSR1 | Desligado | 26,95 |
+| Match Display | 16:9 | FSR1 | SMAA | 24,77 |
+| Match Display | Unlocked | Bilinear | Desligado | 21,05 |
+| Match Display | Unlocked | Bilinear | SMAA | 20,68 |
+| Match Display | Unlocked | FSR1 | Desligado | 20,46 |
+| Match Display | Unlocked | FSR1 | SMAA | 20,25 |
+
+</details>
+
+Sem FSR1 = bilinear; AA ligado = SMAA. Dynamic varia a resolução durante a amostra. O teste é uma exploração por configuração, com uma amostra por combinação; não demonstra estabilidade em movimento nem ganho causal de uma opção isolada. Ordem, temperatura e caches podem influenciar os resultados. [Protocolo e telemetria](docs/ANDROID-STATIONARY-MATRIX.md) · [Dados de FPS](docs/benchmarks/galaxy-s23-20261021.json).
+
+Driver padrão: comparação interrompida por renderização incompleta (iluminação, grama e textos relatados). Seus números parciais foram excluídos desta tabela. A causa (falta de `shaderInt64`) foi corrigida na 0.3.9; a medição com o driver padrão ainda não foi refeita. O teste do POCO F7 Ultra fica para depois da investigação de compatibilidade.
+<!-- stationary-matrix-s23:end -->
 
 ## Importar e exportar saves
 

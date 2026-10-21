@@ -39,6 +39,19 @@ body:
         3. The problem occurs when...
     validations:
       required: true
+  - type: dropdown
+    id: failure_stage
+    attributes:
+      label: Where does it fail? / Em qual etapa falha?
+      description: For a black screen, choose the last stage reached. / Para tela preta, selecione a última etapa alcançada.
+      options:
+        - Unknown / Não sei
+        - Opening the app / Ao abrir o app
+        - Importing or preparing game files / Importando ou preparando o jogo
+        - Starting the game or compiling shaders / Iniciando o jogo ou compilando shaders
+        - Title screen / Tela de título
+        - Loading a save / Carregando um save
+        - During gameplay / Durante o jogo
   - type: textarea
     id: behavior
     attributes:
@@ -54,4 +67,4 @@ body:
     id: evidence
     attributes:
       label: Logs and screenshots / Logs e capturas
-      description: Attach a relevant excerpt, screenshot or short clip. Remove private information. Do not upload game files or save archives here.
+      description: Attach a relevant excerpt, screenshot or short clip. A screenshot of the error dialog helps even without a log. If you have logcat, include the LASRecomp error and nearby [vk-cap] lines. Remove private information. Do not upload game files or save archives here.
