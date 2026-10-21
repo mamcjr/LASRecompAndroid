@@ -11,6 +11,14 @@
 
 // Which of the known textures `t` is (by its contents: the user's own game files are read once to know them), or -1.
 int texpatch_identify(const NvnTexture *t);
+// The backends' cached marker for `t` (TexBackend.tp): texpatch_identify + 1, or -1 for "checked, none" (0 stays
+// "not checked yet"). Kept until the texture's contents change: identifying compares the data of every texture shaped
+// like a known one, too slow to repeat at every upload check (-1 was stored as 0: every texture without a patch was
+// identified again each time).
+static inline int texpatch_marker(const NvnTexture *t) {
+    int id = texpatch_identify(t);
+    return id >= 0 ? id + 1 : -1;
+}
 // Known texture `id` is the empty bottle's item icon (1), its 3D model's colour map (2), the fairy's model map (3:
 // boss / mini-boss souls drawn red, runtime/hle/souls.c), else 0 (the gold Escape Bottle: runtime/hle/escape.c).
 int texpatch_bottle_kind(int id);
