@@ -9,6 +9,7 @@
 
 #include "vk.h"
 #include "../astc.h"
+#include "../tex_hash.h"
 #include "../renderer.h"
 #include "../texpatch.h"
 
@@ -682,15 +683,18 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
         }
     }
     if (b->uploaded && b->dynamic && !always_full && !restyle && !periodic && texture_unchanged(b, mem, total)) return;
+    bool fast = tex_fast_hash();  // (runtime/nvn/tex_hash.h; LARECOMP_TEX_FASTHASH=0: the previous hashes)
     if (!full && !restyle) {
         prof_tex_samples++;
-        uint64_t sh = fnv_sample(mem, total);
+        uint64_t sh = fast ? tex_hash_sample(mem, total) : fnv_sample(mem, total);
         if (sh == b->sample_hash) return;
     }
     prof_tex_full++; prof_tex_full_bytes += total; if (b->dynamic) prof_tex_dyn++;
-    uint64_t h = hash_full(mem, total);
+    uint64_t h = fast ? tex_hash_full(mem, total) : hash_full(mem, total);
     b->full_frame = frame;
-    b->sample_hash = fnv_sample(mem, total);
+    // (the sample is only compared while the texture isn't dynamic, and a dynamic one stays so: none for those)
+    if (!fast) b->sample_hash = fnv_sample(mem, total);
+    else if (!b->dynamic && !(b->uploaded && h != b->data_hash)) b->sample_hash = tex_hash_sample(mem, total);
     if (b->uploaded && h == b->data_hash && !restyle) return;
     if (b->uploaded && h != b->data_hash) b->dynamic = true;
     // new contents (the game reused the memory for another image, or the data arrived after the first check): which
