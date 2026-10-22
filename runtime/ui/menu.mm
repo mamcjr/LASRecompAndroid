@@ -546,6 +546,12 @@ static void tab_display(void) {
     opt_choice("Anti-aliasing", &g_settings.antialias, aa, 2, AA_OFF,
                "Smooths jagged edges of the game image before it is scaled to the window. SMAA: finds the edges and "
                "blends only along them, so textures stay sharp. Most useful at a lower internal resolution.");
+#ifdef __ANDROID__
+    opt_toggle("32-bit shader math", &g_settings.shader_int32, false,
+               "Translates the game's shaders with 32-bit address math, the path used for drivers without 64-bit "
+               "integers. Try it if lighting, grass or text are missing or wrong on your GPU. Applies to shaders "
+               "translated from now on: restart the app for all of them.");
+#endif
 
     opt_section("Game");
     opt_toggle("Remove blur", &g_settings.blur_removal, false,

@@ -37,9 +37,16 @@ static void dyn_update(double now, double gpu_ms) {
     g_dyn_n = g_dyn_gpu_n = 0;
     if (now < g_dyn_cool_until) return;
     double prev = g_dyn;
-    bool slow = avg_dt > 17.4 || (avg_gpu >= 0 && avg_gpu > 14.5);
+#ifdef __ANDROID__
+    // (Frame rate 30: its frames take 33.3 ms on target - against 60's budget each one looked slow, and the
+    // resolution went down to its floor however much room the GPU had)
+    double budget = g_settings.fps_mode == 1 ? 2.0 : 1.0;
+#else
+    double budget = 1.0;
+#endif
+    bool slow = avg_dt > 17.4 * budget || (avg_gpu >= 0 && avg_gpu > 14.5);
     if (slow) {
-        g_dyn = fmax(0.5, g_dyn - (avg_dt > 22 ? 0.1 : 0.05));
+        g_dyn = fmax(0.5, g_dyn - (avg_dt > 22 * budget ? 0.1 : 0.05));
         g_dyn_good = 0;
         if (now - g_dyn_last_raise < 3.0) g_dyn_probe_wait = fmin(g_dyn_probe_wait * 2, 60.0);  // raised too eagerly
     } else if (g_dyn < 1.0) {
