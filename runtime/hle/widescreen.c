@@ -151,6 +151,14 @@ void widescreen_scene_ubo(const float *u, uint64_t size) {
     memcpy(g_vp, u + 32, sizeof g_vp);
     g_vp_frame = f;
 }
+#ifdef __ANDROID__
+// The camera's view-projection (rows) when this presented frame drew a scene (frame generation, vulkan/framegen.c)
+bool widescreen_camera(uint64_t frame, float vp[16]) {
+    if (g_vp_frame != frame) return false;
+    memcpy(vp, g_vp, sizeof g_vp);
+    return true;
+}
+#endif
 
 static bool heap_ptr(uint64_t p) { return p >= HEAP_BASE && p + 0x40 <= HEAP_BASE + HEAP_MAX && !(p & 7); }
 

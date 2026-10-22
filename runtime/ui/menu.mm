@@ -552,6 +552,11 @@ static void tab_display(void) {
                "Translates the game's shaders with 32-bit address math, the path used for drivers without 64-bit "
                "integers. Try it if lighting, grass or text are missing or wrong on your GPU. Applies to shaders "
                "translated from now on: restart the app for all of them.");
+    opt_toggle("Frame generation", &g_settings.frame_gen, false,
+               "60 on the screen from the game's own 30: after each frame an in-between one is made from the picture, "
+               "the scene's depth and the camera's movement, and shown a refresh later. Characters' own movement "
+               "stays at 30. Works while the game is in its 30 fps mode (Frame rate 30 holds it there) and pauses "
+               "by itself when the game can't hold its 30. Takes effect at the next start of the app.");
 #endif
 
     opt_section("Game");
@@ -1016,8 +1021,14 @@ void menu_tabs_draw(float scale, ImFont *font, ImFont *font_big, bool in_game, v
 void menu_render(id<MTLDevice> dev, id<MTLCommandBuffer> cb, id<MTLTexture> target) {
     const double tw = target.width, th = target.height;
 #else
+#ifdef __ANDROID__
+static bool g_menu_drawn;  // menu_render drew overlays this frame (menu_redraw)
+#endif
 void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     const double tw = target_w, th = target_h;
+#ifdef __ANDROID__
+    g_menu_drawn = false;
+#endif
 #endif
     bool open = g_open.load();
     bool inv = !open && inventory_overlay_wanted();
@@ -1165,4 +1176,14 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
 #else
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), (VkCommandBuffer)cmd);  // inside the window image's rendering
 #endif
+#ifdef __ANDROID__
+    g_menu_drawn = true;
+#endif
 }
+#ifdef __ANDROID__
+// The overlays menu_render drew for the real frame, drawn again into frame generation's in-between one (vulkan/
+// framegen.c: drawn from the presented picture, without them): no second UI frame, so touch input stays one per frame
+extern "C" void menu_redraw(void *cmd) {
+    if (g_menu_drawn && ImGui::GetDrawData()) ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), (VkCommandBuffer)cmd);
+}
+#endif

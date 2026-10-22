@@ -3828,6 +3828,9 @@ static void draw_(CmdRec *r, bool indexed) {
     Prog *pr = get_program(st.program, &vkey, &fkey);
     if (!pr || atomic_load(&pr->state) != 1) { stat_skipped++; return; }
     g_mirror_w = 0;
+#ifdef __ANDROID__
+    bool scene_composite = false;  // (frame generation copies the picture right after it: framegen.c)
+#endif
     {   // mirror mode (runtime/hle/mirror.c; as renderer.m): the scene's composite into the window image is mirrored
         extern bool mirror_draw(bool composite);
         bool composite = false;
@@ -3837,6 +3840,9 @@ static void draw_(CmdRec *r, bool indexed) {
             NvnTexture *t0 = shader_texture_object(1, &pr->fi->tex[0]);
             composite = t0 && t0->width == st.rt.color[0]->width && t0->height == st.rt.color[0]->height;
         }
+#ifdef __ANDROID__
+        scene_composite = composite;
+#endif
         if (mirror_draw(composite)) {
             vkey.flip_x = fkey.flip_x = true;
             pr = get_program(st.program, &vkey, &fkey);
@@ -4006,6 +4012,9 @@ static void draw_(CmdRec *r, bool indexed) {
     if (ss_need(SS_DT, ss.dt == (VkBool32)dt)) { ss.dt = dt; vkCmdSetDepthTestEnable(cb, dt); }
     VkBool32 dw = dt && st.ds[1];
     if (ss_need(SS_DW, ss.dw == dw)) { ss.dw = dw; vkCmdSetDepthWriteEnable(cb, dw); }
+#ifdef __ANDROID__  // (frame generation: the scene's depth is the one most draws write, framegen.c)
+    if (dw) { extern void fg_note_draw(NvnTexture *depth, uint32_t pass_w, uint32_t pass_h); fg_note_draw(st.rt.depth, pass_w, pass_h); }
+#endif
     VkCompareOp dop = dt ? compare_fn(st.ds[2]) : VK_COMPARE_OP_ALWAYS;
     // EQUAL against a depth pre-pass written by a different vertex shader (foliage, trees) needs both shaders to land
     // on identical depths. They do since the translator stopped using unpackHalf2x16 (NVIDIA ran the half math after
@@ -4319,6 +4328,13 @@ static void draw_(CmdRec *r, bool indexed) {
         if (!use_index) vkCmdDraw(cb, count, run_n[ri], first, base_inst + run_at[ri]);
         else vkCmdDrawIndexed(cb, icount, run_n[ri], 0, base_vertex, base_inst + run_at[ri]);
     }
+#ifdef __ANDROID__
+    if (scene_composite) {  // (frame generation: the scene before the HUD, framegen.c)
+        extern bool fg_enabled(void);
+        extern void fg_scene_composited(VkCommandBuffer cb, TexBackend *rt);
+        if (fg_enabled()) { vk_end_pass(); fg_scene_composited(vk_cmd(), st.rt.color[0]->backend); }
+    }
+#endif
     stat_draws++;
     cum_draws++;
     if (g_gpuprof_frame && gp_n) {
@@ -4809,9 +4825,16 @@ static VkImageView post_process(VkCommandBuffer cb, TexBackend *b, double ow_d, 
 }
 
 // Inside the window image's rendering (device.c vk_frame_begin): the game image into (vx, vy, vw, vh).
+#ifdef __ANDROID__
+static VkImageView g_present_src;  // the picture the last present drew from (post-processed): framegen.c samples it
+VkImageView vk_last_present_src(void) { return g_present_src; }
+#endif
 void vk_present_draw(VkCommandBuffer cb, TexBackend *b, float vx, float vy, float vw, float vh, const float pv[8]) {
     if (!b || !b->image || (b->aspect & ~VK_IMAGE_ASPECT_COLOR_BIT)) return;
     VkImageView src = post_process(cb, b, pv[6] > 0 ? vw / pv[6] : vw, pv[7] > 0 ? vh / pv[7] : vh);
+#ifdef __ANDROID__
+    g_present_src = src;
+#endif
     VkPipeline p = present_pipeline(g_vk.sc_format);
     VkDescriptorSet ds = vk_alloc_set(present_set_layout);
     VkDescriptorImageInfo ii = {vk_default_sampler(true), src, VK_IMAGE_LAYOUT_GENERAL};
