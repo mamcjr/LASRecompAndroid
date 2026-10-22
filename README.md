@@ -287,7 +287,8 @@ For development, the game code can still be built on the PC and pushed: `bash an
   and the shader translator this port builds on. Its README credits everyone behind it, including LAS-Randomizer and
   the community mods its options re-implement.
 - **[LASRecomp-Android-Plus](https://github.com/Nycolazs/LASRecomp-Android-Plus)** by Nycolazs (MIT): the Vulkan 1.1 /
-  1.2 path with extensions for drivers below 1.3 (`runtime/nvn/vulkan/device.c`) follows its approach.
+  1.2 path with extensions for drivers below 1.3 (`runtime/nvn/vulkan/device.c`) follows its approach, and its list
+  of hot game functions from play profiles (`tools/hot_functions.txt`) lets setup compile the rest faster.
 - [SDL 3](https://libsdl.org) (zlib): window, input, audio and the Android activity.
 - [libadrenotools](https://github.com/bylaws/libadrenotools) by bylaws (BSD 2-Clause): loads a custom Vulkan
   driver.

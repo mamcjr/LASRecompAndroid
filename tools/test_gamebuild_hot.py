@@ -66,7 +66,8 @@ chunk = ('#include "cpu.h"\n'
          'void f_70000aaaa0(Cpu *c) {\n    // void f_7000000020(Cpu *c) { (not at a line start)\n}\n')
 expected = chunk.replace('void f_7000009000(Cpu *c) {', '__attribute__((optnone, noinline)) void f_7000009000(Cpu *c) {') \
                 .replace('void f_70000aaaa0(Cpu *c) {', '__attribute__((optnone, noinline)) void f_70000aaaa0(Cpu *c) {')
-(out / 'list.txt').write_text('# test\nmain 10\n7000005350\nsdk 0\n')  # (both forms)
+(out / 'list.txt').write_text(  # (both forms; a comment longer than the line buffer, with hex-looking text)
+    '# test ' + 'a' * 57 + ' 7000009000 abc\nmain 10\n7000005350\nsdk 0\n')
 src = out / 'chunk.c'
 src.write_bytes(chunk.encode())
 subprocess.run([args.cc, '-O1', '-std=gnu11', str(out / 'mark.c'), '-o', str(out / 'mark')], check=True)

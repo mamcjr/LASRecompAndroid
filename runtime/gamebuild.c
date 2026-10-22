@@ -317,6 +317,8 @@ static void load_hot(const char *path) {
     size_t cap = 0;
     char line[64];
     while (fgets(line, sizeof line, f)) {
+        if (!strchr(line, '\n'))  // (a longer line - a comment: its rest isn't another address)
+            for (int ch; (ch = fgetc(f)) != EOF && ch != '\n';) {}
         if (line[0] == '#') continue;
         // "<address>" as the generated code names it, or "main <offset>" / "sdk <offset>" (the module's base plus
         // that: LASRecomp-Android-Plus's list)

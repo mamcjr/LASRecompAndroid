@@ -293,7 +293,9 @@ depois `bash android/push_game.sh <pasta com exefs/ e romfs/>`.
   e o tradutor de shaders sobre os quais este port foi feito. O README dele dá os créditos a todos os envolvidos,
   incluindo o LAS-Randomizer e os mods da comunidade que as opções dele reimplementam.
 - **[LASRecomp-Android-Plus](https://github.com/Nycolazs/LASRecomp-Android-Plus)**, de Nycolazs (MIT): o caminho de
-  Vulkan 1.1 / 1.2 com extensões para drivers abaixo do 1.3 (`runtime/nvn/vulkan/device.c`) segue a abordagem dele.
+  Vulkan 1.1 / 1.2 com extensões para drivers abaixo do 1.3 (`runtime/nvn/vulkan/device.c`) segue a abordagem dele, e
+  a lista de funções quentes do jogo, tirada de perfis de jogo (`tools/hot_functions.txt`), permite à configuração
+  compilar o resto mais rápido.
 - [SDL 3](https://libsdl.org) (zlib): janela, entrada, áudio e a activity do Android.
 - [libadrenotools](https://github.com/bylaws/libadrenotools), de bylaws (BSD 2-Clause): carrega um driver Vulkan
   personalizado.
