@@ -1,5 +1,7 @@
 # Metas de desempenho Android
 
+Pesquisa de referência: [mods de desempenho nos emuladores e updates 1.0.1/1.1.0](ANDROID-EMULATOR-MODS-RESEARCH-20261022.md), de 22/10/2026. Inclui comparação com o código do port e candidatos para investigação; somente documentação, sem testes novos ou ganhos anunciados.
+
 Direção definida pelo mantenedor em 21/10/2026:
 
 **Prioridade revisada:** primeiro inicializar sem erros nos modelos suportados e comprovar 30 FPS estáveis em vários dispositivos. O desenvolvimento do modo 120 fica adiado até essa base estar validada. As etapas de 120 abaixo são um roteiro posterior, não a frente ativa.
