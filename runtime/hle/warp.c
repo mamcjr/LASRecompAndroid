@@ -32,6 +32,7 @@ static volatile uint64_t g_frame_now, g_load_frame;
 static unsigned g_loads_at_warp;
 static uint64_t g_warp_frame;
 static int g_warp_waiting;
+static int g_change;  // a level change of the game's own is under way (watch_level_change)
 // Generated code (tools/patches.py EMPTY_HANDLER_SITE): the event dispatcher skipped an empty handler (issue #41)
 void rt_empty_handler(void) { LOG("[event] empty handler skipped (issue #41)\n"); }
 
@@ -41,6 +42,7 @@ RT_ON_RESET(warp_reset) {  // (reboot: nothing queued; the request objects were 
     g_req = 0;
     g_give_pending = 0;
     g_warp_waiting = 0;
+    g_change = 0;
 }
 
 // Called from the generated code when a level registers its request object.
@@ -184,11 +186,47 @@ void warp_frame(uint64_t frame) {
     }
 }
 
+// A level or area change of the game's own under way (Link walked through a doorway or into another area, or a warp
+// point fired): from the moment it starts, the request object the level registered (g_request) holds the destination
+// - level name +0xa8 / length +0xe8, locator +0xf0 / length +0x130 (the field the processor tests) - until the next
+// level registers a new, empty one. Once that change starts, the processor (main+0x81ba80) soon finds no player
+// component either - entity [gm+0x4a8], its object [entity+0x88], the component [object+0x618] (main+0x1b730 /
+// main+0x11b70, type-checked shared_ptrs: null when missing) - and calls main+0x864d50 with it unchecked: null+0x3f8,
+// the crash at return address main+0x81bdc8 (Field warps fired while Link walked into the Animal Village entrance or
+// the Mad Batter's well). A warp handed over while the component was still there didn't crash but was lost (the
+// game's own change won). So a warp waits while the request object holds a destination - checked every frame and
+// remembered until the next level's request object registers (the old one is freed during the load; a stale one
+// left over without a successor holds garbage, not a destination), at most CHANGE_TIMEOUT frames - and while there is
+// no player component; then WARP_SETTLE frames after the new level's request object, as after any load.
+enum { CHANGE_TIMEOUT = 600 };
+static unsigned g_change_loads;       // g_loads when the game's own change was last seen pending
+static uint64_t g_change_req, g_change_since;
+static char g_change_level[64];        // its destination (log)
+static int g_deferred_log;
+static void watch_level_change(uint64_t now) {
+    uint64_t r = g_request;
+    uint64_t ll = r ? LD64(r + 0xe8) : 0, lc = r ? LD64(r + 0x130) : 0;
+    if (ll && ll < 0x40 && lc && lc < 0x40 && strnlen((const char *)(uintptr_t)(r + 0xa8), 0x40) == ll &&
+        strnlen((const char *)(uintptr_t)(r + 0xf0), 0x40) == lc) {  // a destination
+        if (!g_change || r != g_change_req) g_change_since = now;
+        g_change = 1, g_change_req = r, g_change_loads = g_loads;
+        strlcpy(g_change_level, (const char *)(uintptr_t)(r + 0xf0), sizeof g_change_level);
+    } else if (g_change && g_loads != g_change_loads) {
+        g_change = 0;  // (the next level registered its request object)
+    }
+    if (g_change && now - g_change_since > CHANGE_TIMEOUT) g_change = 0;
+}
+static int player_component_missing(void) {
+    uint64_t gm = LD64(MAIN_BASE + 0x1c97188), e = gm ? LD64(gm + 0x4a8) : 0, o = e ? LD64(e + 0x88) : 0;
+    return !o || !LD64(o + 0x618);
+}
+
 // Game main thread, once per frame (from the controller read): if a warp is queued, build a request with
 // the fields main+0x81b950 fills and hand it to the game's own request processor.
 void warp_game_tick(Cpu *c) {
-    if (!g_pending) return;
     uint64_t now = g_frame_now;
+    watch_level_change(now);
+    if (!g_pending) return;
     if (g_warp_waiting && g_loads == g_loads_at_warp && now - g_warp_frame < WARP_TIMEOUT)
         return;  // (the last warp's level isn't loaded yet: this one stays queued)
     g_warp_waiting = 0;
@@ -198,6 +236,14 @@ void warp_game_tick(Cpu *c) {
         return;
     }
     if (now - g_load_frame < WARP_SETTLE) return;  // (a level just loaded: let it settle first)
+    if (g_change || player_component_missing()) {  // (the game's own level / area change: stays queued until done)
+        if (!g_deferred_log)
+            LOG("[warp] waiting: a level change of the game's own is under way (%s)\n",
+                g_change ? g_change_level : "no player component");
+        g_deferred_log = 1;
+        return;
+    }
+    g_deferred_log = 0;
     if (!g_req) g_req = (uint64_t)(uintptr_t)hle_alloc(0x200);
     uint64_t req = g_req;
     pthread_mutex_lock(&g_lock);
