@@ -295,6 +295,77 @@ static void add_cflags(Args *a, const Tools *t) {
     }
 }
 
+#ifdef __ANDROID__
+// Hot / cold: compiling the generated C at -O1 is most of the setup's minutes on a phone, and most of the game's
+// functions never run in a play session. gamelib-src/hot_functions.txt (tools/hot_functions.py: the functions sessions
+// entered, as hex addresses) keeps those at -O1; every other function in a generated file gets optnone - the -O0 code
+// generator, about 2.3x faster to compile. No list (or LARECOMP_GAMEBUILD_HOT=0): all at -O1, as before. The list isn't
+// part of the game code's id (GAMELIB_ID): it changes how fast the code is built, not what it does.
+static uint64_t *g_hot;
+static size_t g_nhot;
+static unsigned long long g_cold_fns, g_all_fns;
+
+static int cmp_u64(const void *a, const void *b) {
+    uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;
+    return x < y ? -1 : x > y;
+}
+
+static void load_hot(const char *path) {
+    free(g_hot), g_hot = NULL, g_nhot = 0, g_cold_fns = g_all_fns = 0;
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    size_t cap = 0;
+    char line[64];
+    while (fgets(line, sizeof line, f)) {
+        if (line[0] == '#') continue;
+        char *end;
+        uint64_t a = strtoull(line, &end, 16);
+        if (end == line) continue;
+        if (g_nhot == cap) g_hot = realloc(g_hot, sizeof *g_hot * (cap = cap ? cap * 2 : 4096));
+        g_hot[g_nhot++] = a;
+    }
+    fclose(f);
+    qsort(g_hot, g_nhot, sizeof *g_hot, cmp_u64);
+}
+
+// A generated file's cold functions ("void f_<address>(Cpu *c) {" at a line's start) get optnone, in place.
+static bool mark_cold(const char *src) {
+    FILE *f = fopen(src, "rb");
+    if (!f) return false;
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *d = n > 0 ? malloc((size_t)n + 1) : NULL;
+    bool ok = d && fread(d, 1, (size_t)n, f) == (size_t)n;
+    fclose(f);
+    if (!ok) { free(d); return false; }
+    d[n] = 0;
+    char tmp[1200];
+    snprintf(tmp, sizeof tmp, "%s.cold", src);
+    FILE *o = fopen(tmp, "wb");
+    if (!o) { free(d); return false; }
+    static const char attr[] = "__attribute__((optnone, noinline)) ";
+    const char *p = d, *copied = d;
+    while ((p = strstr(p, "\nvoid f_"))) {
+        p++;  // (the line's start)
+        char *end;
+        uint64_t a = strtoull(p + 7, &end, 16);
+        if (strncmp(end, "(Cpu *c) {", 10)) continue;  // (a declaration: "...;")
+        g_all_fns++;
+        if (bsearch(&a, g_hot, g_nhot, sizeof *g_hot, cmp_u64)) continue;
+        g_cold_fns++;
+        ok = ok && fwrite(copied, 1, (size_t)(p - copied), o) == (size_t)(p - copied) && fputs(attr, o) >= 0;
+        copied = p;
+    }
+    ok = ok && fwrite(copied, 1, (size_t)(d + n - copied), o) == (size_t)(d + n - copied);
+    if (fclose(o) != 0) ok = false;
+    free(d);
+    if (ok && rename(tmp, src) == 0) return true;
+    remove(tmp);
+    return false;
+}
+#endif
+
 static PlatProc start_compile(const Tools *t, const Unit *u) {
     Args a = {0};
     compiler(&a, t);
@@ -345,6 +416,13 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
     mkdir(work, 0755);
 #ifdef __ANDROID__
     android_env(work);
+    {
+        const char *e = getenv("LARECOMP_GAMEBUILD_HOT"), *gen = getenv("LARECOMP_GEN_DIR");
+        char hot[1200];
+        snprintf(hot, sizeof hot, "%s/gamelib-src/hot_functions.txt", gen ? gen : ".");
+        load_hot(e && strcmp(e, "0") ? e : e ? "" : hot);
+        LOG("[gamebuild] hot functions: %zu%s\n", g_nhot, g_nhot ? " (the rest compiled with optnone)" : " (all at -O1)");
+    }
     {   // (the previous one in internal storage: a failed build must not leave it looking current)
         char idp[1200];
         snprintf(idp, sizeof idp, "%s.id", lib);
@@ -446,6 +524,10 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
 
         // compiles
         while (nrun < jobs && next < units.n) {
+#ifdef __ANDROID__  // (unit 0 is the shipped entry file; a file that can't be marked just stays at -O1)
+            if (next > 0 && g_nhot && !mark_cold(units.u[next].src))
+                LOG("[gamebuild] couldn't mark cold functions in %s\n", units.u[next].src);
+#endif
             PlatProc p = start_compile(&t, &units.u[next]);
             if (!p) { snprintf(why, why_size, "the compiler didn't start"); ok = false; break; }
             run[nrun].p = p, run[nrun].unit = next++;
@@ -557,6 +639,9 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
     }
     free(units.u);
     rt_remove_game_file(game_dir, ".gamebuild");  // the C, the objects, the logs
+#ifdef __ANDROID__
+    if (g_nhot) LOG("[gamebuild] %llu of %llu functions cold (optnone)\n", g_cold_fns, g_all_fns);
+#endif
     LOG("[gamebuild] %s in %.0fs\n", ok ? "done" : "failed", (double)(plat_now_ns() - t0) / 1e9);
     if (ok && o->progress) o->progress(1, "Finishing...");
     return ok;

@@ -99,6 +99,7 @@ val prepareLasRecomp by tasks.registering {
     inputs.files(listOf("tools/gen.py", "tools/lifter.py", "tools/analyze.py", "tools/nso.py", "tools/passes.py", "tools/patches.py",
                         "tools/simd_c.py", "tools/rando/patch_variants.json", "tools/gamelib_entry.c", "runtime/cpu.h",
                         "runtime/simd.h", "runtime/simd_fp.h", "runtime/gamelib.h", "runtime/hle/hle_symbols.txt").map { repo.resolve(it) })
+    if (repo.resolve("tools/hot_functions.txt").exists()) inputs.file(repo.resolve("tools/hot_functions.txt"))
     outputs.dir(gen)
     doLast {
         val out = gen.get().asFile
@@ -136,6 +137,9 @@ val prepareLasRecomp by tasks.registering {
                 repo.resolve("runtime/$n").copyTo(a.resolve("gamelib-src/$n"), overwrite = true)
             repo.resolve("tools/gamelib_entry.c").copyTo(a.resolve("gamelib-src/gamelib_entry.c"), overwrite = true)
             repo.resolve("runtime/hle/hle_symbols.txt").copyTo(a.resolve("gamelib-src/hle_symbols.txt"), overwrite = true)
+            // (runtime/gamebuild.c hot / cold: only these functions at -O1; not part of the game code's id)
+            val hot = repo.resolve("tools/hot_functions.txt")
+            if (hot.exists()) hot.copyTo(a.resolve("gamelib-src/hot_functions.txt"), overwrite = true)
             val digest = MessageDigest.getInstance("SHA-256")
             val buffer = ByteArray(65536)
             for (f in a.walkTopDown().filter { it.isFile }.sortedBy { it.relativeTo(a).invariantSeparatorsPath }) {
