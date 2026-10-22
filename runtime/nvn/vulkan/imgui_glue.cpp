@@ -12,7 +12,11 @@ extern "C" {
 extern "C" bool vk_imgui_backend_init(void) {
     if (ImGui::GetIO().BackendRendererUserData) return true;
     ImGui_ImplVulkan_InitInfo ii = {};
+#ifdef __ANDROID__
+    ii.ApiVersion = g_vk.api;  // (below 1.3 it loads vkCmdBeginRenderingKHR: device.c COMPAT_EXT)
+#else
     ii.ApiVersion = VK_API_VERSION_1_3;
+#endif
     ii.Instance = g_vk.inst;
     ii.PhysicalDevice = g_vk.phys;
     ii.Device = g_vk.dev;

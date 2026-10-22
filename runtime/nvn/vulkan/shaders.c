@@ -124,6 +124,8 @@ uint32_t *vk_glsl_to_spirv(const char *src, int stage, const char *name, size_t 
     bool optimized = getenv("LARECOMP_VK_OPT") != NULL;
 #ifdef __ANDROID__
     uint64_t h = vk_shader_source_hash(src, stage, optimized);
+    uint32_t api = g_vk.api ? g_vk.api : VK_API_VERSION_1_3;  // (0: no device yet - as 1.3)
+    if (api < VK_API_VERSION_1_3) h ^= (uint64_t)api << 32;  // (older SPIR-V for a device below 1.3, below)
 #else
     uint64_t h = src_hash(src, stage);
 #endif
@@ -133,7 +135,14 @@ uint32_t *vk_glsl_to_spirv(const char *src, int stage, const char *name, size_t 
     static __thread shaderc_compiler_t comp;
     if (!comp) comp = shaderc_compiler_initialize();
     shaderc_compile_options_t o = shaderc_compile_options_initialize();
+#ifdef __ANDROID__  // (SPIR-V 1.6 for 1.3; 1.5 / 1.3 for a device below it, device.c COMPAT_EXT)
+    shaderc_compile_options_set_target_env(o, shaderc_target_env_vulkan,
+                                           api >= VK_API_VERSION_1_3 ? shaderc_env_version_vulkan_1_3
+                                           : api >= VK_API_VERSION_1_2 ? shaderc_env_version_vulkan_1_2
+                                                                            : shaderc_env_version_vulkan_1_1);
+#else
     shaderc_compile_options_set_target_env(o, shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_3);
+#endif
     shaderc_compile_options_set_optimization_level(o, optimized ? shaderc_optimization_level_performance
                                                                                   : shaderc_optimization_level_zero);
     shaderc_compilation_result_t r = shaderc_compile_into_spv(comp, src, strlen(src), kind_of(stage), name, "main", o);

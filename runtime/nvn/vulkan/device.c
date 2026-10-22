@@ -81,7 +81,76 @@ static bool has_ext(VkExtensionProperties *e, uint32_t n, const char *name) {
 
 // Discrete GPU first (LARECOMP_GPU=<index> picks one), needs Vulkan 1.3 and a queue that can present.
 #ifdef __ANDROID__
-// (Android: a GPU whose queues can't present is skipped rather than fatal, and the fatal message says what to report)
+// Drivers below Vulkan 1.3 (many phones' own, e.g. Mali up to Android 13-15): what of 1.2 / 1.3 the backend uses, as
+// extensions. The backend then runs exactly its 1.3 code: the extensions' functions take the core names' place
+// (compat_aliases, volk's pointers) and their structures are the same. `below`: the version from which it is core.
+// After LASRecomp-Android-Plus by Nycolazs (MIT, runtime/nvn/vulkan/device.c COMPAT_EXT / compat_ok / compat_aliases).
+static const struct { const char *name; uint32_t below; } COMPAT_EXT[] = {
+    {VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, VK_API_VERSION_1_3},
+    {VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME, VK_API_VERSION_1_2},  // (dynamic rendering needs these two)
+    {VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME, VK_API_VERSION_1_2},
+    {VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME, VK_API_VERSION_1_3},
+    {VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME, VK_API_VERSION_1_3},
+    {VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME, VK_API_VERSION_1_3},
+    {VK_EXT_SHADER_DEMOTE_TO_HELPER_INVOCATION_EXTENSION_NAME, VK_API_VERSION_1_3},
+    {VK_KHR_SHADER_TERMINATE_INVOCATION_EXTENSION_NAME, VK_API_VERSION_1_3},
+    {VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME, VK_API_VERSION_1_2},
+    {VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME, VK_API_VERSION_1_2},
+    {VK_KHR_8BIT_STORAGE_EXTENSION_NAME, VK_API_VERSION_1_2},
+    {VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME, VK_API_VERSION_1_2},
+    {VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME, VK_API_VERSION_1_2},
+};
+#define N_COMPAT_EXT (sizeof COMPAT_EXT / sizeof *COMPAT_EXT)
+static char g_compat_missing[128];  // (the first a rejected GPU lacked: the fatal message names it)
+
+// Whether a device below 1.3 has every extension it needs (missing ones logged)
+static bool compat_ok(VkPhysicalDevice pd, uint32_t api) {
+    if (api < VK_API_VERSION_1_1) {
+        snprintf(g_compat_missing, sizeof g_compat_missing, "Vulkan 1.1");
+        return false;
+    }
+    uint32_t ne = 0;
+    vkEnumerateDeviceExtensionProperties(pd, NULL, &ne, NULL);
+    VkExtensionProperties *ep = calloc(ne ? ne : 1, sizeof *ep);
+    vkEnumerateDeviceExtensionProperties(pd, NULL, &ne, ep);
+    bool ok = true;
+    for (size_t i = 0; i < N_COMPAT_EXT; i++)
+        if (api < COMPAT_EXT[i].below && !has_ext(ep, ne, COMPAT_EXT[i].name)) {
+            LOG("[vk-cap]   missing %s\n", COMPAT_EXT[i].name);
+            if (ok) snprintf(g_compat_missing, sizeof g_compat_missing, "%s", COMPAT_EXT[i].name);
+            ok = false;
+        }
+    free(ep);
+    return ok;
+}
+
+static void compat_aliases(void) {  // (after volkLoadDevice)
+    if (g_vk.api < VK_API_VERSION_1_3) {
+        vkCmdBeginRendering = vkCmdBeginRenderingKHR;
+        vkCmdEndRendering = vkCmdEndRenderingKHR;
+        vkCmdPipelineBarrier2 = vkCmdPipelineBarrier2KHR;
+        vkQueueSubmit2 = vkQueueSubmit2KHR;
+        vkCmdWriteTimestamp2 = vkCmdWriteTimestamp2KHR;
+        vkCmdSetCullMode = vkCmdSetCullModeEXT;
+        vkCmdSetFrontFace = vkCmdSetFrontFaceEXT;
+        vkCmdSetPrimitiveTopology = vkCmdSetPrimitiveTopologyEXT;
+        vkCmdSetDepthTestEnable = vkCmdSetDepthTestEnableEXT;
+        vkCmdSetDepthWriteEnable = vkCmdSetDepthWriteEnableEXT;
+        vkCmdSetDepthCompareOp = vkCmdSetDepthCompareOpEXT;
+        vkCmdSetStencilTestEnable = vkCmdSetStencilTestEnableEXT;
+        vkCmdSetStencilOp = vkCmdSetStencilOpEXT;
+        vkCmdSetPrimitiveRestartEnable = vkCmdSetPrimitiveRestartEnableEXT;
+        vkCmdSetDepthBiasEnable = vkCmdSetDepthBiasEnableEXT;
+    }
+    if (g_vk.api < VK_API_VERSION_1_2) {
+        vkWaitSemaphores = vkWaitSemaphoresKHR;
+        vkGetSemaphoreCounterValue = vkGetSemaphoreCounterValueKHR;
+        vkSignalSemaphore = vkSignalSemaphoreKHR;
+    }
+}
+
+// (Android: a GPU whose queues can't present is skipped rather than fatal, and the fatal message says what to report;
+// below 1.3, a GPU with the extensions above)
 static void pick_device(void) {
     uint32_t n = 0;
     vkEnumeratePhysicalDevices(g_vk.inst, &n, NULL);
@@ -91,12 +160,21 @@ static void pick_device(void) {
     int want = getenv("LARECOMP_GPU") ? atoi(getenv("LARECOMP_GPU")) : -1, best = -1, best_score = -1;
     uint32_t best_queue = UINT32_MAX;
     bool have_api = false;
+    // LARECOMP_VK_API=1.1 / 1.2 (test): use a newer device as that version - the extensions' path on a phone at hand
+    // (drivers keep listing the extensions their version promoted)
+    const char *force = getenv("LARECOMP_VK_API");
+    uint32_t cap = force && !strcmp(force, "1.1") ? VK_API_VERSION_1_1 : force && !strcmp(force, "1.2") ? VK_API_VERSION_1_2 : 0;
     for (uint32_t i = 0; i < n; i++) {
         VkPhysicalDeviceProperties p;
         vkGetPhysicalDeviceProperties(pd[i], &p);
         LOG("[vk] gpu %u: %s (api %u.%u.%u)\n", i, p.deviceName, VK_API_VERSION_MAJOR(p.apiVersion),
             VK_API_VERSION_MINOR(p.apiVersion), VK_API_VERSION_PATCH(p.apiVersion));
-        if (p.apiVersion < VK_API_VERSION_1_3) continue;
+        if (cap && p.apiVersion > cap) p.apiVersion = cap;
+        if (p.apiVersion < VK_API_VERSION_1_3 && !compat_ok(pd[i], p.apiVersion)) {
+            LOG("[vk-cap] skipping %s: Vulkan %u.%u without what the renderer needs of 1.3\n", p.deviceName,
+                VK_API_VERSION_MAJOR(p.apiVersion), VK_API_VERSION_MINOR(p.apiVersion));
+            continue;
+        }
         have_api = true;
         uint32_t nq = 0, present_queue = UINT32_MAX;
         vkGetPhysicalDeviceQueueFamilyProperties(pd[i], &nq, NULL);
@@ -118,13 +196,20 @@ static void pick_device(void) {
         if ((int)i == want) score = 100;
         if (score > best_score) { best_score = score; best = (int)i; best_queue = present_queue; }
     }
-    if (best < 0) FATAL("%s\n", have_api ? "No Vulkan 1.3 GPU has a graphics+compute queue that can present to the screen. Check the selected driver."
-                                        : "No Vulkan 1.3 GPU was found. Check the selected driver and report your phone model and Android version.");
+    if (best < 0 && have_api)
+        FATAL("No Vulkan GPU has a graphics+compute queue that can present to the screen. Check the selected driver.\n");
+    if (best < 0)
+        FATAL("This phone's Vulkan driver is too old for the game: it needs Vulkan 1.3, or 1.1 / 1.2 with extensions "
+              "(missing: %s). Check the selected driver and report your phone model and Android version.\n",
+              g_compat_missing[0] ? g_compat_missing : "Vulkan 1.1");
     g_vk.phys = pd[best];
     free(pd);
     vkGetPhysicalDeviceProperties(g_vk.phys, &g_vk.props);
     g_vk.qfam = best_queue;
-    LOG("[vk] using %s\n", g_vk.props.deviceName);
+    uint32_t api = cap && g_vk.props.apiVersion > cap ? cap : g_vk.props.apiVersion;
+    g_vk.api = api < VK_API_VERSION_1_3 ? VK_MAKE_API_VERSION(0, 1, VK_API_VERSION_MINOR(api), 0) : VK_API_VERSION_1_3;
+    LOG("[vk] using %s (Vulkan %u.%u%s)\n", g_vk.props.deviceName, VK_API_VERSION_MAJOR(g_vk.api),
+        VK_API_VERSION_MINOR(g_vk.api), g_vk.api < VK_API_VERSION_1_3 ? " with extensions for 1.3" : "");
 }
 #else
 static void pick_device(void) {
@@ -214,9 +299,15 @@ static void create_device(void) {
 #undef QUERY_OPTIONAL
     vkGetPhysicalDeviceFeatures2(g_vk.phys, &optional);
 #endif
-    const char *ext[8];
+    const char *ext[32];
     uint32_t n_ext = 0;
     ext[n_ext++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+#ifdef __ANDROID__
+    for (size_t i = 0; i < N_COMPAT_EXT; i++)  // (below 1.3: pick_device checked they're all there)
+        if (g_vk.api < COMPAT_EXT[i].below) ext[n_ext++] = COMPAT_EXT[i].name;
+    // (VkPhysicalDeviceDriverProperties: core from 1.2, before that its own extension, only queried)
+    bool driver_props = g_vk.api >= VK_API_VERSION_1_2 || has_ext(ep, ne, VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME);
+#endif
     g_vk.custom_border = has_ext(ep, ne, VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME);
 #ifdef __ANDROID__
     if (g_vk.custom_border && !vk_backend_border_supported(&border_have)) {
@@ -266,12 +357,60 @@ static void create_device(void) {
     VkPhysicalDeviceVulkan12Features h12 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, .pNext = &h13};
     VkPhysicalDeviceVulkan11Features h11 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, .pNext = &h12};
     have.pNext = &h11;
+    // Below 1.3 the Vulkan13 structure (below 1.2 the 11 / 12 ones too) isn't valid: the extensions' own structures are
+    // asked instead and copied into h11 / h12 / h13, so what follows reads them as on 1.3
+    VkPhysicalDeviceDynamicRenderingFeaturesKHR q_dr = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR};
+    VkPhysicalDeviceSynchronization2FeaturesKHR q_s2 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR,
+                                                        .pNext = &q_dr};
+    VkPhysicalDeviceExtendedDynamicStateFeaturesEXT q_eds = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT, .pNext = &q_s2};
+    VkPhysicalDeviceExtendedDynamicState2FeaturesEXT q_eds2 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_2_FEATURES_EXT, .pNext = &q_eds};
+    VkPhysicalDeviceShaderDemoteToHelperInvocationFeaturesEXT q_dem = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DEMOTE_TO_HELPER_INVOCATION_FEATURES_EXT, .pNext = &q_eds2};
+    VkPhysicalDeviceShaderTerminateInvocationFeaturesKHR q_term = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_TERMINATE_INVOCATION_FEATURES_KHR, .pNext = &q_dem};
+    VkPhysicalDeviceTimelineSemaphoreFeatures q_tl = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
+    VkPhysicalDeviceShaderFloat16Int8Features q_i8 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES,
+                                                      .pNext = &q_tl};
+    VkPhysicalDevice8BitStorageFeatures q_b8 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES, .pNext = &q_i8};
+    VkPhysicalDeviceScalarBlockLayoutFeatures q_sbl = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES,
+                                                       .pNext = &q_b8};
+    VkPhysicalDevice16BitStorageFeatures q_b16 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES,
+                                                  .pNext = &q_sbl};
+    if (g_vk.api < VK_API_VERSION_1_3) {
+        h12.pNext = NULL;
+        q_term.pNext = g_vk.api >= VK_API_VERSION_1_2 ? (void *)&h11 : (void *)&q_b16;
+        have.pNext = &q_term;
+    }
 #endif
     vkGetPhysicalDeviceFeatures2(g_vk.phys, &have);
 #ifdef __ANDROID__
+    if (g_vk.api < VK_API_VERSION_1_3) {
+        h13.dynamicRendering = q_dr.dynamicRendering;
+        h13.synchronization2 = q_s2.synchronization2;
+        h13.shaderDemoteToHelperInvocation = q_dem.shaderDemoteToHelperInvocation;
+        h13.shaderTerminateInvocation = q_term.shaderTerminateInvocation;
+        h13.maintenance4 = VK_TRUE;  // (only for 1.3's SPIR-V 1.6 LocalSizeId: older SPIR-V, shaders.c, doesn't use it)
+        if (g_vk.api < VK_API_VERSION_1_2) {
+            h11.storageBuffer16BitAccess = q_b16.storageBuffer16BitAccess;
+            h12.timelineSemaphore = q_tl.timelineSemaphore;
+            h12.shaderInt8 = q_i8.shaderInt8;
+            h12.storageBuffer8BitAccess = q_b8.storageBuffer8BitAccess;
+            h12.uniformAndStorageBuffer8BitAccess = q_b8.uniformAndStorageBuffer8BitAccess;
+            h12.scalarBlockLayout = q_sbl.scalarBlockLayout;
+            h12.samplerMirrorClampToEdge = VK_TRUE;  // (its extension has no feature bit: compat_ok found it)
+        }
+        if (!q_eds.extendedDynamicState || !q_eds2.extendedDynamicState2)
+            FATAL("Vulkan driver on %s lacks a feature required by this renderer: extendedDynamicState%s.\n"
+                  "Include this message, phone model and app version in your bug report.\n",
+                  g_vk.props.deviceName, q_eds.extendedDynamicState ? "2" : "");
+    }
     VkPhysicalDeviceDriverProperties driver = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
-    VkPhysicalDeviceProperties2 properties = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &driver};
+    VkPhysicalDeviceProperties2 properties = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+                                              .pNext = driver_props ? &driver : NULL};
     vkGetPhysicalDeviceProperties2(g_vk.phys, &properties);
+    if (!driver_props) snprintf(driver.driverName, sizeof driver.driverName, "unknown");
     LOG("[vk-cap] gpu %s vendor %#x device %#x api %u.%u.%u driver-id %u name %s info %s\n",
         g_vk.props.deviceName, g_vk.props.vendorID, g_vk.props.deviceID, VK_API_VERSION_MAJOR(g_vk.props.apiVersion),
         VK_API_VERSION_MINOR(g_vk.props.apiVersion), VK_API_VERSION_PATCH(g_vk.props.apiVersion),
@@ -314,6 +453,45 @@ static void create_device(void) {
         f12.shaderInt8 = h12.shaderInt8;
         f12.uniformAndStorageBuffer8BitAccess = h12.uniformAndStorageBuffer8BitAccess;
         f12.storageBuffer8BitAccess = h12.storageBuffer8BitAccess;
+    }
+    // Below 1.3: the same features through the extensions' structures (1.2: its own 11 / 12 ones and the 1.3
+    // extensions'; 1.1: the extensions' for both), ahead of the optional ones f13 led to
+    VkPhysicalDeviceDynamicRenderingFeaturesKHR e_dr = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR,
+                                                        .dynamicRendering = VK_TRUE, .pNext = f13.pNext};
+    VkPhysicalDeviceSynchronization2FeaturesKHR e_s2 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR,
+                                                        .synchronization2 = VK_TRUE, .pNext = &e_dr};
+    VkPhysicalDeviceExtendedDynamicStateFeaturesEXT e_eds = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT, .extendedDynamicState = VK_TRUE,
+        .pNext = &e_s2};
+    VkPhysicalDeviceExtendedDynamicState2FeaturesEXT e_eds2 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_2_FEATURES_EXT, .extendedDynamicState2 = VK_TRUE,
+        .pNext = &e_eds};
+    VkPhysicalDeviceShaderDemoteToHelperInvocationFeaturesEXT e_dem = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DEMOTE_TO_HELPER_INVOCATION_FEATURES_EXT,
+        .shaderDemoteToHelperInvocation = VK_TRUE, .pNext = &e_eds2};
+    VkPhysicalDeviceShaderTerminateInvocationFeaturesKHR e_term = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_TERMINATE_INVOCATION_FEATURES_KHR,
+        .shaderTerminateInvocation = VK_TRUE, .pNext = &e_dem};
+    VkPhysicalDeviceTimelineSemaphoreFeatures e_tl = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES,
+                                                      .timelineSemaphore = VK_TRUE, .pNext = &e_term};
+    VkPhysicalDeviceShaderFloat16Int8Features e_i8 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES,
+                                                      .shaderInt8 = h12.shaderInt8, .pNext = &e_tl};
+    VkPhysicalDevice8BitStorageFeatures e_b8 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES,
+                                                .storageBuffer8BitAccess = h12.storageBuffer8BitAccess,
+                                                .uniformAndStorageBuffer8BitAccess = h12.uniformAndStorageBuffer8BitAccess,
+                                                .pNext = &e_i8};
+    VkPhysicalDeviceScalarBlockLayoutFeatures e_sbl = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES,
+                                                       .scalarBlockLayout = VK_TRUE, .pNext = &e_b8};
+    VkPhysicalDevice16BitStorageFeatures e_b16 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES,
+                                                  .storageBuffer16BitAccess = VK_TRUE, .pNext = &e_sbl};
+    if (g_vk.api < VK_API_VERSION_1_3) {
+        void *head = &e_b16;
+        if (g_vk.api >= VK_API_VERSION_1_2) {
+            f12.pNext = &e_term;  // (f11 -> f12 -> the 1.3 extensions'; f13 left out)
+            head = &f11;
+        }
+        ff.pNext = head;
+        f.pNext = fault ? (void *)&ff : head;
     }
 #endif
     b->independentBlend = h->independentBlend;
@@ -372,12 +550,15 @@ static void create_device(void) {
     VK_CHECK(vkCreateDevice(g_vk.phys, &di, NULL, &g_vk.dev));
 #ifdef __ANDROID__
     volkLoadDevice(g_vk.dev);
+    compat_aliases();
+    LOG("[vk] Vulkan %u.%u device, %u extensions\n", VK_API_VERSION_MAJOR(g_vk.api), VK_API_VERSION_MINOR(g_vk.api), n_ext);
 #endif
     vkGetDeviceQueue(g_vk.dev, g_vk.qfam, 0, &g_vk.queue);
 
     VmaAllocatorCreateInfo ai = {.physicalDevice = g_vk.phys, .device = g_vk.dev, .instance = g_vk.inst,
                                  .vulkanApiVersion = VK_API_VERSION_1_3};
 #ifdef __ANDROID__
+    ai.vulkanApiVersion = g_vk.api;
     VmaVulkanFunctions vf = {.vkGetInstanceProcAddr = vkGetInstanceProcAddr, .vkGetDeviceProcAddr = vkGetDeviceProcAddr};
     ai.pVulkanFunctions = &vf;  // (VMA_DYNAMIC_VULKAN_FUNCTIONS: from the driver volk loaded)
 #endif

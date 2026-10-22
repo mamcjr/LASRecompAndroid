@@ -10,8 +10,9 @@
 
 #include "vk.h"
 
-// Does this driver offer a Vulkan 1.3 GPU at all? (Turnip v26.0.0 R8, built for the A7xx: none on an Adreno 830 -
-// the app stopped at "no Vulkan device" on every start, its settings out of reach)
+// Does this driver offer a Vulkan GPU at all? (Turnip v26.0.0 R8, built for the A7xx: none on an Adreno 830 - the app
+// stopped at "no Vulkan device" on every start, its settings out of reach.) 1.1 and up: below 1.3 device.c checks the
+// extensions it needs instead (COMPAT_EXT).
 static bool driver_has_gpu(PFN_vkGetInstanceProcAddr gipa) {
     PFN_vkCreateInstance create = (PFN_vkCreateInstance)gipa(NULL, "vkCreateInstance");
     if (!create) return false;
@@ -31,7 +32,7 @@ static bool driver_has_gpu(PFN_vkGetInstanceProcAddr gipa) {
             for (uint32_t i = 0; i < n && !ok; i++) {
                 VkPhysicalDeviceProperties p;
                 props(pd[i], &p);
-                ok = p.apiVersion >= VK_API_VERSION_1_3;
+                ok = p.apiVersion >= VK_API_VERSION_1_1;
             }
     }
     if (destroy) destroy(inst, NULL);
@@ -50,7 +51,7 @@ void vk_android_load(void) {
         LOG("[vk] driver %s: %s\n", drv, lib ? "loaded through adrenotools" : "FAILED, using the system driver");
         PFN_vkGetInstanceProcAddr g = lib ? (PFN_vkGetInstanceProcAddr)dlsym(lib, "vkGetInstanceProcAddr") : NULL;
         if (lib && (!g || !driver_has_gpu(g))) {
-            LOG("[vk] driver %s: no Vulkan 1.3 GPU it supports here - using the system driver\n", drv);
+            LOG("[vk] driver %s: no Vulkan 1.1+ GPU it supports here - using the system driver\n", drv);
             lib = NULL;  // (left loaded: a driver doesn't always unload cleanly)
         }
     }
