@@ -13,6 +13,7 @@
 
 #include "imgui.h"
 #include "option_rows.h"
+#include "settings_theme.h"
 #include "imgui_internal.h"  // (NavCursorVisible)
 #include "osk.h"
 #ifdef __APPLE__
@@ -404,7 +405,7 @@ static void drain_events(ImGuiIO &io) {
 // Section header in the big font.
 static void header(const char *t) {
     ImGui::PushFont(g_font_big);
-    ImGui::TextColored(ImVec4(0.93f, 0.76f, 0.33f, 1), "%s", t);
+    ImGui::TextColored(settings_title_color(), "%s", t);
     ImGui::PopFont();
     ImGui::Separator();
     ImGui::Spacing();
@@ -998,6 +999,7 @@ void menu_tabs_draw(float scale, ImFont *font, ImFont *font_big, bool in_game, v
     ImGuiStyle saved = ImGui::GetStyle();  // the menu's look (the start screen has its own style)
     style_init();
     ImGui::GetStyle().ScaleAllSizes(scale);
+    settings_theme_apply();
     tabs_body(scale, in_game, prelaunch);
     ImGui::GetStyle() = saved;
     g_font = f0, g_font_big = f1;
@@ -1093,6 +1095,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     }
 
     if (open) {
+        SettingsThemeScope settings_theme;
         // dim the game behind the menu
         ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), io.DisplaySize, IM_COL32(0, 0, 0, 110));
         float w = fminf(io.DisplaySize.x * 0.9f, 1500 * scale), h = io.DisplaySize.y - 2 * 18 * scale;
@@ -1102,13 +1105,14 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
         ImGui::Begin("##menu", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+        settings_theme_frame(scale);
         ImFont *keep_big = g_font_big;  // (the window in the menu's font; header() uses g_font_big)
         g_font_big = g_menu_font_big;
         ImGui::PushFont(g_menu_font);
         // header as on the start screen's Settings: the title, and a close X in the corner (B / Esc too). ("Title
         // screen" - rt_request_reboot(RT_REBOOT_TITLE) - is to find a new home; user 2026-10-11.)
         ImGui::PushFont(g_font_big);
-        ImGui::TextColored(ImVec4(0.93f, 0.76f, 0.33f, 1), "Settings");
+        ImGui::TextColored(settings_title_color(), "Settings");
         ImGui::PopFont();
         {
             float bx = 44 * scale;
@@ -1118,7 +1122,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
             bool close = ImGui::InvisibleButton("##close", ImVec2(bx, bx), ImGuiButtonFlags_EnableNav);
             ImGui::PopStyleColor();
             bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
-            ImU32 col = hot ? IM_COL32(236, 194, 84, 255) : IM_COL32(220, 216, 205, 255);
+            ImU32 col = ImGui::GetColorU32(hot ? ImGuiCol_NavCursor : ImGuiCol_Text);
             float m = bx * 0.3f, t = (hot ? 3.0f : 2.4f) * scale * 1.5f;
             ImDrawList *dl = ImGui::GetWindowDrawList();
             if (hot) dl->AddRectFilled(p, ImVec2(p.x + bx, p.y + bx), IM_COL32(255, 255, 255, 20), 8 * scale);

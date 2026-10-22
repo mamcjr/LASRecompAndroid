@@ -23,6 +23,7 @@
 #include "imgui.h"
 #include "imgui_internal.h"  // (SetKeyOwner)
 #include "option_rows.h"
+#include "settings_theme.h"
 #include "osk.h"
 #ifdef __APPLE__
 #include "imgui_impl_metal.h"
@@ -968,7 +969,7 @@ static void reveal_folder(const std::string &dir) {
 static SDL_Window *g_launcher_win;
 static bool g_files_deleted;  // set here: the start screen goes back to setting the game files up
 static void prelaunch_tab(float sc) {
-    const ImVec4 gold(0.93f, 0.76f, 0.33f, 1);
+    const ImVec4 gold = settings_title_color();
     auto heading = [&](const char *t) {
         ImGui::PushFont(g_font_menu);
         ImGui::TextColored(gold, "%s", t);
@@ -1046,14 +1047,14 @@ static void prelaunch_tab(float sc) {
     if (ImGui::Button("Delete game files") || shot_del) ImGui::OpenPopup("##delfiles"), shot_del = false;  // (test: :askdelete)
     if (ImGui::BeginPopupModal("##delfiles", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
         ImGui::PushFont(g_font_menu);
-        ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "Are you sure?");
+        ImGui::TextColored(settings_warning_color(), "Are you sure?");
         ImGui::PopFont();
         ImGui::Text("This deletes LAS Recomp's copy of the game files (%.1f GB).", gb);
         ImGui::TextDisabled("Saves, seeds and settings are kept. Your own game files aren't touched.");
         if (rt_dev_mode()) {  // (a source checkout: the files are the project's own extracted/)
             bool abs = !g_root.empty() && (g_root[0] == '/' || (g_root.size() > 1 && g_root[1] == ':'));
             std::string where = abs ? g_root : std::string(rt_data_root()) + "/" + g_root;
-            ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "Dev checkout: this is %s", where.c_str());
+            ImGui::TextColored(settings_warning_color(), "Dev checkout: this is %s", where.c_str());
         }
         ImGui::Spacing();
         if (ImGui::Button("Delete", ImVec2(220 * sc, 0))) {
@@ -1485,6 +1486,7 @@ extern "C" void launcher_run(const char *root) {
                 if (menu_item("QUIT", true)) exit(0);
                 g_menu_gap = 0.35f;
             } else if (page == SETTINGS) {
+                SettingsThemeScope settings_theme;
                 // the in-game menu's tabs (runtime/ui/menu.mm), in a window like the in-game one; tabs that need a
                 // loaded game say so
                 float sc = ds.y / 1080.0f, w = fminf(ds.x * 0.9f, 1500 * sc), h = ds.y - 2 * 18 * sc;
@@ -1495,15 +1497,21 @@ extern "C" void launcher_run(const char *root) {
                                                           ImGui::GetWindowPos().y + ds.y), IM_COL32(0, 0, 0, 110));
                 ImVec2 wp = ImGui::GetWindowPos();
                 ImGui::SetCursorScreenPos(ImVec2(wp.x + (ds.x - w) * 0.5f, wp.y + (ds.y - h) * 0.5f));
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.06f, 0.09f, 0.08f, 0.96f));
+                ImGui::PushStyleColor(ImGuiCol_ChildBg,
+#ifdef __ANDROID__
+                                      ImGui::GetStyleColorVec4(ImGuiCol_WindowBg));
+#else
+                                      ImVec4(0.06f, 0.09f, 0.08f, 0.96f));
+#endif
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14 * sc);
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(28 * sc, 24 * sc));
                 ImGui::BeginChild("##settings", ImVec2(w, h), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NavFlattened);
                 ImGui::PopStyleVar(2);
                 ImGui::PopStyleColor();
+                settings_theme_frame(sc);
                 ImGui::PushFont(g_font_small);
                 ImGui::PushFont(g_font_menu);
-                ImGui::TextColored(ImVec4(0.93f, 0.76f, 0.33f, 1), "Settings");
+                ImGui::TextColored(settings_title_color(), "Settings");
                 ImGui::PopFont();
                 bool back;
                 {  // close: a drawn X in the corner (B / Esc too)
@@ -1514,7 +1522,7 @@ extern "C" void launcher_run(const char *root) {
                     back = ImGui::InvisibleButton("##close", ImVec2(bx, bx), ImGuiButtonFlags_EnableNav);
                     ImGui::PopStyleColor();
                     bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
-                    ImU32 col = hot ? IM_COL32(236, 194, 84, 255) : IM_COL32(220, 216, 205, 255);
+                    ImU32 col = ImGui::GetColorU32(hot ? ImGuiCol_NavCursor : ImGuiCol_Text);
                     float m = bx * 0.3f, t = (hot ? 3.0f : 2.4f) * sc * 1.5f;
                     ImDrawList *dl = ImGui::GetWindowDrawList();
                     if (hot) dl->AddRectFilled(p, ImVec2(p.x + bx, p.y + bx), IM_COL32(255, 255, 255, 20), 8 * sc);

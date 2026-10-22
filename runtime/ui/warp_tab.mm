@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "imgui.h"
+#include "settings_theme.h"
 #include "osk.h"
 #include "warp_data.h"
 
@@ -82,7 +83,7 @@ extern "C" bool warp_tab_draw(float scale) {
             if (!strcmp(kWarpSpots[i].level, cur)) { g_group = kWarpSpots[i].group; break; }
     }
 
-    ImGui::TextColored(ImVec4(0.93f, 0.76f, 0.33f, 1), "Warp");
+    ImGui::TextColored(settings_title_color(), "Warp");
     ImGui::SameLine();
     if (avail) ImGui::TextDisabled("   Link is in: %s", *cur ? cur : "?");
     else ImGui::TextDisabled("   Load a save and get into the game to warp.");

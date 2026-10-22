@@ -98,7 +98,11 @@ void opt_section(const char *title) {
     std::string t = title;
     for (char &c : t) c = (char)toupper((unsigned char)c);
     if (ImGui::GetCursorPosY() > ImGui::GetStyle().WindowPadding.y + 1) ImGui::Dummy(ImVec2(0, 10 * g_scale));
+#ifdef __ANDROID__
+    ImGui::TextColored(ImGui::GetStyleColorVec4(ImGuiCol_NavCursor), "%s", t.c_str());
+#else
     ImGui::TextColored(ImVec4(0.55f, 0.58f, 0.52f, 1), "%s", t.c_str());
+#endif
 }
 
 // One row: draws it, handles A / click and left / right while selected. Returns 2 (A / click), -1 / +1 (left / right) or 0.

@@ -250,34 +250,51 @@ extern "C" void touch_controls_draw(ImVec2 display, ImFont *font) {
     float u = disp_h / 100.0f;
     float op = g_settings.touch_opacity > 0.05f ? g_settings.touch_opacity : 1.0f;
     float alpha = (used || editing ? 1.0f : 0.6f) * op;
-    ImU32 fill = IM_COL32(255, 255, 255, (int)(40 * alpha)), fill_on = IM_COL32(255, 255, 255, (int)(120 * op));
-    ImU32 line = IM_COL32(255, 255, 255, (int)(110 * alpha)), text = IM_COL32(255, 255, 255, (int)(200 * alpha));
+    // Island inventory palette, kept translucent over the game. Every layer follows
+    // the player's opacity; pressed controls use green as well as a brighter rim.
+    ImU32 fill = IM_COL32(244, 235, 207, (int)(60 * alpha));
+    ImU32 fill_on = IM_COL32(55, 104, 65, (int)(210 * op));
+    ImU32 line = IM_COL32(126, 96, 57, (int)(205 * alpha));
+    ImU32 trim = IM_COL32(238, 216, 164, (int)(180 * alpha));
+    ImU32 text = IM_COL32(255, 247, 219, (int)(235 * alpha));
+    ImU32 shadow = IM_COL32(31, 47, 32, (int)(220 * alpha));
     if (editing) {
         dl->AddRectFilled(ImVec2(0, 0), display, IM_COL32(0, 0, 0, 90));
         const char *tip = "Drag the controls to move them";
         float fs = 4.5f * u;
         ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0, tip);
-        dl->AddText(font, fs, ImVec2(disp_w / 2 - ts.x / 2, 20 * u), IM_COL32(255, 255, 255, 230), tip);
+        ImVec2 tp(disp_w / 2 - ts.x / 2, 20 * u);
+        dl->AddText(font, fs, ImVec2(tp.x + 0.2f * u, tp.y + 0.2f * u), IM_COL32(31, 47, 32, 230), tip);
+        dl->AddText(font, fs, tp, IM_COL32(255, 247, 219, 255), tip);
     }
     for (int i = 0; i < n; i++) {
         bool bar = c[i].bit >= C_DONE && c[i].bit <= C_CANCEL;
         bool on = c[i].bit >= 0 && c[i].bit < 16 && (held >> c[i].bit & 1);
         float fs = (c[i].rect ? c[i].h * (bar ? 0.45f : 0.6f) : c[i].r * 0.9f);
         ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0, c[i].label);
-        ImU32 f = bar ? IM_COL32(60, 90, 70, 230) : on ? fill_on : fill, l = bar ? IM_COL32(236, 194, 84, 255) : line;
-        ImU32 tx = bar ? IM_COL32(255, 255, 255, 255) : text;
+        ImU32 f = bar ? IM_COL32(55, 86, 53, 240) : on ? fill_on : fill;
+        ImU32 l = bar ? IM_COL32(190, 162, 107, 255) : line;
+        ImU32 rim = bar ? IM_COL32(238, 216, 164, 255) : on ? IM_COL32(255, 237, 187, (int)(240 * op)) : trim;
+        ImU32 tx = bar ? IM_COL32(255, 247, 219, 255) : text;
         if (c[i].rect) {
             ImVec2 a(c[i].x - c[i].w / 2, c[i].y - c[i].h / 2), b(c[i].x + c[i].w / 2, c[i].y + c[i].h / 2);
             dl->AddRectFilled(a, b, f, 1.5f * u);
             dl->AddRect(a, b, l, 1.5f * u, 0, 0.3f * u);
+            float inset = 0.55f * u;
+            dl->AddRect(ImVec2(a.x + inset, a.y + inset), ImVec2(b.x - inset, b.y - inset), rim, 1.1f * u, 0, 0.15f * u);
         } else {
             dl->AddCircleFilled(ImVec2(c[i].x, c[i].y), c[i].r, f, 32);
             dl->AddCircle(ImVec2(c[i].x, c[i].y), c[i].r, l, 32, 0.3f * u);
+            dl->AddCircle(ImVec2(c[i].x, c[i].y), c[i].r - 0.55f * u, rim, 32, 0.15f * u);
         }
         if (c[i].bit == C_MENU) {  // three bars
-            for (int k = -1; k <= 1; k++)
+            for (int k = -1; k <= 1; k++) {
+                dl->AddLine(ImVec2(c[i].x - 2 * u, c[i].y + k * 1.3f * u + 0.2f * u),
+                            ImVec2(c[i].x + 2 * u, c[i].y + k * 1.3f * u + 0.2f * u), shadow, 0.65f * u);
                 dl->AddLine(ImVec2(c[i].x - 2 * u, c[i].y + k * 1.3f * u), ImVec2(c[i].x + 2 * u, c[i].y + k * 1.3f * u), tx, 0.4f * u);
+            }
         } else {
+            dl->AddText(font, fs, ImVec2(c[i].x - ts.x / 2 + 0.2f * u, c[i].y - ts.y / 2 + 0.2f * u), shadow, c[i].label);
             dl->AddText(font, fs, ImVec2(c[i].x - ts.x / 2, c[i].y - ts.y / 2), tx, c[i].label);
         }
     }
@@ -291,6 +308,11 @@ extern "C" void touch_controls_draw(ImVec2 display, ImFont *font) {
     float R = stick_radius();
     dl->AddCircleFilled(ImVec2(cx, cy), R, fill, 48);
     dl->AddCircle(ImVec2(cx, cy), R, line, 48, 0.3f * u);
-    dl->AddCircleFilled(ImVec2(kx, ky), R * 0.45f, on ? fill_on : IM_COL32(255, 255, 255, (int)(70 * alpha)), 32);
+    dl->AddCircle(ImVec2(cx, cy), R - 0.55f * u, trim, 48, 0.15f * u);
+    float knob = R * 0.45f;
+    dl->AddCircleFilled(ImVec2(kx, ky), knob, on ? fill_on : IM_COL32(244, 235, 207, (int)(95 * alpha)), 32);
+    dl->AddCircle(ImVec2(kx, ky), knob, line, 32, 0.3f * u);
+    dl->AddCircle(ImVec2(kx, ky), knob - 0.55f * u,
+                  on ? IM_COL32(255, 237, 187, (int)(240 * op)) : trim, 32, 0.15f * u);
 }
 #endif
