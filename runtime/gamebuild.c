@@ -318,9 +318,15 @@ static void load_hot(const char *path) {
     char line[64];
     while (fgets(line, sizeof line, f)) {
         if (line[0] == '#') continue;
+        // "<address>" as the generated code names it, or "main <offset>" / "sdk <offset>" (the module's base plus
+        // that: LASRecomp-Android-Plus's list)
+        const char *p = line;
+        uint64_t base = 0;
+        if (!strncmp(p, "main ", 5)) base = 0x7000000000ull, p += 5;
+        else if (!strncmp(p, "sdk ", 4)) base = 0x7004000000ull, p += 4;
         char *end;
-        uint64_t a = strtoull(line, &end, 16);
-        if (end == line) continue;
+        uint64_t a = base + strtoull(p, &end, 16);
+        if (end == p) continue;
         if (g_nhot == cap) g_hot = realloc(g_hot, sizeof *g_hot * (cap = cap ? cap * 2 : 4096));
         g_hot[g_nhot++] = a;
     }

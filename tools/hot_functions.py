@@ -9,6 +9,8 @@ play through as many places as possible, then
 Merge one or more sessions into the list the APK ships (android/lasrecomp/app/build.gradle.kts copies it):
   hot_functions.py session1.txt [session2.txt ...] [-o tools/hot_functions.txt]
 
+Inputs may also be lists of "<module> <hex offset>" lines (main / sdk; no counts), as LASRecomp-Android-Plus ships
+its tools/hot_functions.txt (runtime/gamebuild.c reads that form directly too).
 Addresses are written as the generated code names its functions (f_<address>: main at 0x7000000000, sdk at
 0x7004000000), whatever the guest window was in the session (its '# main_base' line). Only addresses: no game code."""
 import argparse
@@ -22,6 +24,8 @@ p.add_argument('-o', '--out', type=Path, default=Path(__file__).resolve().parent
 p.add_argument('--min-count', type=int, default=1, help='entries a function needs, summed over the sessions')
 args = p.parse_args()
 
+MODULES = {'main': NAMED_MAIN, 'sdk': NAMED_MAIN + 0x4000000}
+
 counts = {}
 for path in args.sessions:
     base = NAMED_MAIN  # (no '# main_base' line: a desktop session, addresses already as named)
@@ -31,8 +35,11 @@ for path in args.sessions:
             continue
         if not line.strip() or line.startswith('#'):
             continue
-        addr, count = line.split()[:2]
-        named = int(addr, 16) - base + NAMED_MAIN
+        f = line.split()
+        if f[0] in MODULES:  # ("<module> <offset>", no counts: LASRecomp-Android-Plus's list - each one entered)
+            named, count = MODULES[f[0]] + int(f[1], 16), args.min_count
+        else:
+            named, count = int(f[0], 16) - base + NAMED_MAIN, int(f[1])
         if not NAMED_MAIN <= named < NAMED_MAIN + 0x8000000:  # (main and sdk: anything else isn't generated code)
             continue
         counts[named] = counts.get(named, 0) + int(count)

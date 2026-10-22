@@ -31,6 +31,13 @@ subprocess.run([sys.executable, str(root / 'tools/hot_functions.py'), str(phone)
 lines = [l for l in hot.read_text().splitlines() if not l.startswith('#')]
 assert lines == ['7000005350'], lines  # (7 + 3 entries: the same function in both sessions)
 checks += 1
+mod = out / 'modules.txt'  # ("<module> <offset>": LASRecomp-Android-Plus's list)
+mod.write_text('main 30\nsdk 1c0\nmain 5350\n')
+subprocess.run([sys.executable, str(root / 'tools/hot_functions.py'), str(mod), str(desk), '-o', str(hot)],
+               check=True, capture_output=True)
+lines = [l for l in hot.read_text().splitlines() if not l.startswith('#')]
+assert lines == ['7000000030', '7000005350', '7000009000', '70040001c0'], lines
+checks += 1
 
 # 2. mark_cold, the production code, on a generated-looking file
 source = (root / 'runtime/gamebuild.c').read_text()
@@ -59,12 +66,12 @@ chunk = ('#include "cpu.h"\n'
          'void f_70000aaaa0(Cpu *c) {\n    // void f_7000000020(Cpu *c) { (not at a line start)\n}\n')
 expected = chunk.replace('void f_7000009000(Cpu *c) {', '__attribute__((optnone, noinline)) void f_7000009000(Cpu *c) {') \
                 .replace('void f_70000aaaa0(Cpu *c) {', '__attribute__((optnone, noinline)) void f_70000aaaa0(Cpu *c) {')
-(out / 'list.txt').write_text('# test\n7000000010\n7000005350\n')
+(out / 'list.txt').write_text('# test\nmain 10\n7000005350\nsdk 0\n')  # (both forms)
 src = out / 'chunk.c'
 src.write_bytes(chunk.encode())
 subprocess.run([args.cc, '-O1', '-std=gnu11', str(out / 'mark.c'), '-o', str(out / 'mark')], check=True)
 r = subprocess.run([str(out / 'mark'), str(out / 'list.txt'), str(src)], check=True, capture_output=True, text=True)
-assert r.stdout.split() == ['2', '3', '2'], r.stdout  # (2 cold of 3 definitions; 2 hot addresses loaded)
+assert r.stdout.split() == ['2', '3', '3'], r.stdout  # (2 cold of 3 definitions; 3 hot addresses loaded)
 checks += 1
 assert src.read_bytes() == expected.encode(), src.read_text()
 checks += 1
