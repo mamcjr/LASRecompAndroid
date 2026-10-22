@@ -3839,9 +3839,23 @@ static void draw_(CmdRec *r, bool indexed) {
             st.viewport[0][2] >= st.rt.color[0]->width && st.viewport[0][3] >= st.rt.color[0]->height && pr->fi->ntex) {
             NvnTexture *t0 = shader_texture_object(1, &pr->fi->tex[0]);
             composite = t0 && t0->width == st.rt.color[0]->width && t0->height == st.rt.color[0]->height;
+#ifdef __ANDROID__
+            // Frame generation's composite: the game's own dynamic resolution draws busy scenes smaller (1536x864,
+            // 1280x720 into the 1920x1080 window image: the village, outdoors), so any size from half the target's
+            // width up at its aspect - or, at the wide render resolution, the window's aspect (after
+            // LASRecomp-Android-Plus's mirror_scene_size). Mirror mode keeps its own exact-size test.
+            if (t0 && !composite) {
+                uint32_t sw = t0->width, sh = t0->height, w = st.rt.color[0]->width, h = st.rt.color[0]->height;
+                uint64_t a = (uint64_t)sw * h, b2 = (uint64_t)sh * w;
+                extern float widescreen_factor(void);
+                float f = widescreen_factor(), sa = sh ? (float)sw / (float)sh : 0, want = 16.0f / 9.0f * f;
+                scene_composite = (sw * 2 >= w && sw <= w && sh <= h && (a > b2 ? a - b2 : b2 - a) * 100 <= (uint64_t)w * h) ||
+                                  (f > 1.01f && sh * 2 >= h && sh <= h && fabsf(sa - want) < 0.01f * want);
+            }
+#endif
         }
 #ifdef __ANDROID__
-        scene_composite = composite;
+        scene_composite = scene_composite || composite;
 #endif
         if (mirror_draw(composite)) {
             vkey.flip_x = fkey.flip_x = true;
