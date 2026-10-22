@@ -843,6 +843,27 @@ static void emit_tex(Ctx *c, uint64_t w, bool bindless) {
 }
 
 // ------------------------------------------------------------------ instruction translation
+// The game's light-culling compute shader (a 30x17 grid of 64-pixel tiles for the tiled lighting of interiors and
+// caves) turns a tile's pixel column into a view direction with the screen height alone: x = px * 2 / height -
+// aspect, which assumes square pixels (width / height = aspect). With a widened camera the image keeps its 1920x1080
+// target, so pixels are no longer square: at 32:9 the tiles right of the screen centre got the lights meant for
+// half as far out, and the lighting changed along a hard vertical line where a light's tiles ended (the floor
+// right of it lighter, MarthaUkuku at 2/3 of the window). The two column steps (pc 0x198: tile x, 0x1a8: tile x +
+// 1) are scaled by aspect * height / width, which is 1 at 16:9: the original shader's result there.
+static void light_tiles_fix(Ctx *c, const uint64_t *code, size_t end, uint32_t pc) {
+    static const uint64_t sig[][2] = {{0x188, 0x5c68100000970309ull}, {0x198, 0x5c68100000d7030dull},
+                                      {0x1a8, 0x5c6810000087030bull}, {0x1b0, 0x5c68100000470303ull}};
+    if (c->stage != STAGE_COMPUTE || (pc != 0x198 && pc != 0x1a8) || end <= 0x1b0 / 8) return;
+    for (size_t i = 0; i < sizeof sig / sizeof sig[0]; i++)
+        if (code[sig[i][0] / 8] != sig[i][1]) return;
+    int d = (int)(code[pc / 8] & 0xff);  // (the destination: r13 / r11)
+    char a[48], h[48], w[48];
+    cbuf_ref(c, 4, 0x1bc, NULL, a);  // camera aspect
+    cbuf_ref(c, 4, 0x1c4, NULL, h);  // target height
+    cbuf_ref(c, 4, 0x1c0, NULL, w);  // target width
+    sp(&c->body, "    r%d = as_type<uint>(as_type<float>(r%d) * (as_type<float>(%s) * as_type<float>(%s) / as_type<float>(%s)));\n", d, d, a, h, w);  // (GLSL: as_type is rewritten)
+}
+
 static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
     char t[2048], u[2048];
     int d = (int)bits(w, 0, 8), a = (int)bits(w, 8, 8);
@@ -2568,6 +2589,7 @@ ShaderInfo *maxwell_translate_bounded(const uint8_t *blob, size_t max_size, size
         if (us) us[i] = (uint32_t)c->body.len;
         if (annotate) sp(&c->body, "    // pc %x: %016llx\n", pc, (unsigned long long)((const uint64_t *)code)[i]);
         emit_insn(c, ((const uint64_t *)code)[i], pc);
+        light_tiles_fix(c, (const uint64_t *)code, end, pc);
         if (dbg && pc == maxwell_dbg_pc) {
             int rr = maxwell_dbg_reg % 1000, half = maxwell_dbg_reg / 1000;  // +1000: low f16, +2000: high f16
             c->reg_used[rr] = 1;
