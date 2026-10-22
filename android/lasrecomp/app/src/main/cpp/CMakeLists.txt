@@ -39,6 +39,7 @@ else()
 endif()
 file(GLOB VK_SRC CONFIGURE_DEPENDS ${R}/runtime/nvn/vulkan/*.c ${R}/runtime/nvn/vulkan/*.cpp)
 file(GLOB UI_SRC CONFIGURE_DEPENDS ${R}/runtime/ui/*.mm)
+list(REMOVE_ITEM UI_SRC ${R}/runtime/ui/rando_tab.mm)  # (no randomizer on Android: menu.mm leaves its tab out)
 set(IMGUI ${R}/third_party/imgui)
 set(IMGUI_SRC ${IMGUI}/imgui.cpp ${IMGUI}/imgui_draw.cpp ${IMGUI}/imgui_tables.cpp ${IMGUI}/imgui_widgets.cpp
     ${IMGUI}/backends/imgui_impl_sdl3.cpp ${IMGUI}/backends/imgui_impl_vulkan.cpp)

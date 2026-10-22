@@ -25,9 +25,10 @@
 
 typedef struct Dir Dir;
 typedef struct {
-    char *name, *path;
+    char *name, *path;  // path: on disk (romfs_build), or relative to the image's root (romfs_build_entries)
     uint64_t size, data_off;
     uint32_t off;  // entry offset in the file table
+    int index;     // (romfs_build_entries) the entry's index, for its open callback
     Dir *parent;
 } File;
 struct Dir {
@@ -130,37 +131,132 @@ uint64_t romfs_dir_bytes(const char *dir) {
     return n;
 }
 
-static bool copy_data(FILE *out, const char *path, uint64_t size, uint8_t *buf, size_t bufsize, uint64_t *done,
+// Where the file data comes from (romfs_build: paths on disk; romfs_build_entries: descriptors from a callback), and
+// which files also get a loose copy under keep_dir.
+typedef struct {
+    int (*open_fd)(void *ctx, int index);  // NULL: fopen(File.path)
+    void *ctx;
+    const char *keep_dir;
+    bool (*keep)(const char *rel);
+} Source;
+
+static bool mkdirs_for(const char *file) {  // the folders a file's path needs
+    char p[2048];
+    snprintf(p, sizeof p, "%s", file);
+    for (char *s = p + 1; *s; s++)
+        if (*s == '/') { *s = 0; mkdir(p, 0755); *s = '/'; }
+    return true;
+}
+
+static bool copy_data(FILE *out, const File *f, const Source *src, uint8_t *buf, size_t bufsize, uint64_t *done,
                       uint64_t total, void (*progress)(uint64_t, uint64_t)) {
-    FILE *in = fopen(path, "rb");
+    FILE *in = NULL;
+    if (src && src->open_fd) {
+        int fd = src->open_fd(src->ctx, f->index);
+        in = fd >= 0 ? fdopen(fd, "rb") : NULL;
+        if (!in && fd >= 0) close(fd);
+    } else {
+        in = fopen(f->path, "rb");
+    }
     if (!in) return false;
-    uint64_t left = size;
-    while (left) {
+    FILE *copy = NULL;
+    if (src && src->keep && src->keep(f->path)) {
+        char p[2048];
+        snprintf(p, sizeof p, "%s/%s", src->keep_dir, f->path);
+        mkdirs_for(p);
+        if (!(copy = fopen(p, "wb"))) { fclose(in); return false; }
+    }
+    uint64_t left = f->size;
+    bool ok = true;
+    while (left && ok) {
         size_t want = left < bufsize ? (size_t)left : bufsize;
         size_t got = fread(buf, 1, want, in);
-        if (got != want || fwrite(buf, 1, got, out) != got) { fclose(in); return false; }
+        ok = got == want && fwrite(buf, 1, got, out) == got && (!copy || fwrite(buf, 1, got, copy) == got);
         left -= got;
         *done += got;
         if (progress) progress(*done, total);
     }
+    if (ok && src && src->open_fd && fgetc(in) != EOF) ok = false;  // (larger than listed: not the file it was)
     fclose(in);
-    return true;
+    if (copy && fclose(copy) != 0) ok = false;
+    return ok;
 }
 
+static bool write_image(Dir *root, const Source *src, const char *out_path, void (*progress)(uint64_t, uint64_t),
+                        char *why, size_t why_size);
+
 bool romfs_build(const char *dir, const char *out_path, void (*progress)(uint64_t, uint64_t), char *why, size_t why_size) {
+    Dir *root = scan(dir, "", NULL, 0);
+    if (!root) {
+        if (why) snprintf(why, why_size, "can't read %s", dir);
+        return false;
+    }
+    bool ok = write_image(root, NULL, out_path, progress, why, why_size);
+    free_tree(root);
+    return ok;
+}
+
+// The tree of romfs_build_entries' relative paths ("a/b/c"), sorted as scan() sorts a folder.
+static Dir *tree_child(Dir *d, const char *name) {
+    for (int i = 0; i < d->ndirs; i++)
+        if (!strcmp(d->dirs[i]->name, name)) return d->dirs[i];
+    Dir *c = calloc(1, sizeof *c);
+    c->name = strdup(name), c->path = strdup(""), c->parent = d;
+    d->dirs = realloc(d->dirs, sizeof *d->dirs * (d->ndirs + 1));
+    d->dirs[d->ndirs++] = c;
+    return c;
+}
+static void tree_sort(Dir *d) {
+    if (d->ndirs) qsort(d->dirs, d->ndirs, sizeof *d->dirs, by_name_dir);
+    if (d->nfiles) qsort(d->files, d->nfiles, sizeof *d->files, by_name_file);
+    for (int i = 0; i < d->ndirs; i++) tree_sort(d->dirs[i]);
+}
+
+bool romfs_build_entries(const RomfsEntry *entries, int n, int (*open_fd)(void *ctx, int index), void *ctx,
+                         const char *out_path, const char *keep_dir, bool (*keep)(const char *rel),
+                         void (*progress)(uint64_t, uint64_t), char *why, size_t why_size) {
+    Dir *root = calloc(1, sizeof *root);
+    root->name = strdup(""), root->path = strdup("");
+    for (int i = 0; i < n; i++) {
+        char rel[1024];
+        snprintf(rel, sizeof rel, "%s", entries[i].path);
+        Dir *d = root;
+        char *part = rel, *slash;
+        bool hidden = false;
+        for (char *s = rel; *s; s++)  // (as scan(): hidden files and folders aren't the game's - nor their folders)
+            if ((s == rel || s[-1] == '/') && *s == '.') hidden = true;
+        if (hidden) continue;
+        while ((slash = strchr(part, '/'))) {
+            *slash = 0;
+            if (*part) d = tree_child(d, part);
+            part = slash + 1;
+        }
+        if (!*part) continue;
+        File *f = calloc(1, sizeof *f);
+        f->name = strdup(part), f->path = strdup(entries[i].path), f->size = entries[i].size, f->index = i, f->parent = d;
+        d->files = realloc(d->files, sizeof *d->files * (d->nfiles + 1));
+        d->files[d->nfiles++] = f;
+    }
+    tree_sort(root);
+    Source src = {open_fd, ctx, keep_dir, keep};
+    bool ok = write_image(root, &src, out_path, progress, why, why_size);
+    free_tree(root);
+    return ok;
+}
+
+static bool write_image(Dir *root, const Source *src, const char *out_path, void (*progress)(uint64_t, uint64_t),
+                        char *why, size_t why_size) {
     #define FAIL(...) do { if (why) snprintf(why, why_size, __VA_ARGS__); goto fail; } while (0)
     bool ok = false;
     FILE *out = NULL;
     uint8_t *dtab = NULL, *ftab = NULL, *buf = NULL;
     uint32_t *dbuckets = NULL, *fbuckets = NULL;
     Lists l = {0};
-    Dir *root = scan(dir, "", NULL, 0);
-    if (!root) FAIL("can't read %s", dir);
     // table order: root, then each directory's subdirectories as flatten() lists them; files likewise
     if (l.nd == l.cd) l.dirs = realloc(l.dirs, sizeof *l.dirs * (l.cd = 64));
     l.dirs[l.nd++] = root;
     flatten(root, &l);
-    if (!l.nf) FAIL("no files in %s", dir);
+    if (!l.nf) FAIL("no game files found");
 
     // entry offsets
     uint32_t dsize = 0, fsize = 0;
@@ -233,7 +329,7 @@ bool romfs_build(const char *dir, const char *out_path, void (*progress)(uint64_
         File *f = l.files[i];
         if (f->data_off > pos && fwrite(zero, 1, (size_t)(f->data_off - pos), out) != f->data_off - pos)
             FAIL("write failed (disk full?)");
-        if (!copy_data(out, f->path, f->size, buf, bufsize, &done, total, progress)) FAIL("can't copy %s", f->path);
+        if (!copy_data(out, f, src, buf, bufsize, &done, total, progress)) FAIL("can't read %s", f->path);
         pos = f->data_off + f->size;
     }
     uint64_t tail = dhash_off - DATA_START - pos;
@@ -248,7 +344,6 @@ fail:
     if (out) fclose(out);
     if (!ok) remove(out_path);
     free(buf), free(dtab), free(ftab), free(dbuckets), free(fbuckets), free(l.dirs), free(l.files);
-    free_tree(root);
     return ok;
     #undef FAIL
 }

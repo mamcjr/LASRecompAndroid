@@ -104,8 +104,10 @@ void settings_load(void) {
         if (sscanf(line, " %63[^= ] = %127[^\n]", key, val) < 1) continue;
 #endif
         if (!strcmp(key, "rando_seed")) {
+#ifndef __ANDROID__  // (Android has no randomizer: a seed saved by an earlier version stays unused)
             if (sscanf(line, " %63[^= ] = %127[^\n]", key, val) != 2) val[0] = 0;
             strlcpy(g_settings.rando_seed, val, sizeof g_settings.rando_seed);
+#endif
             continue;
         }
         if (!strcmp(key, "aspect")) g_settings.aspect = !strcmp(val, "original") ? ASPECT_ORIGINAL : ASPECT_UNLOCKED;

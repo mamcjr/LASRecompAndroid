@@ -315,16 +315,7 @@ static void *extract_thread(void *) {
     bool unusable = false;  // (game packages rather than its files)
 #ifdef __ANDROID__
     extern std::atomic<bool> g_android_imported;
-    if (g_android_imported.exchange(false)) {  // (the activity copied them: android_import below) the image, the code
-        unsigned long long rbytes = romfs_dir_bytes((g_root + "/romfs").c_str());
-        g_total = 2 * rbytes, g_phase_base = rbytes, g_done = rbytes;
-        set_job("Building the game data image...");
-        char why[256] = "";
-        if (!romfs_build((g_root + "/romfs").c_str(), (g_root + "/romfs.bin").c_str(), setup_progress, why, sizeof why)) {
-            fprintf(stderr, "[launcher] romfs image: %s\n", why);
-            set_job("Could not build the game data image", true, why[0] ? why : "Check free storage and import the game folder again.");
-            goto done;
-        }
+    if (g_android_imported.exchange(false)) {  // (the activity copied exefs/ and built romfs.bin: below) the code
         if (!build_game_code()) goto done;
         goto check;
     }
@@ -388,8 +379,9 @@ done:
 // ------------------------------------------------------------------ Android: the system's pickers (SAF)
 // Android has no POSIX path to a folder the player picks: LASRecompActivity opens the system's folder picker, finds
 // exefs/ and romfs/ in the picked folder (a few levels down too, as find_game), checks the game version with
-// nativeBuildIdOk and copies them into <g_root> (nativeImportBegin / Progress / Done); the setup then goes on as on the
-// desktop: the data image, then the game code (runtime/gamebuild.c, on the phone itself). The Vulkan driver is
+// nativeBuildIdOk, copies exefs/ into <g_root> and builds romfs.bin straight from the picked romfs/ (nativeBuildRomfs:
+// no copy of its 6 GB first; only the few files opened by path stay loose), then the setup goes on as on the desktop
+// with the game code (runtime/gamebuild.c, on the phone itself). The Vulkan driver is
 // picked the same way (a Turnip .zip, copied to the drivers folder the activity loads from at start).
 #include <jni.h>
 std::atomic<bool> g_android_imported{false};
@@ -481,8 +473,99 @@ extern "C" JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeImp
 }
 
 extern "C" JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeImportProgress(JNIEnv *, jclass, jlong done, jlong total) {
-    g_total = 2ull * (unsigned long long)total;  // (the copy, then the data image: each about the size of romfs/)
+    g_total = (unsigned long long)total;  // (exefs/ copied, then the data image read straight from romfs/: one pass)
     g_done = (unsigned long long)done;
+}
+
+// The few romfs/ files the runtime opens by path rather than through romfs.bin: the movies (hle/movie.c, the start
+// screen's background) and the sheets the texture patches scan (nvn/texpatch.c load_refs). Only these stay loose.
+static bool keep_loose(const char *rel) {
+    static const char *const files[] = {
+        "region_common/ui/Game.arc", "region_common/ui/StartUp.arc", "regionUS/common/ui/GameRegionCommon.arc",
+        "regionEU/common/ui/GameRegionCommon.arc", "region_common/actor/ItemBottle.bfres",
+        "region_common/actor/Playerlink.bfres", "region_common/actor/ItemFairy.bfres",
+        "region_common/actor/ItemMagicPowder.bfres", "region_common/ui/pictogram.bffnt"};
+    size_t n = strlen(rel);
+    if (n > 5 && !strcmp(rel + n - 5, ".webm")) return true;
+    for (const char *f : files)
+        if (!strcmp(rel, f)) return true;
+    return false;
+}
+
+// Called by the activity's import thread with romfs/'s files (relative paths, sizes): romfs.bin straight from the
+// picked folder - each file's descriptor from openRomfsFile(index) - and the loose few beside it. Returns NULL, or why
+// it failed.
+struct RomfsJni { JNIEnv *env; jobject act; jmethodID open; };
+static int romfs_jni_open(void *ctx, int index) {
+    RomfsJni *j = (RomfsJni *)ctx;
+    int fd = j->env->CallIntMethod(j->act, j->open, (jint)index);
+    if (j->env->ExceptionCheck()) { j->env->ExceptionClear(); return -1; }
+    return fd;
+}
+extern "C" JNIEXPORT jstring JNICALL Java_com_lasrecomp_LASRecompActivity_nativeBuildRomfs(JNIEnv *env, jobject act,
+                                                                                          jobjectArray paths, jlongArray sizes) {
+    int n = env->GetArrayLength(paths);
+    std::vector<std::string> keep_alive(n);
+    std::vector<RomfsEntry> entries(n);
+    std::vector<jlong> sz(n);
+    if (n) env->GetLongArrayRegion(sizes, 0, n, sz.data());
+    for (int i = 0; i < n; i++) {
+        jstring s = (jstring)env->GetObjectArrayElement(paths, i);
+        const char *c = env->GetStringUTFChars(s, NULL);
+        keep_alive[i] = c ? c : "";
+        if (c) env->ReleaseStringUTFChars(s, c);
+        env->DeleteLocalRef(s);
+        entries[i] = {keep_alive[i].c_str(), (uint64_t)sz[i]};
+    }
+    jclass cls = env->GetObjectClass(act);
+    RomfsJni j = {env, act, env->GetMethodID(cls, "openRomfsFile", "(I)I")};
+    env->DeleteLocalRef(cls);
+    if (!j.open) { env->ExceptionClear(); return env->NewStringUTF("Internal error: openRomfsFile missing."); }
+    set_job("Building the game data image...");
+    g_phase_base = g_done;  // (exefs/ copied: the image's bytes follow)
+    char why[256] = "";
+    std::string romfs = g_root + "/romfs";
+    mkdir(romfs.c_str(), 0755);
+    bool ok = romfs_build_entries(entries.data(), n, romfs_jni_open, &j, (g_root + "/romfs.bin").c_str(),
+                                  romfs.c_str(), keep_loose, setup_progress, why, sizeof why);
+    if (ok) return NULL;
+    fprintf(stderr, "[launcher] romfs image: %s\n", why);
+    return env->NewStringUTF(why[0] ? why : "Could not build the game data image. Check free storage and try again.");
+}
+
+// An earlier version copied all of romfs/ beside romfs.bin (about 6 GB twice): once the image is there, only the
+// loose few stay (keep_loose).
+static void prune_loose(const std::string &dir, const std::string &rel) {
+    DIR *d = opendir(dir.c_str());
+    if (!d) return;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        std::string p = dir + "/" + e->d_name, r = rel.empty() ? e->d_name : rel + "/" + e->d_name;
+        struct stat st;
+        if (lstat(p.c_str(), &st) != 0) continue;
+        if (S_ISDIR(st.st_mode)) {
+            prune_loose(p, r);
+            rmdir(p.c_str());  // (only when it was left empty)
+        } else if (!keep_loose(r.c_str())) {
+            remove(p.c_str());
+        }
+    }
+    closedir(d);
+}
+static void *prune_thread(void *) {
+    prune_loose(g_root + "/romfs", "");
+    fprintf(stderr, "[launcher] loose game files trimmed to what the runtime opens by path\n");
+    return NULL;
+}
+static void android_prune_loose(void) {  // (start screen, game files ready)
+    static bool done;
+    if (done) return;
+    done = true;
+    struct stat st;
+    if (stat((g_root + "/romfs.bin").c_str(), &st) != 0 || st.st_size < (1ll << 30)) return;
+    pthread_t t;
+    if (pthread_create(&t, NULL, prune_thread, NULL) == 0) pthread_detach(t);
 }
 
 // 0 copied, 1 cancelled, 2 no game files found, 3 game packages instead of files, 4 another version, 5 copy failed
@@ -671,6 +754,9 @@ static void load_background(GpuDevice dev) {
 // ------------------------------------------------------------------ seeds
 static std::vector<std::string> list_seeds() {
     std::vector<std::string> out;
+#ifdef __ANDROID__
+    return out;  // (no randomizer on Android: its seed generator is a desktop program)
+#endif
     if (DIR *d = opendir("rando")) {
         while (struct dirent *e = readdir(d)) {
             if (e->d_name[0] == '.') continue;
@@ -765,7 +851,11 @@ static bool menu_tip(float s) {
         static const char *const home[] = {"Home button", "Xbox button", "PlayStation button"};  // (bind_label_family)
         static const char *const pad[] = {"Minus + Plus", "View + Menu", "Create + Options"};
         ImGui::PushTextWrapPos(0);
+#ifdef __ANDROID__
+        ImGui::TextUnformatted("LAS Recomp has its own menu for settings, cosmetics and more.");
+#else
         ImGui::TextUnformatted("LAS Recomp has its own menu for settings, the randomizer, cosmetics and more.");
+#endif
         ImGui::Spacing();
         int fam = bind_label_family() % 3;
 #ifdef __ANDROID__
@@ -1158,6 +1248,9 @@ extern "C" void launcher_run(const char *root) {
 
     std::string status = check_game_files(g_root);
     if (status.empty()) load_background(dev);
+#ifdef __ANDROID__
+    if (status.empty()) android_prune_loose();
+#endif
     std::vector<std::string> seeds = list_seeds();
     std::vector<std::string> choices = {"Vanilla"};
     choices.insert(choices.end(), seeds.begin(), seeds.end());

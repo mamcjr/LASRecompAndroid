@@ -566,8 +566,13 @@ static void tab_display(void) {
 static void tab_cosmetics(void) {
     opt_begin("##cosmetics", ImGui::GetFontSize() / 34);
     opt_section("Colors");
+#ifdef __ANDROID__
+    opt_choice("Tunic color", &g_settings.tunic, g_tunic_colours, N_TUNIC_COLOURS, 0,
+               "Link's tunic color. Default: the game's own.");
+#else
     opt_choice("Tunic color", &g_settings.tunic, g_tunic_colours, N_TUNIC_COLOURS, 0,
                "Link's tunic color. Default: the game's own (or the randomizer seed's).");
+#endif
     opt_choice("Heart color", &g_settings.hearts, g_heart_colours, N_HEART_COLOURS, 0,
                "The color of the hearts on the HUD.");
     if (opt_action("Random colors", "", "Picks a random tunic and heart color (any other color, Default included).")) {
@@ -808,7 +813,9 @@ static void settings_page(int id, float scale, bool in_game, void (*prelaunch)(f
         if (game_in_play()) save_editor_draw(scale);
         else ImGui::TextDisabled("Load a save file and get into the game to edit it.");
         break;
+#ifndef __ANDROID__  // (no randomizer on Android: rando_tab.mm isn't built there)
     case 3: rando_tab_draw(scale); break;
+#endif
     case 4: if (warp_tab_draw(scale)) set_open(false); break;
     case 5: cheats_draw(scale); break;
     case 6: difficulty_draw(scale); break;

@@ -69,6 +69,7 @@ public class LASRecompActivity extends SDLActivity {
     private static native void nativeImportDone(int result);
     private static native void nativeImportFailure(String reason);
     private static native void nativeImportChecking();
+    private native String nativeBuildRomfs(String[] paths, long[] sizes);
     private static native void nativeDriverPicked(String name);
     private static native void nativeSaveTransferDone(String message);
 
@@ -444,6 +445,34 @@ public class LASRecompActivity extends SDLActivity {
         return n;
     }
 
+    // romfs/'s files (relative paths): nativeBuildRomfs builds romfs.bin straight from them, no copy of the folder
+    private Uri romfsTree;
+    private final List<Doc> romfsFiles = new ArrayList<>();
+    private final List<String> romfsPaths = new ArrayList<>();
+
+    private void listFiles(Uri tree, Doc dir, String prefix) throws IOException {
+        for (Doc k : children(tree, dir.id)) {
+            String rel = prefix + k.name;
+            if (k.dir) {
+                listFiles(tree, k, rel + "/");
+                continue;
+            }
+            if (k.size < 0) throw new IOException("The file provider did not report a size for " + k.name +
+                    ". Copy the extracted game files to a local folder and select it again.");
+            romfsFiles.add(k);
+            romfsPaths.add(rel);
+        }
+    }
+
+    // (called by nativeBuildRomfs) file i's data as a descriptor the native side reads and closes
+    @SuppressWarnings("unused")
+    private int openRomfsFile(int i) throws IOException {
+        android.os.ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(
+                DocumentsContract.buildDocumentUriUsingTree(romfsTree, romfsFiles.get(i).id), "r");
+        if (pfd == null) throw new IOException("Could not open " + romfsPaths.get(i));
+        return pfd.detachFd();
+    }
+
     private long copied, total, reported;
 
     private void copyTree(Uri tree, Doc dir, File to) throws IOException {
@@ -511,7 +540,12 @@ public class LASRecompActivity extends SDLActivity {
                 }
             }
             copied = reported = 0;
-            long romfsBytes = treeBytes(tree, romfs), exefsBytes = treeBytes(tree, exefs);
+            romfsTree = tree;
+            romfsFiles.clear();
+            romfsPaths.clear();
+            listFiles(tree, romfs, "");
+            long romfsBytes = 0, exefsBytes = treeBytes(tree, exefs);
+            for (Doc d : romfsFiles) romfsBytes = Math.addExact(romfsBytes, d.size);
             total = Math.addExact(romfsBytes, exefsBytes);
             long needed = ImportStorage.requiredBytes(exefsBytes, romfsBytes);
             long available = games.getParentFile().getUsableSpace();
@@ -523,8 +557,16 @@ public class LASRecompActivity extends SDLActivity {
             String name = DocumentsContract.getTreeDocumentId(tree);
             nativeImportBegin(name.substring(name.lastIndexOf(':') + 1));
             copyTree(tree, exefs, new File(games, "exefs"));
-            copyTree(tree, romfs, new File(games, "romfs"));
             nativeImportProgress(copied, total);
+            long[] sizes = new long[romfsFiles.size()];
+            for (int i = 0; i < sizes.length; i++) sizes[i] = romfsFiles.get(i).size;
+            String failed = nativeBuildRomfs(romfsPaths.toArray(new String[0]), sizes);
+            romfsFiles.clear();
+            romfsPaths.clear();
+            if (failed != null) {
+                nativeImportFailure(failed);
+                return;
+            }
             result = 0;
         } catch (Exception e) {
             Log.e(TAG, "game files: " + e);

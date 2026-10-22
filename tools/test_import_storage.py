@@ -14,7 +14,7 @@ import java.util.Locale;
 public final class ImportStorageTest {
     public static void main(String[] args) throws Exception {
         long reserve = (2L << 30) + (1L << 28);
-        if (ImportStorage.requiredBytes(100, 1000) != reserve + 2100) throw new AssertionError("copy + image + reserve");
+        if (ImportStorage.requiredBytes(100, 1000) != reserve + 1100) throw new AssertionError("exefs + image + reserve");
         if (ImportStorage.requiredBytes(0, 0) != reserve) throw new AssertionError("workspace reserve");
         for (long[] sizes : new long[][] {{-1, 0}, {0, -1}, {0, Long.MAX_VALUE}, {Long.MAX_VALUE, 1}}) {
             boolean rejected = false;

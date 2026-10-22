@@ -15,6 +15,17 @@ extern "C" {
 bool romfs_build(const char *dir, const char *out, void (*progress)(uint64_t done, uint64_t total), char *why,
                  size_t why_size);
 
+// The same image from a list of files (relative paths "a/b/c" and sizes) whose data open_fd(ctx, index) hands over as
+// a readable descriptor (closed here) - Android: straight from the picked folder, no copy of it first. The files
+// keep(rel) picks are also written loose under keep_dir/rel (the few the runtime opens by path). keep may be NULL.
+typedef struct {
+    const char *path;
+    uint64_t size;
+} RomfsEntry;
+bool romfs_build_entries(const RomfsEntry *entries, int n, int (*open_fd)(void *ctx, int index), void *ctx,
+                         const char *out, const char *keep_dir, bool (*keep)(const char *rel),
+                         void (*progress)(uint64_t done, uint64_t total), char *why, size_t why_size);
+
 // Bytes of file data under dir (the image is about this plus its tables).
 uint64_t romfs_dir_bytes(const char *dir);
 
