@@ -112,9 +112,11 @@ static const char kWarp[] =
     "  return abs(z - f.z) > 0.15 * f.z ? vec2(0.0) : f.xy * 0.5;\n"
     "}\n"
     "void main() {\n"
-    "  if (p.a.w > 1.5 && p.a.w < 2.5) { vec2 n = toGame(uv); float d = textureLod(depthT, n * p.b.zw, 0.0).r; o = vec4(vec3(clamp((1.0 - d) * 20.0, 0.0, 1.0)), 1.0); return; }\n"  // (LARECOMP_FRAMEGEN_DEBUG=depth)
-    "  if (p.a.w > 0.5 && p.a.w < 1.5) { o = flag(8u) ? compAt(toGame(uv)) : textureLod(comp, uv, 0.0); return; }\n"  // (LARECOMP_FRAMEGEN_PLAIN: the cost without the warp)
+    // (outside the game picture first: the plain copy below, sampled there, stretched the picture's last column of
+    // pixels across the black bars - every in-between frame with the camera still)
     "  if (any(lessThan(uv, p.rect.xy)) || any(greaterThan(uv, p.rect.xy + p.rect.zw))) { o = flag(8u) ? vec4(0.0, 0.0, 0.0, 1.0) : textureLod(comp, uv, 0.0); return; }\n"
+    "  if (p.a.w > 1.5 && p.a.w < 2.5) { vec2 n = toGame(uv); float d = textureLod(depthT, n * p.b.zw, 0.0).r; o = vec4(vec3(clamp((1.0 - d) * 20.0, 0.0, 1.0)), 1.0); return; }\n"  // (LARECOMP_FRAMEGEN_DEBUG=depth)
+    "  if (p.a.w > 0.5 && p.a.w < 1.5) { o = flag(8u) ? compAt(toGame(uv)) : textureLod(comp, uv, 0.0); return; }\n"  // (LARECOMP_FRAMEGEN_PLAIN / a still camera: the real picture again)
     "  vec2 g = toGame(uv);\n"
     "  if (p.a.w > 5.5) { o = vec4(sceneAt(g), 1.0); return; }\n"  // (=scene: the scene before the HUD)
     "  if (p.a.w > 4.5) { o = vec4(compAt(g).rgb * (1.0 - 0.6 * hudW(g)) + vec3(0.6 * hudW(g), 0.0, 0.0), 1.0); return; }\n"  // (=mask)
