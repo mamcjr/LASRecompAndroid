@@ -224,11 +224,19 @@ static int room_crop(uint64_t frame, double shape, float *u0, float *u1) {
         *u0 = fminf(b0, fmaxf(0.0f, (ndc[0] + 1) / 2));
         *u1 = fmaxf(b1, fminf(1.0f, (ndc[1] + 1) / 2));
     }
+    const char *full = "full (stale zone)";
+#ifdef __ANDROID__
+    // The fishing game (FishingPond's side view, zone x -12..18): its camera stays put (x 0.6) and the pond is built
+    // about 2 units past the zone's west edge, as far as a 20:9 phone's wide view reaches but ~20 px: cut at the zone's
+    // edge, ~230 px of pond at the left showed black (user 2026-10-23). Shown whole.
+    extern const char *game_level_name(void);
+    if (side && r == ROOM_CROP && !strcmp(game_level_name(), "FishingPond")) r = ROOM_FULL, full = "full (fishing game)";
+#endif
     static uint32_t last_id = ~0u;
     static int last_r = -1;
     if ((id != last_id || r != last_r) && ENV("LARECOMP_LOG_INDOOR"))
         LOG("[widescreen] zone %u x %.1f..%.1f z %.1f..%.1f%s, camera x %.1f: %s at frame %llu\n", id, lo[0], hi[0], lo[2],
-            hi[2], side ? " (side view)" : "", c[0], r == ROOM_CROP ? "crop" : r == ROOM_BOX ? "box" : "full (stale zone)",
+            hi[2], side ? " (side view)" : "", c[0], r == ROOM_CROP ? "crop" : r == ROOM_BOX ? "box" : full,
             (unsigned long long)frame);
     last_id = id, last_r = r;
     return r;
