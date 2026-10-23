@@ -1085,3 +1085,5 @@
  "Não foi possível remover essa versão do jogo"},
 {"Game versions: %s",
  "Versões do jogo: %s"},
+{"The base release (1.0.0) stays while other versions are installed.",
+ "A versão base (1.0.0) fica enquanto houver outras versões instaladas."},

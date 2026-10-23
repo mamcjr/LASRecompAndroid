@@ -684,6 +684,8 @@ static std::vector<std::string> other_versions(void) {
     return out;
 }
 static bool is_base_release(const std::string &r) { return r == "1.0.0"; }  // (kept: no Remove for it)
+// The base release in play with others installed: its game files stay (no Delete for them)
+static bool base_kept(void) { return is_base_release(release_of(g_root)) && !other_versions().empty(); }
 static bool remove_version_dir(const std::string &r) {  // (a release put aside, its game code too)
     if (!release_ok(r)) return false;
     std::string lib = lib_path(r);
@@ -1369,7 +1371,18 @@ static void prelaunch_tab(float sc) {
     ImGui::SameLine();
 #endif
     static bool shot_del = getenv("LARECOMP_LAUNCHER_SHOT") && strstr(getenv("LARECOMP_LAUNCHER_SHOT"), ":askdelete");
+#ifdef __ANDROID__
+    bool keep_base = base_kept();
+#else
+    bool keep_base = false;
+#endif
+    ImGui::BeginDisabled(keep_base);
     if (ImGui::Button(tr("Delete game files")) || shot_del) ImGui::OpenPopup("##delfiles"), shot_del = false;  // (test: :askdelete)
+    ImGui::EndDisabled();
+    if (keep_base) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", tr("The base release (1.0.0) stays while other versions are installed."));
+    }
     if (ImGui::BeginPopupModal("##delfiles", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
         ImGui::PushFont(g_font_menu);
         ImGui::TextColored(settings_warning_color(), "%s", tr("Are you sure?"));
@@ -2122,7 +2135,14 @@ extern "C" void launcher_run(const char *root) {
 #endif
                     opt_section("Game files");
                     if (!g_confirm_delete) {
-                        if (opt_action("Delete game files", gb, "Frees the space LAS Recomp's copy of the game files takes. "
+#ifdef __ANDROID__
+                        bool keep_base = base_kept();
+                        if (keep_base) opt_disable_next();
+#else
+                        bool keep_base = false;
+#endif
+                        if (opt_action("Delete game files", gb, keep_base ? "The base release (1.0.0) stays while other "
+                                       "versions are installed." : "Frees the space LAS Recomp's copy of the game files takes. "
                                        "Saves, seeds and settings are kept, and your own game files aren't touched: you can "
                                        "set the game files up again from them.", true))
                             g_confirm_delete = true;
