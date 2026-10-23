@@ -286,7 +286,7 @@ static PlatDeviceStats g_ds = {.batt_temp_c = -1, .batt_pct = -1, .thermal = -1,
 
 JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeDeviceStats(JNIEnv *env, jclass cls, jfloat batt_temp_c,
                                                                             jfloat batt_pct, jfloat watts, jint thermal,
-                                                                            jfloat headroom) {
+                                                                            jfloat headroom, jfloat display_hz) {
     (void)env, (void)cls;
     pthread_mutex_lock(&g_ds_lock);
     g_ds.batt_temp_c = batt_temp_c;
@@ -294,7 +294,16 @@ JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeDeviceStats(JN
     g_ds.watts = watts;
     g_ds.thermal = thermal;
     g_ds.headroom = headroom;
+    g_ds.display_hz = display_hz;
     pthread_mutex_unlock(&g_ds_lock);
+}
+
+// The display's refresh rate now (from the activity, once a second; 0: not known yet) - vulkan/framegen.c
+float plat_display_hz(void) {
+    pthread_mutex_lock(&g_ds_lock);
+    float hz = g_ds.display_hz;
+    pthread_mutex_unlock(&g_ds_lock);
+    return hz;
 }
 
 static uint64_t read_u64(const char *path) {

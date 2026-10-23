@@ -61,7 +61,27 @@ public class LASRecompActivity extends SDLActivity {
         }
     };
 
-    private static native void nativeDeviceStats(float battTempC, float battPct, float watts, int thermal, float headroom);
+    private static native void nativeDeviceStats(float battTempC, float battPct, float watts, int thermal, float headroom,
+                                                 float displayHz);
+
+    // Frame generation (runtime/nvn/vulkan/framegen.c): the display's fastest mode at its resolution, for in-between
+    // frames at any frame rate (the game's 60 on a 120 Hz display: 120 on the screen); 0: the system's own choice
+    public static void preferRefreshRate(float hz) {
+        self.runOnUiThread(() -> {
+            android.view.Display d = self.getDisplay();
+            if (d == null) return;
+            android.view.Display.Mode cur = d.getMode(), pick = null;
+            for (android.view.Display.Mode m : d.getSupportedModes())
+                if (hz > 0 && m.getPhysicalWidth() == cur.getPhysicalWidth() && m.getPhysicalHeight() == cur.getPhysicalHeight()
+                    && m.getRefreshRate() <= hz + 1 && (pick == null || m.getRefreshRate() > pick.getRefreshRate()))
+                    pick = m;
+            android.view.WindowManager.LayoutParams lp = self.getWindow().getAttributes();
+            lp.preferredDisplayModeId = pick != null ? pick.getModeId() : 0;
+            lp.preferredRefreshRate = pick != null ? pick.getRefreshRate() : 0;
+            self.getWindow().setAttributes(lp);
+            Log.i(TAG, "display mode: " + (pick != null ? pick.getRefreshRate() + " Hz preferred" : "the system's"));
+        });
+    }
     // the start screen (runtime/ui/launcher.mm)
     private static native boolean nativeBuildIdOk(byte[] head);
     private static native void nativeImportBegin(String name);
@@ -163,7 +183,9 @@ public class LASRecompActivity extends SDLActivity {
             PowerManager pm = getSystemService(PowerManager.class);
             int thermal = pm != null ? pm.getCurrentThermalStatus() : -1;
             float headroom = pm != null ? pm.getThermalHeadroom(10) : -1;
-            nativeDeviceStats(temp, pct, watts, thermal, Float.isNaN(headroom) ? -1 : headroom);
+            android.view.Display display = getDisplay();
+            nativeDeviceStats(temp, pct, watts, thermal, Float.isNaN(headroom) ? -1 : headroom,
+                              display != null ? display.getRefreshRate() : 0);
         } catch (Throwable t) {  // (also before libmain is loaded: UnsatisfiedLinkError)
             Log.w(TAG, "device stats: " + t);
         }
@@ -262,10 +284,10 @@ public class LASRecompActivity extends SDLActivity {
                 }
             };
             if (mode < 2) {
-                new AlertDialog.Builder(activity).setTitle("Import saves?")
-                    .setMessage("This replaces all current save slots. A backup is kept and can be exported with Export previous saves.")
-                    .setPositiveButton("Continue", (dialog, which) -> pick.run())
-                    .setNegativeButton("Cancel", (dialog, which) -> nativeSaveTransferDone("Import cancelled."))
+                new AlertDialog.Builder(activity).setTitle(R.string.import_saves_title)
+                    .setMessage(R.string.import_saves_message)
+                    .setPositiveButton(R.string.import_saves_continue, (dialog, which) -> pick.run())
+                    .setNegativeButton(R.string.import_saves_cancel, (dialog, which) -> nativeSaveTransferDone("Import cancelled."))
                     .setOnCancelListener(dialog -> nativeSaveTransferDone("Import cancelled.")).show();
             } else pick.run();
         });

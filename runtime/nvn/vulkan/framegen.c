@@ -12,7 +12,9 @@
 // (it stays at 30 a second) - unless LARECOMP_FRAMEGEN_FLOW=1 (experimental): block matching against the previous
 // real frame moves what moved on its own by half its step too (kFlow). Android only (this fork's scope): Video > Frame generation; LARECOMP_FRAMEGEN=0/1.
 #ifdef __ANDROID__
+#include <SDL3/SDL_system.h>
 #include <SDL3/SDL_timer.h>
+#include <jni.h>
 #include <math.h>
 #include <string.h>
 
@@ -46,7 +48,7 @@ static const char kWarp[] =
     "layout(location = 0) out vec4 o;\n"
     // m0..m3: rows of (generated view-projection) x inverse(this frame's); rect: the game picture in the window (uv);
     // crop: the part of the presented picture shown there; a: flags (1 y flip: game NDC up = the image's first row, 2 depth in
-    // [-1, 1], 4 present flip, 8 comp in the game's layout, 16 sRGB-encoded picture, 32 objects' own movement), Link's radius (uv, 0 = none), his depth, the mode; b: Link (uv), the depth's scale (zw)
+    // [-1, 1], 4 present flip, 8 comp in the game's layout, 16 sRGB-encoded picture, 32 objects' own movement; its fraction: the in-between frame's step), Link's radius (uv, 0 = none), his depth, the mode; b: Link (uv), the depth's scale (zw)
     "layout(push_constant) uniform P { vec4 m0; vec4 m1; vec4 m2; vec4 m3; vec4 rect; vec4 crop; vec4 a; vec4 b; } p;\n"
     "bool flag(uint f) { return (uint(p.a.x) & f) != 0u; }\n"
     // (flag 8: comp is the presented picture in the game's texture layout, sampled at game uv; else the window picture)
@@ -109,7 +111,7 @@ static const char kWarp[] =
     "  vec4 f = textureLod(flowT, g, 0.0);\n"
     "  if (f.w < 0.5) return vec2(0.0);\n"
     "  float z = 1.0 / max(1.0 - textureLod(depthT, g * p.b.zw, 0.0).r, 1e-6);\n"
-    "  return abs(z - f.z) > 0.15 * f.z ? vec2(0.0) : f.xy * 0.5;\n"
+    "  return abs(z - f.z) > 0.15 * f.z ? vec2(0.0) : f.xy * fract(p.a.x);\n"
     "}\n"
     "void main() {\n"
     // (outside the game picture first: the plain copy below, sampled there, stretched the picture's last column of
@@ -416,12 +418,45 @@ static bool mat_inv(const float *m, float *o) {
     return true;
 }
 
-// device.c: whether this frame gets an in-between one (asked before the real frame is presented)
+// Any frame rate: in-between frames fill the display's refreshes a real frame spans - the game's 60 Hz steps (its
+// present interval) times the display's refresh / 60, less the real one: 30 fps at 60 Hz or 60 fps at 120 Hz, one;
+// 30 fps at 120 Hz, three. Frame generation asks the activity for the display's fastest mode (LARECOMP_FG_HZ=<hz>, 0:
+// the system's choice): the game keeps its own 60 Hz clock (hle/vi.c), so a faster display only shows more frames.
+static int g_fg_n;  // this frame's in-between frames
+int fg_frames(void) { return g_fg_n; }
+
+static void prefer_refresh(float hz) {  // LASRecompActivity.preferRefreshRate
+    JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
+    jobject act = (jobject)SDL_GetAndroidActivity();
+    if (!env || !act) return;
+    jclass c = (*env)->GetObjectClass(env, act);
+    jmethodID m = (*env)->GetStaticMethodID(env, c, "preferRefreshRate", "(F)V");
+    if (m) (*env)->CallStaticVoidMethod(env, c, m, (jfloat)hz);
+    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    (*env)->DeleteLocalRef(env, c);
+    (*env)->DeleteLocalRef(env, act);
+}
+
+static int frames_between(int interval) {
+    extern float plat_display_hz(void);
+    float hz = plat_display_hz();
+    if (hz < 30) hz = 60;  // (not reported yet)
+    int span = (int)lroundf(hz * (interval < 1 ? 1 : interval) / 60.0f);
+    return span < 2 ? 0 : span > 4 ? 3 : span - 1;
+}
+
+// device.c: whether this frame gets in-between ones (asked before the real frame is presented); fg_frames: how many
 bool fg_frame_wanted(uint64_t frame, TexBackend *fin) {
     extern int g_present_interval;  // runtime/nvn/objects.c: the game's swap interval (2: its 30 fps mode)
     extern bool menu_is_open(void);
     extern bool widescreen_camera(uint64_t frame, float vp[16]);
     if (!fg_enabled()) return false;
+    static bool asked;
+    if (!asked) {
+        asked = true;
+        prefer_refresh(getenv("LARECOMP_FG_HZ") ? (float)atof(getenv("LARECOMP_FG_HZ")) : 1000.0f);  // (the fastest)
+    }
+    int nb = frames_between(g_present_interval);
     pick_depth();
     float vp[16];
     bool have = widescreen_camera(frame, vp);
@@ -446,10 +481,11 @@ bool fg_frame_wanted(uint64_t frame, TexBackend *fin) {
     static int idx, nlate;
     static bool paused, counting;
     double now = SDL_GetTicksNS() / 1e6;
-    bool countable = have && g_present_interval == 2 && !menu_is_open();
+    bool countable = have && nb > 0 && !menu_is_open();
     if (countable != counting) counting = countable, grace_until = now + 1500;
     if (countable && now >= grace_until && last > 0 && now - last < 200) {
-        uint8_t l = now - last > 41.7;  // (more than two and a half refreshes: a third one)
+        // (late: a quarter of its period over - the 30 fps mode's 33.3 ms past 41.7, a 60 fps frame's 16.7 past 20.8)
+        uint8_t l = now - last > (g_present_interval < 1 ? 1 : g_present_interval) * 16.667 * 1.25;
         nlate += l - late[idx], late[idx] = l, idx = (idx + 1) % 60;
         if (paused) base += (l - base) * 0.01;  // (~100 frames)
     }
@@ -468,7 +504,8 @@ bool fg_frame_wanted(uint64_t frame, TexBackend *fin) {
         trial_at = 0, wait_ms = 5000;  // (it held)
     }
     g_paused = paused;
-    bool ok = have && g_have_prev && g_scene_ok && g_depth && g_depth->backend && g_present_interval == 2 && !menu_is_open() && !paused;
+    bool ok = have && g_have_prev && g_scene_ok && g_depth && g_depth->backend && nb > 0 && !menu_is_open() && !paused;
+    g_fg_n = ok ? nb : 0;
     static int logwhy = -1;  // LARECOMP_LOG_FRAMEGEN=1: why frames went without an in-between one, every 2 s
     if (logwhy < 0) logwhy = getenv("LARECOMP_LOG_FRAMEGEN") != NULL;
     if (logwhy) {
@@ -476,7 +513,7 @@ bool fg_frame_wanted(uint64_t frame, TexBackend *fin) {
         static double at;
         n++;
         why[0] += !have || !g_have_prev, why[1] += !g_scene_ok, why[2] += !g_depth || !g_depth->backend;
-        why[3] += g_present_interval != 2, why[4] += menu_is_open(), why[5] += paused;
+        why[3] += nb == 0, why[4] += menu_is_open(), why[5] += paused;
         if (now - at > 2000) {
             if (why[0] + why[1] + why[2] + why[3] + why[5])
                 LOG("[framegen] of %d frames without: camera %d, scene %d, depth %d, interval %d, menu %d, paused %d (late %d of 60)\n", n,
@@ -670,10 +707,11 @@ static bool run_pass(VkCommandBuffer cb, TexBackend *target, VkPipeline pipe, Vk
 
 // objects' own movement (fg_copy_window, after the HUD mask): this frame's brightness picture, then - with the
 // previous real frame's there (the one right before: a gap would match across two steps) - the block search and its
-// neighbour filter. LARECOMP_FRAMEGEN_FLOW=1: on (off by default until checked on phones)
+// neighbour filter. Video > Objects' own movement (off by default, experimental); LARECOMP_FRAMEGEN_FLOW=0/1 over it
 static void build_flow(VkCommandBuffer cb) {
-    static int on = -1;
-    if (on < 0) on = getenv("LARECOMP_FRAMEGEN_FLOW") ? atoi(getenv("LARECOMP_FRAMEGEN_FLOW")) != 0 : 0;
+    static int env = -2;
+    if (env == -2) env = getenv("LARECOMP_FRAMEGEN_FLOW") ? atoi(getenv("LARECOMP_FRAMEGEN_FLOW")) != 0 : -1;
+    bool on = env >= 0 ? env : g_settings.frame_gen_flow;
     static uint64_t q_frame = ~0ull;
     g_flow_ok = false;
     NvnTexture *dt = g_depth;
@@ -763,15 +801,17 @@ static void link_on_screen(float flags, float uvo[2], float *radius, float *dept
 static uint64_t g_generated;
 uint64_t fg_generated_frames(void) { return g_generated; }
 
-// device.c, inside the in-between frame's rendering into the swapchain image: draws it. fin: the presented picture;
-// rect: where it lies in the window (pixels), crop: the part of it shown; flip_present: lower-left origin
+// device.c, after the real frame's in-between ones: their inputs are spent
+void fg_frame_done(void) { g_scene_ok = false, g_depth = NULL; }
+
+// device.c, inside an in-between frame's rendering into the swapchain image: draws it. fin: the presented picture;
+// rect: where it lies in the window (pixels), crop: the part of it shown; flip_present: lower-left origin; step: how far
+// on from the real frame, a share of its period (one in-between frame: 0.5)
 bool fg_draw(VkCommandBuffer cb, VkFormat fmt, uint32_t ww, uint32_t wh, TexBackend *fin, const float rect[4], const float crop[4],
-             bool flip_present) {
+             bool flip_present, float step_at) {
     extern uint32_t nvn_window_origin(void);
     extern uint32_t nvn_depth_mode(void);
-    g_scene_ok = false;
     NvnTexture *dt = g_depth;
-    g_depth = NULL;
     extern VkImageView vk_last_present_src(void);
     VkImageView psrc = fg_wincopy() ? VK_NULL_HANDLE : vk_last_present_src();
     if (!g_comp_ok || !fin || !fin->image || !dt || !dt->backend || (!fg_wincopy() && !psrc)) return false;
@@ -780,8 +820,9 @@ bool fg_draw(VkCommandBuffer cb, VkFormat fmt, uint32_t ww, uint32_t wh, TexBack
     if (!pipe) return false;
     // generated camera: half a step on (rows); M = VPg x inverse(VP)
     float vpg[16], inv[16], m[16];
-    static float step = -1;  // LARECOMP_FRAMEGEN_T=<t>: how far on (tests: 1 = where the next real frame should be)
-    if (step < 0) step = getenv("LARECOMP_FRAMEGEN_T") ? (float)atof(getenv("LARECOMP_FRAMEGEN_T")) : 0.5f;
+    static float t_env = -1;  // LARECOMP_FRAMEGEN_T=<t>: how far on (tests: 1 = where the next real frame should be)
+    if (t_env < 0) t_env = getenv("LARECOMP_FRAMEGEN_T") ? (float)atof(getenv("LARECOMP_FRAMEGEN_T")) : 0;
+    float step = t_env > 0 ? t_env : step_at;
     for (int i = 0; i < 16; i++) vpg[i] = g_vp[i] + step * (g_vp[i] - g_vp_prev[i]);
     if (!mat_inv(g_vp, inv)) return false;
     mat_mul(vpg, inv, m);
@@ -799,7 +840,7 @@ bool fg_draw(VkCommandBuffer cb, VkFormat fmt, uint32_t ww, uint32_t wh, TexBack
     // scenery backwards when the camera moved vertically: -5 / +17 pixels per shown frame instead of +6 / +6, S20 FE)
     bool srgb = fin->format == VK_FORMAT_R8G8B8A8_SRGB || fin->format == VK_FORMAT_B8G8R8A8_SRGB;
     pc.a[0] = (float)((nvn_window_origin() != 0 ? 1 : 0) | (nvn_depth_mode() == 0 ? 2 : 0) | (flip_present ? 4 : 0) | (psrc ? 8 : 0) |
-                      (srgb ? 16 : 0) | (g_flow_ok ? 32 : 0));
+                      (srgb ? 16 : 0) | (g_flow_ok ? 32 : 0)) + fminf(step, 0.999f);  // (the fraction: objMove's step)
     pc.a[1] = 0, pc.a[2] = 0, pc.b[0] = pc.b[1] = 0;
     link_on_screen(pc.a[0], pc.b, &pc.a[1], &pc.a[2]);
     // a camera that didn't move: the real picture again, without the per-pixel reprojection

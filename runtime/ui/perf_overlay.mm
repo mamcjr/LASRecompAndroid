@@ -5,6 +5,7 @@
 // from the activity, LASRecompActivity.reportDeviceStats).
 #ifdef __ANDROID__
 #include <SDL3/SDL.h>
+#include <math.h>
 #include <stdio.h>
 
 #include "imgui.h"
@@ -24,8 +25,24 @@ static ImVec4 grade(float v, float good, float ok) {  // green / yellow / red
     return v >= good ? ImVec4(0.45f, 0.95f, 0.45f, 1) : v >= ok ? ImVec4(1.0f, 0.85f, 0.3f, 1) : ImVec4(1.0f, 0.4f, 0.35f, 1);
 }
 
+// Where it was last drawn (pixels: x, y, w, h): ui/touch_controls.mm drags it with a finger (g_settings.overlay_pos)
+float g_perf_rect[4];
+
+static void place(ImVec2 display, float scale) {  // its saved place, kept on the screen at its last size
+    ImVec2 p(16 * scale, 16 * scale);
+    if (g_settings.overlay_pos[0] >= 0 && g_settings.overlay_pos[1] >= 0)
+        p = ImVec2(g_settings.overlay_pos[0] * display.x, g_settings.overlay_pos[1] * display.y);
+    p.x = fminf(fmaxf(p.x, 0), fmaxf(display.x - g_perf_rect[2], 0));
+    p.y = fminf(fmaxf(p.y, 0), fmaxf(display.y - g_perf_rect[3], 0));
+    ImGui::SetNextWindowPos(p);
+}
+
+static void record(void) {
+    ImVec2 p = ImGui::GetWindowPos(), z = ImGui::GetWindowSize();
+    g_perf_rect[0] = p.x, g_perf_rect[1] = p.y, g_perf_rect[2] = z.x, g_perf_rect[3] = z.y;
+}
+
 void perf_overlay_draw(ImVec2 display, float scale) {
-    (void)display;
     // frame times: this runs once per presented frame
     static float ft[FT_N];
     static int nft, head;
@@ -66,7 +83,7 @@ void perf_overlay_draw(ImVec2 display, float scale) {
     }
 
     bool fg = fg_enabled();
-    ImGui::SetNextWindowPos(ImVec2(16 * scale, 16 * scale));
+    place(display, scale);
     ImGui::SetNextWindowBgAlpha(0.55f);
     if (g_settings.overlay_style == 1) {  // compact: one line - FPS, FPS with frame generation, the app's RAM, battery
         ImGui::Begin("##perf", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
@@ -84,6 +101,7 @@ void perf_overlay_draw(ImVec2 display, float scale) {
             ImGui::SameLine();
             ImGui::TextColored(grade(100 - ds.batt_temp_c, 60, 55), "  Bat %.0f\xc2\xb0" "C", ds.batt_temp_c);
         }
+        record();
         ImGui::End();
         return;
     }
@@ -159,6 +177,7 @@ void perf_overlay_draw(ImVec2 display, float scale) {
             ImGui::TextDisabled("(headroom %.2f)", ds.headroom);
         }
     }
+    record();
     ImGui::End();
 }
 #endif

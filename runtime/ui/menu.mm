@@ -396,7 +396,14 @@ static void drain_events(ImGuiIO &io) {
     pthread_mutex_unlock(&q_lock);
     for (const QEvent &q : ev) {
         switch (q.kind) {
-        case QEvent::KEY: io.AddKeyEvent(q.key, q.down); break;
+        case QEvent::KEY:
+#ifdef __ANDROID__
+            // (ImGui takes a first controller press with its nav cursor hidden only to show it: A did nothing, the
+            // d-pad's first step went nowhere - as on the start screen, launcher.mm launcher_pad_event)
+            if (q.down && q.key >= ImGuiKey_GamepadStart && q.key <= ImGuiKey_GamepadR3) ImGui::SetNavCursorVisible(true);
+#endif
+            io.AddKeyEvent(q.key, q.down);
+            break;
         case QEvent::ANALOG: io.AddKeyAnalogEvent(q.key, q.value > 0.1f, q.value); break;
         case QEvent::MOUSE_POS: io.AddMouseSourceEvent(q.touch ? ImGuiMouseSource_TouchScreen : ImGuiMouseSource_Mouse); io.AddMousePosEvent(q.x, q.y); break;
         case QEvent::MOUSE_BUTTON: io.AddMouseSourceEvent(q.touch ? ImGuiMouseSource_TouchScreen : ImGuiMouseSource_Mouse); io.AddMouseButtonEvent(q.button, q.down); break;
@@ -578,10 +585,14 @@ static void tab_display(void) {
                "integers. Try it if lighting, grass or text are missing or wrong on your GPU. Applies to shaders "
                "translated from now on: restart the app for all of them.");
     opt_toggle("Frame generation", &g_settings.frame_gen, false,
-               "60 on the screen from the game's own 30: after each frame an in-between one is made from the picture, "
-               "the scene's depth and the camera's movement, and shown a refresh later. Characters' own movement "
-               "stays at 30. Works while the game is in its 30 fps mode (Frame rate 30 holds it there) and pauses "
-               "by itself when the game can't hold its 30. Takes effect at the next start of the app.");
+               "In-between frames made from the picture, the scene's depth and the camera's movement, shown between the "
+               "game's own: its 30 fps become 60, or its 60 become 120 on a 120 Hz display (it asks for the display's "
+               "fastest mode). Characters' own movement stays at the game's rate unless Objects' own movement is on. "
+               "Pauses by itself when the game can't hold its frame rate. Takes effect at the next start of the app.");
+    if (!g_settings.frame_gen) opt_disable_next();
+    opt_toggle("Objects' own movement", &g_settings.frame_gen_flow, false,
+               "Experimental: the in-between frames also move characters and objects that moved on their own, found by "
+               "comparing each frame with the one before. Costs some GPU time; off, they stay at the game's frame rate.");
 #endif
 
     opt_section("Game");
@@ -898,6 +909,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
             for (int i = 0; i < ntabs; i++) if (tabs[i].id == g_tab) index = i;
             do index = (index + step + ntabs) % ntabs; while (!tabs[index].on);
             g_tab = tabs[index].id;
+            opt_focus_first(true);  // (the controller's cursor on the new page's first row)
         }
     }
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(18 * scale, 18 * scale));
@@ -905,20 +917,32 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 26 * scale);
     float height = fmaxf(1, ImGui::GetContentRegionAvail().y - 86 * scale);
     float rail = fminf(ImGui::GetContentRegionAvail().x * 0.3f, 280 * scale);
-    ImGui::BeginChild("##categories", ImVec2(rail, height), ImGuiChildFlags_Borders);
+    // (NavFlattened, the rail and the page: a controller's d-pad moves straight between them - as separate child
+    // windows each had to be entered with A and left with B)
+    ImGui::BeginChild("##categories", ImVec2(rail, height), ImGuiChildFlags_Borders, ImGuiWindowFlags_NavFlattened);
     ui_touch_scroll();
     static bool more;
     static int last_touch_tab = -99;
     for (int i = 0; i < ntabs; i++) if (last_touch_tab != g_tab && tabs[i].id == g_tab && tabs[i].id > 1 && tabs[i].id != 8 && tabs[i].id != 10) more = true;
     last_touch_tab = g_tab;
     const int primary[] = {0, 1, 8, 10, -1};
+    if (g_focus_tab == -1 && !prelaunch) g_focus_tab = -100;  // (in game there's no Saves & files: the open category)
     auto category = [&](int id) {
         for (int i = 0; i < ntabs; i++) if (tabs[i].id == id) {
             const Tab &t = tabs[i];
             ImGui::BeginDisabled(!t.on);
             const char *name = tr(id == -1 ? "Saves & files" : t.name);
-            if (g_focus_tab == id || (g_focus_tab == -100 && id == g_tab)) { ImGui::SetKeyboardFocusHere(); g_focus_tab = -99; }
-            if (ImGui::Selectable(name, g_tab == id, 0, ImVec2(0, 64 * scale))) g_tab = id;
+            if (g_focus_tab == id || (g_focus_tab == -100 && id == g_tab)) {
+                ImGui::SetKeyboardFocusHere();
+                if (g_last_pad.load()) ImGui::SetNavCursorVisible(true);  // (opened with the controller: show where)
+                g_focus_tab = -99;
+            }
+            bool picked = ImGui::Selectable(name, g_tab == id, 0, ImVec2(0, 64 * scale));
+            if (ImGui::IsItemFocused()) { extern void ui_log_nav(const char *); ui_log_nav(t.name); }
+            if (picked) {
+                g_tab = id;
+                if (!ImGui::IsMouseReleased(ImGuiMouseButton_Left)) opt_focus_first(true);  // (A on it, not a tap: into the page)
+            }
             ImGui::EndDisabled();
         }
     };
@@ -930,7 +954,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     }
     ImGui::EndChild();
     ImGui::SameLine();
-    ImGui::BeginChild("##touchpage", ImVec2(0, height), ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::BeginChild("##touchpage", ImVec2(0, height), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NavFlattened);
     ui_touch_scroll();
     ImGui::PushID(g_tab);
     settings_page(g_tab, scale, in_game, prelaunch);

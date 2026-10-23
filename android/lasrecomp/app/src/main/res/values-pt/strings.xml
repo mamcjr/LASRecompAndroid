@@ -2,4 +2,8 @@
 <resources>
     <string name="shortcut_system_driver">Driver do sistema</string>
     <string name="shortcut_system_driver_long">Abrir com o driver do sistema</string>
+    <string name="import_saves_title">Importar saves?</string>
+    <string name="import_saves_message">Isto substitui todos os slots de save atuais. Um backup é guardado e pode ser exportado com Exportar saves anteriores.</string>
+    <string name="import_saves_continue">Continuar</string>
+    <string name="import_saves_cancel">Cancelar</string>
 </resources>

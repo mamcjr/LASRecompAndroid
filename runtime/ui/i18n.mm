@@ -18,11 +18,11 @@ static const char *const kPt[][2] = {
 const char *tr(const char *en) {
 #ifdef __ANDROID__
     if (!en || !*en || !settings_host_portuguese()) return en;
-    static std::unordered_map<std::string, const char *> *pt;  // (render thread only)
-    if (!pt) {
-        pt = new std::unordered_map<std::string, const char *>();
-        for (const auto &e : kPt) pt->emplace(e[0], e[1]);
-    }
+    static const auto *pt = [] {  // (built once, thread-safe: the start screen's callbacks run on Java's threads)
+        auto *m = new std::unordered_map<std::string, const char *>();
+        for (const auto &e : kPt) m->emplace(e[0], e[1]);
+        return m;
+    }();
     auto it = pt->find(en);
     return it == pt->end() ? en : it->second;
 #else

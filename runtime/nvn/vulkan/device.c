@@ -1087,7 +1087,9 @@ void backend_present(NvnTexture *t) {
 #ifdef __ANDROID__
         extern bool fg_frame_wanted(uint64_t frame, TexBackend *fin);
         extern bool fg_draw(VkCommandBuffer cb, VkFormat fmt, uint32_t ww, uint32_t wh, TexBackend *fin, const float rect[4],
-                            const float crop[4], bool flip_present);
+                            const float crop[4], bool flip_present, float step);
+        extern int fg_frames(void);
+        extern void fg_frame_done(void);
         bool gen = fg_frame_wanted(total_frames, b);
         g_fg_copy = gen;
         // LARECOMP_FG_SHOT=<frame>: that frame's window picture, its in-between one and the next real one (build/fg_*.png)
@@ -1095,14 +1097,18 @@ void backend_present(NvnTexture *t) {
         if (fg_shot < 0) fg_shot = getenv("LARECOMP_FG_SHOT") ? atol(getenv("LARECOMP_FG_SHOT")) : 0;
         bool fs0 = fg_shot && (long)total_frames == fg_shot, fs1 = fg_shot && (long)total_frames == fg_shot + 1;
         vk_frame_end(shot ? "build/window.png" : fs0 ? "build/fg_real0.png" : fs1 ? "build/fg_real1.png" : NULL);
-        if (gen && vk_frame_begin(black)) {  // the in-between frame: the next swapchain image, presented a refresh later
+        // the in-between frames: the next swapchain images, each presented a refresh after the one before (FIFO) -
+        // one for the 30 fps mode at 60 Hz or 60 fps at 120 Hz, three for 30 fps at 120 Hz (framegen.c fg_frames)
+        for (int k = 1, n = gen ? fg_frames() : 0; k <= n && vk_frame_begin(black); k++) {
             float rect[4] = {(float)vx, (float)vy, (float)vw, (float)vh};
-            fg_draw(vk_cmd(), g_vk.sc_format, g_vk.sc_extent.width, g_vk.sc_extent.height, b, rect, crop, pv[0] > 0.5f);
+            fg_draw(vk_cmd(), g_vk.sc_format, g_vk.sc_extent.width, g_vk.sc_extent.height, b, rect, crop, pv[0] > 0.5f,
+                    (float)k / (n + 1));
             extern bool fg_draws_overlays(void);  // (drawn from the presented picture: the window's overlays on top again)
             extern void menu_redraw(void *cmd);
             if (fg_draws_overlays()) menu_redraw((void *)vk_cmd());
-            vk_frame_end(fs0 ? "build/fg_gen0.png" : NULL);
+            vk_frame_end(fs0 && k == 1 ? "build/fg_gen0.png" : NULL);
         }
+        if (gen) fg_frame_done();
 #else
         vk_frame_end(shot ? "build/window.png" : NULL);
 #endif

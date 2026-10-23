@@ -142,6 +142,29 @@ static void release_all(void) {
     pthread_mutex_unlock(&t_lock);
 }
 
+// ---- the performance overlay (ui/perf_overlay.mm), dragged with a finger anywhere on the screen - with or without the
+// on-screen controls (a controller connected) - and kept there (g_settings.overlay_pos)
+extern float g_perf_rect[4];  // where it was last drawn (pixels)
+static SDL_FingerID overlay_finger;
+static bool overlay_dragging;
+static float overlay_dx, overlay_dy;
+
+static bool overlay_drag(const SDL_Event *e, float x, float y) {  // true: the finger is the overlay's
+    if (e->type == SDL_EVENT_FINGER_DOWN) {
+        const float *r = g_perf_rect;
+        if (overlay_dragging || !g_settings.show_fps || r[2] <= 0 || x < r[0] || x > r[0] + r[2] || y < r[1] || y > r[1] + r[3])
+            return false;
+        overlay_dragging = true, overlay_finger = e->tfinger.fingerID, overlay_dx = r[0] - x, overlay_dy = r[1] - y;
+        return true;
+    }
+    if (!overlay_dragging || e->tfinger.fingerID != overlay_finger) return false;
+    float nx = (x + overlay_dx) / disp_w, ny = (y + overlay_dy) / disp_h;  // (perf_overlay.mm keeps it on the screen)
+    g_settings.overlay_pos[0] = nx < 0 ? 0 : nx > 1 ? 1 : nx;
+    g_settings.overlay_pos[1] = ny < 0 ? 0 : ny > 1 ? 1 : ny;
+    if (e->type == SDL_EVENT_FINGER_UP) overlay_dragging = false, settings_save();
+    return true;
+}
+
 // ---- layout editing (the Controls tab)
 extern "C" bool touch_edit_available(void) {  // the overlay is up (in game): there is something to drag
     return SDL_GetTicks() - last_draw_ms < 500 && g_settings.touch_controls;
@@ -201,6 +224,7 @@ extern "C" bool touch_controls_event(const SDL_Event *e) {
     case SDL_EVENT_FINGER_DOWN: case SDL_EVENT_FINGER_MOTION: case SDL_EVENT_FINGER_UP: break;
     default: return false;
     }
+    if (!editing && !menu_input_captured() && overlay_drag(e, e->tfinger.x * disp_w, e->tfinger.y * disp_h)) return true;
     if (!editing && (menu_input_captured() || !g_settings.touch_controls || hide_auto)) { release_all(); return false; }  // (the menu's clicks)
     used = true;
     float x = e->tfinger.x * disp_w, y = e->tfinger.y * disp_h;

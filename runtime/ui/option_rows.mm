@@ -53,7 +53,16 @@ void ui_touch_scroll() {
 }
 
 #ifdef __ANDROID__
+#include <android/log.h>
+static const char *g_row_label;  // (LARECOMP_LOG_NAV=1: the row the controller's cursor comes to, in the log)
+void ui_log_nav(const char *what) {
+    static int on = -1;
+    static const char *last;
+    if (on < 0) on = getenv("LARECOMP_LOG_NAV") != NULL;
+    if (on && what != last) __android_log_print(ANDROID_LOG_INFO, "LASRecomp", "[nav] %s", what), last = what;
+}
 static void touch_begin(const char *label, const char *desc, bool heading = true) {
+    g_row_label = label;
     ImGui::PushID(label);
     ImGui::PushTextWrapPos(0);
     if (heading) ImGui::TextUnformatted(tr(label));
@@ -65,10 +74,30 @@ static void touch_begin(const char *label, const char *desc, bool heading = true
     }
     ImGui::BeginDisabled(g_next_disabled);
     g_next_disabled = false;
-    if (g_take_first) { ImGui::SetKeyboardFocusHere(); g_take_first = false; }
     ImGui::SetNextItemWidth(-1);
 }
+// A controller on a value (the combo or slider just drawn, focused and closed): left / right step it, as the desktop's
+// rows do - its own keys while focused, so navigation doesn't move off sideways. -1 / +1, or 0.
+static int pad_step() {
+    if (!ImGui::IsItemFocused() || ImGui::IsItemActive() || !ImGui::GetCurrentContext()->NavCursorVisible ||
+        ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) || ImGui::GetItemFlags() & ImGuiItemFlags_Disabled)
+        return 0;
+    for (ImGuiKey k : {ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight, ImGuiKey_LeftArrow, ImGuiKey_RightArrow})
+        ImGui::SetKeyOwner(k, ImGui::GetItemID());
+    if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) return -1;
+    if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || ImGui::IsKeyPressed(ImGuiKey_RightArrow)) return 1;
+    return 0;
+}
 static void touch_end() {
+    // (opt_focus_first: the controller's cursor on this row's control - focused, not activated: SetKeyboardFocusHere
+    // turned a slider into a text field, where left / right did nothing and B only ended the typing)
+    if (g_take_first) {
+        g_take_first = false;
+        ImGui::SetFocusID(ImGui::GetItemID(), ImGui::GetCurrentWindow());
+        ImGui::SetNavCursorVisible(true);
+        ImGui::SetScrollHereY(0);
+    }
+    if (ImGui::IsItemFocused()) ui_log_nav(g_row_label);
     ImGui::EndDisabled();
     ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
     ImGui::PopID();
@@ -202,6 +231,11 @@ bool opt_choice(const char *label, int *v, const char *const *names, int n, int 
         }
         ImGui::EndCombo();
     }
+    if (int st = pad_step()) {
+        int nv = cur + st;
+        nv = wrap ? (nv + n) % n : nv < 0 ? 0 : nv >= n ? n - 1 : nv;
+        if (nv != cur) *v = nv, changed = true;
+    }
     touch_end(); return changed;
 #endif
     int step = row(label, names[cur], cur != def, desc, true, true);
@@ -217,8 +251,12 @@ bool opt_slider(const char *label, float *v, float lo, float hi, float step, flo
 #ifdef __ANDROID__
     touch_begin(label, desc);
     float next = *v;
-    bool changed = ImGui::SliderFloat("##value", &next, lo, hi, fmt);
+    bool changed = ImGui::SliderFloat("##value", &next, lo, hi, tr(fmt));
     if (changed) *v = fminf(hi, fmaxf(lo, lo + roundf((next - lo) / step) * step));
+    if (int st = pad_step()) {
+        float nv = fminf(hi, fmaxf(lo, *v + st * step));
+        if (nv != *v) *v = nv, changed = true;
+    }
     touch_end(); return changed;
 #endif
     char buf[32];
@@ -236,8 +274,13 @@ bool opt_int(const char *label, int *v, int lo, int hi, int step, int def, const
 #ifdef __ANDROID__
     touch_begin(label, desc);
     int next = *v;
-    bool changed = ImGui::SliderInt("##value", &next, lo, hi, lo_name && *v == lo ? lo_name : fmt);
+    bool changed = ImGui::SliderInt("##value", &next, lo, hi, tr(lo_name && *v == lo ? lo_name : fmt));
     if (changed) { next = lo + (int)roundf((float)(next - lo) / step) * step; *v = next < lo ? lo : next > hi ? hi : next; }
+    if (int st = pad_step()) {
+        int nv = *v + st * step;
+        nv = nv < lo ? lo : nv > hi ? hi : nv;
+        if (nv != *v) *v = nv, changed = true;
+    }
     touch_end(); return changed;
 #endif
     char buf[48];
@@ -299,7 +342,7 @@ bool opt_text(const char *label, char *buf, size_t cap, const char *hint, const 
 #ifdef __ANDROID__
     ImGuiID touch_id = ImGui::GetID(label);
     touch_begin(label, desc);
-    bool entered = ui_input_text("##text", buf, cap, ImGuiInputTextFlags_EnterReturnsTrue, hint, label);
+    bool entered = ui_input_text("##text", buf, cap, ImGuiInputTextFlags_EnterReturnsTrue, tr(hint), label);
     if (ImGui::IsItemActive()) g_text_editing = touch_id;
     else if (g_text_editing == touch_id) g_text_editing = 0;
     touch_end(); return entered;

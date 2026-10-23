@@ -79,8 +79,12 @@ typedef struct {
     float batt_temp_c, batt_pct, watts;  // from the activity (BatteryManager)
     int thermal;                   // PowerManager thermal status: 0 none ... 6 shutdown
     float headroom;                // PowerManager thermal headroom (1.0 = throttling begins)
+    float display_hz;              // the display's refresh rate now (Display.getRefreshRate), 0: not known
 } PlatDeviceStats;
 void plat_device_stats(PlatDeviceStats *out);
+#ifdef __ANDROID__
+float plat_display_hz(void);  // the display's refresh rate now, 0: not known yet (vulkan/framegen.c)
+#endif
 // ADPF: the calling thread's work for a frame (busy, ns) and its target (the frame time it must fit)
 void plat_frame_work(uint64_t work_ns, uint64_t target_ns);
 // (the presenting thread: cpu_ns is the frame's critical path - the longer of its own and the render thread's work -,

@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <atomic>
 
+#include "i18n.h"
 #include "imgui.h"
 #include "imgui_internal.h"  // (SetKeyOwner)
 #include "option_rows.h"
@@ -386,6 +387,7 @@ done:
 #include <jni.h>
 std::atomic<bool> g_android_imported{false};
 static std::string g_driver_msg;
+static bool g_driver_restart;  // (that message asks for a restart: the Restart now button)
 static std::string g_save_msg;
 static std::atomic<bool> g_save_busy{false};
 
@@ -596,9 +598,10 @@ extern "C" JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeImp
 extern "C" JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeDriverPicked(JNIEnv *env, jclass, jstring name) {
     const char *n = env->GetStringUTFChars(name, NULL);
     pthread_mutex_lock(&g_lock);
-    g_driver_msg = n && !strcmp(n, "-") ? "The system's driver from the next start on. Restart LAS Recomp to use it."
-                   : n && *n                ? std::string(n) + " installed. Restart LAS Recomp to use it."
-                                            : "That file isn't a driver.";
+    g_driver_msg = n && !strcmp(n, "-") ? tr("The system's driver from the next start on. Restart LAS Recomp to use it.")
+                   : n && *n                ? std::string(n) + tr(" installed. Restart LAS Recomp to use it.")
+                                            : tr("That file isn't a driver.");
+    g_driver_restart = n && *n;
     pthread_mutex_unlock(&g_lock);
     if (n) env->ReleaseStringUTFChars(name, n);
 }
@@ -658,8 +661,8 @@ static void import_fonts() {
         if (in) fclose(in);
         if (out) fclose(out);
     }
-    g_font_msg = std::to_string(ok) + " font file(s) imported" + (skipped ? ", " + std::to_string(skipped) + " not recognized" : "") +
-                 ". Used from the next game start.";
+    g_font_msg = std::to_string(ok) + tr(" font file(s) imported") +
+                 (skipped ? ", " + std::to_string(skipped) + tr(" not recognized") : "") + tr(". Used from the next game start.");
 }
 
 static void remove_fonts() {
@@ -809,18 +812,18 @@ static bool aspect_prompt(float s) {
     if (open) {
         ImGui::SetWindowFontScale(1.25f);
         ImGui::PushTextWrapPos(0);
-        ImGui::TextUnformatted("How would you like to play?");
+        ImGui::TextUnformatted(tr("How would you like to play?"));
         ImGui::Spacing();
-        ImGui::TextDisabled("You can change this any time in Settings.");
+        ImGui::TextDisabled("%s", tr("You can change this any time in Settings."));
         ImGui::PopTextWrapPos();
         ImGui::Dummy(ImVec2(0, 14 * s));
         float bw = 300 * s, gap = 20 * s;
         ImGui::SetCursorPosX((ImGui::GetWindowWidth() - 2 * bw - gap) * 0.5f);
         int pick = -1;
         ImGui::SetItemDefaultFocus();
-        if (ImGui::Button("Authentic 16:9", ImVec2(bw, 44 * s))) pick = ASPECT_ORIGINAL;
+        if (ImGui::Button(tr("Authentic 16:9"), ImVec2(bw, 44 * s))) pick = ASPECT_ORIGINAL;
         ImGui::SameLine(0, gap);
-        if (ImGui::Button("Unlocked (fill the screen)", ImVec2(bw, 44 * s))) pick = ASPECT_UNLOCKED;
+        if (ImGui::Button(tr("Unlocked (fill the screen)"), ImVec2(bw, 44 * s))) pick = ASPECT_UNLOCKED;
         if (pick >= 0) {
             g_settings.aspect = pick;
             g_settings.aspect_asked = true;
@@ -852,15 +855,15 @@ static bool menu_tip(float s) {
         static const char *const pad[] = {"Minus + Plus", "View + Menu", "Create + Options"};
         ImGui::PushTextWrapPos(0);
 #ifdef __ANDROID__
-        ImGui::TextUnformatted("LAS Recomp has its own menu for settings, cosmetics and more.");
+        ImGui::TextUnformatted(tr("LAS Recomp has its own menu for settings, cosmetics and more."));
 #else
         ImGui::TextUnformatted("LAS Recomp has its own menu for settings, the randomizer, cosmetics and more.");
 #endif
         ImGui::Spacing();
         int fam = bind_label_family() % 3;
 #ifdef __ANDROID__
-        ImGui::Text("Open it in game with the menu button on the screen or the back button, or on a controller with the "
-                    "%s (or %s together).", home[fam], pad[fam]);
+        ImGui::Text(tr("Open it in game with the menu button on the screen or the back button, or on a controller with the "
+                       "%s (or %s together)."), tr(home[fam]), pad[fam]);
 #else
         ImGui::Text("Open it in game with F1 or Esc, or on a controller with the %s (or %s together).", home[fam], pad[fam]);
 #endif
@@ -868,7 +871,7 @@ static bool menu_tip(float s) {
         ImGui::Dummy(ImVec2(0, 14 * s));
         ImGui::SetCursorPosX((ImGui::GetWindowWidth() - 180 * s) * 0.5f);
         ImGui::SetItemDefaultFocus();
-        if (ImGui::Button("OK", ImVec2(180 * s, 44 * s)) || ImGui::IsKeyPressed(ImGuiKey_Enter) ||
+        if (ImGui::Button(tr("OK"), ImVec2(180 * s, 44 * s)) || ImGui::IsKeyPressed(ImGuiKey_Enter) ||
             ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown)) {
             g_settings.menu_tip_seen = true;
             settings_save();
@@ -913,6 +916,7 @@ static void sparkle(ImDrawList *dl, ImVec2 c, float r, float k, float spin) {
 // split .. split_end: that part of the label in its own colour (PLAY's choice: Vanilla in vanilla cream)
 static bool menu_item(const char *label, bool enabled, bool *hovered = NULL, const char *split = NULL, ImU32 col2 = 0,
                       const char *split_end = NULL) {
+    if (!split) label = tr(label);
     ImGui::PushFont(g_menu_small ? g_font_small : g_font_menu);
     ImGui::BeginDisabled(!enabled);
     ImVec2 at = ImGui::GetCursorScreenPos();
@@ -1062,7 +1066,7 @@ static void prelaunch_tab(float sc) {
     const ImVec4 gold = settings_title_color();
     auto heading = [&](const char *t) {
         ImGui::PushFont(g_font_menu);
-        ImGui::TextColored(gold, "%s", t);
+        ImGui::TextColored(gold, "%s", tr(t));
         ImGui::PopFont();
         ImGui::Separator();
         ImGui::Spacing();
@@ -1070,23 +1074,23 @@ static void prelaunch_tab(float sc) {
 #ifdef __ANDROID__
     heading("Saves - Eden / Yuzu / Ryujinx");
     ImGui::PushTextWrapPos(0);
-    ImGui::TextDisabled("Import the folder containing savedata0.bin, or a ZIP of that folder. "
-                        "Export a ZIP to transfer your saves back to an emulator. Imports replace all save slots and keep a backup.");
-    ImGui::TextDisabled("Save set: %s", g_settings.rando_seed[0] ? g_settings.rando_seed : "Base game");
+    ImGui::TextDisabled("%s", tr("Import the folder containing savedata0.bin, or a ZIP of that folder. "
+                                 "Export a ZIP to transfer your saves back to an emulator. Imports replace all save slots and keep a backup."));
+    ImGui::TextDisabled(tr("Save set: %s"), g_settings.rando_seed[0] ? g_settings.rando_seed : tr("Base game"));
     ImGui::BeginDisabled(g_save_busy.load());
-    if (ImGui::Button("Import save folder")) transfer_saves(0);
+    if (ImGui::Button(tr("Import save folder"))) transfer_saves(0);
     ImGui::SameLine();
-    if (ImGui::Button("Import save ZIP")) transfer_saves(1);
-    if (ImGui::Button("Export saves")) transfer_saves(2);
+    if (ImGui::Button(tr("Import save ZIP"))) transfer_saves(1);
+    if (ImGui::Button(tr("Export saves"))) transfer_saves(2);
     if (file_exists(save_transfer_path() + ".previous")) {
         ImGui::SameLine();
-        if (ImGui::Button("Export previous saves")) transfer_saves(3);
+        if (ImGui::Button(tr("Export previous saves"))) transfer_saves(3);
     }
     ImGui::EndDisabled();
     pthread_mutex_lock(&g_lock);
     std::string save_msg = g_save_msg;
     pthread_mutex_unlock(&g_lock);
-    if (!save_msg.empty()) ImGui::TextWrapped("%s", save_msg.c_str());
+    if (!save_msg.empty()) ImGui::TextWrapped("%s", tr(save_msg.c_str()));
     ImGui::PopTextWrapPos();
     ImGui::Spacing();
     ImGui::Spacing();
@@ -1094,24 +1098,25 @@ static void prelaunch_tab(float sc) {
     {
         const char *d = getenv("LARECOMP_VK_DRIVER");
         const char *base = d && *d ? strrchr(d, '/') : NULL;
-        ImGui::Text("In use: %s", d && *d ? (base ? base + 1 : d) : "the system's driver");
+        ImGui::Text(tr("In use: %s"), d && *d ? (base ? base + 1 : d) : tr("the system's driver"));
         ImGui::PushTextWrapPos(0);
-        ImGui::TextDisabled("The game runs on the system's driver, lighting included. On Adreno GPUs, Mesa's Turnip "
-                            "driver runs it at 60 fps: choose a Turnip driver package (.zip, as for adrenotools).");
+        ImGui::TextDisabled("%s", tr("The game runs on the system's driver, lighting included. On Adreno GPUs, Mesa's Turnip "
+                                     "driver runs it at 60 fps: choose a Turnip driver package (.zip, as for adrenotools)."));
         ImGui::PopTextWrapPos();
-        if (ImGui::Button("Choose driver")) android_call("pickDriver");
+        if (ImGui::Button(tr("Choose driver"))) android_call("pickDriver");
         if (d && *d) {  // (a custom driver in use: back to the system's)
             ImGui::SameLine();
-            if (ImGui::Button("Use the system driver")) android_call("useSystemDriver");
+            if (ImGui::Button(tr("Use the system driver"))) android_call("useSystemDriver");
         }
         pthread_mutex_lock(&g_lock);
         std::string msg = g_driver_msg;
+        bool restart = g_driver_restart;
         pthread_mutex_unlock(&g_lock);
         if (!msg.empty()) {
             ImGui::Text("%s", msg.c_str());
-            if (msg.find("Restart") != std::string::npos) {
+            if (restart) {
                 ImGui::SameLine();
-                if (ImGui::Button("Restart now")) android_call("restartApp");
+                if (ImGui::Button(tr("Restart now"))) android_call("restartApp");
             }
         }
     }
@@ -1134,20 +1139,20 @@ static void prelaunch_tab(float sc) {
     ImGui::SameLine();
 #endif
     static bool shot_del = getenv("LARECOMP_LAUNCHER_SHOT") && strstr(getenv("LARECOMP_LAUNCHER_SHOT"), ":askdelete");
-    if (ImGui::Button("Delete game files") || shot_del) ImGui::OpenPopup("##delfiles"), shot_del = false;  // (test: :askdelete)
+    if (ImGui::Button(tr("Delete game files")) || shot_del) ImGui::OpenPopup("##delfiles"), shot_del = false;  // (test: :askdelete)
     if (ImGui::BeginPopupModal("##delfiles", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
         ImGui::PushFont(g_font_menu);
-        ImGui::TextColored(settings_warning_color(), "Are you sure?");
+        ImGui::TextColored(settings_warning_color(), "%s", tr("Are you sure?"));
         ImGui::PopFont();
-        ImGui::Text("This deletes LAS Recomp's copy of the game files (%.1f GB).", gb);
-        ImGui::TextDisabled("Saves, seeds and settings are kept. Your own game files aren't touched.");
+        ImGui::Text(tr("This deletes LAS Recomp's copy of the game files (%.1f GB)."), gb);
+        ImGui::TextDisabled("%s", tr("Saves, seeds and settings are kept. Your own game files aren't touched."));
         if (rt_dev_mode()) {  // (a source checkout: the files are the project's own extracted/)
             bool abs = !g_root.empty() && (g_root[0] == '/' || (g_root.size() > 1 && g_root[1] == ':'));
             std::string where = abs ? g_root : std::string(rt_data_root()) + "/" + g_root;
             ImGui::TextColored(settings_warning_color(), "Dev checkout: this is %s", where.c_str());
         }
         ImGui::Spacing();
-        if (ImGui::Button("Delete", ImVec2(220 * sc, 0))) {
+        if (ImGui::Button(tr("Delete"), ImVec2(220 * sc, 0))) {
             bool ok = rt_remove_game_files(g_root.c_str());  // (runtime/paths.c: only what the extraction made)
             set_job(ok ? "Game files deleted." : "Could not delete the game files (not in LAS Recomp's data folder?).", !ok);
             g_files_deleted = true, gb = -1;
@@ -1155,7 +1160,7 @@ static void prelaunch_tab(float sc) {
         }
         ImGui::SameLine();
         ImGui::SetItemDefaultFocus();
-        if (ImGui::Button("Cancel", ImVec2(220 * sc, 0)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+        if (ImGui::Button(tr("Cancel"), ImVec2(220 * sc, 0)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
             ImGui::IsKeyPressed(ImGuiKey_Escape, false))
             ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
@@ -1165,19 +1170,19 @@ static void prelaunch_tab(float sc) {
     heading("Game font");
     import_fonts();
     bool fs = have_font(FONT_STD, 4), fe = have_font(FONT_EXT, 2);
-    ImGui::Text("Text: %s    Button icons: %s", fs ? "Nintendo font (imported)" : "substitute (Hiragino Sans)",
-                fe ? "imported" : "substitute");
+    ImGui::Text(tr("Text: %s    Button icons: %s"), tr(fs ? "Nintendo font (imported)" : "substitute (Hiragino Sans)"),
+                tr(fe ? "imported" : "substitute"));
     ImGui::PushTextWrapPos(0);
-    ImGui::TextDisabled("Fonts aren't included. For the original look, dump them from your own Switch and import: "
-                        "nintendo_udsg-r_std_003.bfttf (text) and nintendo_ext_003.bfttf (button icons). "
-                        ".ttf versions with the same names work too.");
+    ImGui::TextDisabled("%s", tr("Fonts aren't included. For the original look, dump them from your own Switch and import: "
+                                 "nintendo_udsg-r_std_003.bfttf (text) and nintendo_ext_003.bfttf (button icons). "
+                                 ".ttf versions with the same names work too."));
     ImGui::PopTextWrapPos();
-    if (!g_font_msg.empty()) ImGui::Text("%s", g_font_msg.c_str());
+    if (!g_font_msg.empty()) ImGui::Text("%s", tr(g_font_msg.c_str()));
     static const SDL_DialogFileFilter font_f[] = {{"Switch fonts", "bfttf;ttf"}};
-    if (ImGui::Button("Import fonts")) SDL_ShowOpenFileDialog(picked_fonts, NULL, g_launcher_win, font_f, 1, NULL, true);
+    if (ImGui::Button(tr("Import fonts"))) SDL_ShowOpenFileDialog(picked_fonts, NULL, g_launcher_win, font_f, 1, NULL, true);
     if (fs || fe) {
         ImGui::SameLine();
-        if (ImGui::Button("Use substitute font")) remove_fonts();
+        if (ImGui::Button(tr("Use substitute font"))) remove_fonts();
     }
 }
 
@@ -1518,7 +1523,7 @@ extern "C" void launcher_run(const char *root) {
 #endif
                 if (status.empty()) {  // PLAY twinkles now and then while the game is ready
                     ImGui::PushFont(g_font_menu);
-                    float w = ImGui::CalcTextSize("PLAY").x, h = ImGui::CalcTextSize("PLAY").y;
+                    float w = ImGui::CalcTextSize(tr("PLAY")).x, h = ImGui::CalcTextSize(tr("PLAY")).y;
                     ImGui::PopFont();
                     float t = (float)ImGui::GetTime(), ph = fmodf(t, 3.6f), ph2 = fmodf(t + 0.45f, 3.6f);
                     float k1 = ph < 0.9f ? sinf(ph / 0.9f * 3.14159265f) : 0, k2 = ph2 < 0.7f ? sinf(ph2 / 0.7f * 3.14159265f) : 0;
@@ -1604,7 +1609,7 @@ extern "C" void launcher_run(const char *root) {
                 settings_theme_frame(sc);
                 ImGui::PushFont(g_font_small);
                 ImGui::PushFont(g_font_menu);
-                ImGui::TextColored(settings_title_color(), "Settings");
+                ImGui::TextColored(settings_title_color(), "%s", tr("Settings"));
                 ImGui::PopFont();
                 bool back;
                 {  // close: a drawn X in the corner (B / Esc too)
@@ -1663,7 +1668,7 @@ extern "C" void launcher_run(const char *root) {
                 ImGui::PopStyleColor();
                 ImGui::PushFont(g_font_small);
                 ImGui::PushFont(g_font_menu);
-                ImGui::TextColored(ImVec4(0.93f, 0.76f, 0.33f, 1), "Game Files");
+                ImGui::TextColored(ImVec4(0.93f, 0.76f, 0.33f, 1), "%s", tr("Game Files"));
                 ImGui::PopFont();
                 bool back = false;
                 if (!busy) {  // close: the drawn X in the corner, as Settings (B / Esc too)
@@ -1695,21 +1700,21 @@ extern "C" void launcher_run(const char *root) {
                 auto check_left_of_value = [&](const std::string &v) {
                     if (v != "Selected") return;
                     ImVec2 rb = ImGui::GetItemRectMax(), ra = ImGui::GetItemRectMin();
-                    float fs = ImGui::GetFontSize(), vw = ImGui::CalcTextSize(v.c_str()).x;
+                    float fs = ImGui::GetFontSize(), vw = ImGui::CalcTextSize(tr(v.c_str())).x;
                     float x = rb.x - 16 * sc - vw - fs * 0.95f, cy = (ra.y + rb.y) * 0.5f, u = fs * 0.62f;
                     ImU32 g = IM_COL32(120, 220, 120, 255);
                     ImDrawList *dl = ImGui::GetWindowDrawList();
                     dl->AddLine(ImVec2(x, cy), ImVec2(x + u * 0.35f, cy + u * 0.35f), g, fs * 0.11f);
                     dl->AddLine(ImVec2(x + u * 0.35f, cy + u * 0.35f), ImVec2(x + u, cy - u * 0.4f), g, fs * 0.11f);
                 };
-                std::string src_d = "The folder with your own game folders (exefs/romfs) of The Legend of Zelda: Link's "
-                                    "Awakening for Nintendo Switch, version 1.0.0. The game isn't included with LAS Recomp.";
-                if (!src.empty()) src_d += "\n\nChosen: " + src;
+                std::string src_d = tr("The folder with your own game folders (exefs/romfs) of The Legend of Zelda: Link's "
+                                       "Awakening for Nintendo Switch, version 1.0.0. The game isn't included with LAS Recomp.");
+                if (!src.empty()) src_d += std::string(tr("\n\nChosen: ")) + src;
                 // the step that's running / its result, under the rows and in the Set up row's explanation
                 const std::string &job_line = job;
-                std::string ex_d = "Copies the game files LAS Recomp needs and recompiles the game from them. This only "
-                                   "needs to be done once and may take a while. Your own files aren't changed.";
-                if (!job.empty()) ex_d += "\n\n" + job + (job_hint.empty() ? "" : ".\n" + job_hint);
+                std::string ex_d = tr("Copies the game files LAS Recomp needs and recompiles the game from them. This only "
+                                      "needs to be done once and may take a while. Your own files aren't changed.");
+                if (!job.empty()) ex_d += "\n\n" + std::string(tr(job.c_str())) + (job_hint.empty() ? "" : ".\n" + std::string(tr(job_hint.c_str())));
 
                 // the controller's cursor starts on the first row (not the X), a few frames while the window lays out
                 static int seen_frame = -10, focus_first;  // (not drawn last frame: the window has just opened)
@@ -1723,7 +1728,7 @@ extern "C" void launcher_run(const char *root) {
                     opt_section("Your copy of the game");
                     if (busy) opt_disable_next();
 #ifdef __ANDROID__
-                    if (opt_action("Game files folder", src_v.c_str(), src_d.c_str(), true)) android_call("pickGameFolder");
+                    if (opt_action("Game files folder", tr(src_v.c_str()), src_d.c_str(), true)) android_call("pickGameFolder");
 #else
                     if (opt_action("Game files folder", src_v.c_str(), src_d.c_str(), true))
                         SDL_ShowOpenFolderDialog(picked, NULL, win, NULL, false);
@@ -1732,7 +1737,7 @@ extern "C" void launcher_run(const char *root) {
                     first_row();
                     opt_section("Set up");
                     if (busy || (src.empty() && !check_copied_files(g_root).empty())) opt_disable_next();
-                    if (opt_action("Set up game files", busy ? "Working..." : "", ex_d.c_str(), true)) {
+                    if (opt_action("Set up game files", busy ? tr("Working...") : "", ex_d.c_str(), true)) {
                         pthread_mutex_lock(&g_lock);
                         g_busy = true;
                         pthread_mutex_unlock(&g_lock);
@@ -1771,9 +1776,9 @@ extern "C" void launcher_run(const char *root) {
                     ImGui::Dummy(ImVec2(0, 14 * sc));
                     ImGui::PushTextWrapPos(0);
                     ImGui::TextColored(failed ? ImVec4(1, 0.5f, 0.4f, 1) : busy ? ImVec4(0.93f, 0.76f, 0.33f, 1)
-                                              : ImVec4(0.45f, 0.95f, 0.55f, 1), "%s", job_line.c_str());
+                                              : ImVec4(0.45f, 0.95f, 0.55f, 1), "%s", tr(job_line.c_str()));
                     if (failed && !job_hint.empty())  // (what to do next, in the rows' own text colour)
-                        ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), "%s", job_hint.c_str());
+                        ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), "%s", tr(job_hint.c_str()));
                     ImGui::PopTextWrapPos();
                 }
                 opt_end();
@@ -1798,8 +1803,8 @@ extern "C" void launcher_run(const char *root) {
                     float f = test_busy ? 0.42f : extract_progress();
                     // (while the game code is built: what's happening, on whose files - runtime/gamebuild.c)
                     bool recompiling = g_build_frac >= 0;
-                    const char *title = recompiling ? "Recompiling the game" : "Setting up the game files";
-                    static const char *const notes[] = {"This only needs to be done once and may take a while."};
+                    const char *title = tr(recompiling ? "Recompiling the game" : "Setting up the game files");
+                    const char *const notes[] = {tr("This only needs to be done once and may take a while.")};
                     int nnotes = recompiling ? 1 : 0;
                     float tfs = g_font_menu->FontSize * 0.75f, sfs = g_font_small->FontSize * 0.85f;
                     ImVec2 ts = g_font_menu->CalcTextSizeA(tfs, FLT_MAX, 0, title);
@@ -1817,7 +1822,7 @@ extern "C" void launcher_run(const char *root) {
                     fg->AddRectFilled(ba, bb, IM_COL32(255, 255, 255, 25), 12 * sc);
                     if (f > 0) fg->AddRectFilled(ba, ImVec2(ba.x + (bb.x - ba.x) * f, bb.y), IM_COL32(236, 194, 84, 255), 12 * sc);
                     char line[200];
-                    snprintf(line, sizeof line, "%s   %d%%", test_busy ? "Setting up the game files..." : job.c_str(),
+                    snprintf(line, sizeof line, "%s   %d%%", tr(test_busy ? "Setting up the game files..." : job.c_str()),
                              (int)(f * 100));
                     ImVec2 ls = g_font_small->CalcTextSizeA(sfs, FLT_MAX, 0, line);
                     fg->AddText(g_font_small, sfs, ImVec2((a.x + b.x - ls.x) * 0.5f, bb.y + 26 * sc), IM_COL32(220, 216, 205, 255), line);
@@ -1842,13 +1847,13 @@ extern "C" void launcher_run(const char *root) {
                     ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x + u * 0.35f, p.y + u * 0.8f), ImVec2(p.x + u * 0.85f, p.y + u * 0.2f), g, u * 0.12f);
                     ImGui::SetCursorPosX(x0 + u * 1.3f);
                 }
-                ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.55f, 1), "Game files ready.");
+                ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.55f, 1), "%s", tr("Game files ready."));
                 ImGui::SetCursorPosX(x0);
                 ImGui::TextColored(ImVec4(0.66f, 0.76f, 0.98f, 1), "Nintendo Switch  \xc2\xb7  v1.0.0");
             } else {
-                ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "!  %s", busy ? "Setting up the game files..." : status.c_str());
+                ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "!  %s", tr(busy ? "Setting up the game files..." : status.c_str()));
                 ImGui::SetCursorPosX(x0);
-                ImGui::TextDisabled("Set up the game files to play.");
+                ImGui::TextDisabled("%s", tr("Set up the game files to play."));
             }
             if (const char *f = getenv("LARECOMP_LAUNCHER_FONT")) {  // (test) which typeface this window shows
                 const char *b = strrchr(f, '/');
