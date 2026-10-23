@@ -1348,6 +1348,16 @@ void ui_window_init(void) {
         if (scripted) SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "0");
     }
     window = SDL_CreateWindow("LAS Recomp", win_w, win_h, wflags);
+#ifdef __ANDROID__
+    // opened with the screen locked / off: no surface to make the window on yet - it comes once the activity shows
+    // (SDL_PumpEvents also sleeps while the app is paused). 10 minutes, then the error below.
+    for (int tries = 0; !window && tries < 20 * 60 * 10; tries++) {
+        if (tries == 0) LOG("[vk] waiting for the Android window (%s)\n", SDL_GetError());
+        SDL_PumpEvents();
+        SDL_Delay(50);
+        window = SDL_CreateWindow("LAS Recomp", win_w, win_h, wflags);
+    }
+#endif
     if (!window) FATAL("SDL_CreateWindow: %s\n", SDL_GetError());
     rt_window_icon(window);
     // the Fullscreen setting applies from the start screen on (not only once the game runs); test windows stay windows
@@ -1360,6 +1370,14 @@ void ui_window_init(void) {
 #ifdef __ANDROID__
     {   // (through the driver volk loaded: SDL would use the system loader's)
         struct ANativeWindow *aw = android_window();
+        // (opened with the screen locked: the surface went away after the window was made - it comes back once the
+        // activity shows)
+        for (int tries = 0; !aw && tries < 20 * 60 * 10; tries++) {
+            if (tries == 0) LOG("[vk] waiting for the Android window (the screen is locked or off)\n");
+            SDL_PumpEvents();
+            SDL_Delay(50);
+            aw = android_window();
+        }
         if (!aw) FATAL("no Android window\n");
         android_create_surface(aw);
     }
