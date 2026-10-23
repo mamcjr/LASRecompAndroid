@@ -15,6 +15,7 @@
 #include <string.h>
 
 #include "../hle.h"
+#include "../game_addresses.h"
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static char g_level[64], g_locator[64];
@@ -90,7 +91,7 @@ int g_start_screen;  // runtime/ui/launcher.mm: the start screen is up - before 
 
 int game_in_play(void) {
     if (g_start_screen) return 0;
-    uint64_t gm = LD64(MAIN_BASE + 0x1c97188);
+    uint64_t gm = LD64(GA(GAME_MGR));
     return gm && LD64(gm + 0x4b8) != 0;
 }
 
@@ -106,7 +107,7 @@ bool warp_blocked(const char *locator) {
     static const char *const kSwim[] = {"Field_03O", "Field_15K", "Field_03K", "EagleTowerExit_01A_b",  // WaterTopOutForward
                                         "FishingBoat_01A", "MamboCave_01A"};  // WaterSideOutLeft / Right (swim in)
     for (size_t i = 0; i < sizeof kSwim / sizeof kSwim[0]; i++)
-        if (!strcmp(locator, kSwim[i])) return !(LD32(MAIN_BASE + 0x1CBB220 + 0x556C) & 1);
+        if (!strcmp(locator, kSwim[i])) return !(LD32(GA(LIVE_SAVE) + 0x556C) & 1);
     return false;
 }
 int warp_busy(void) { return g_pending; }  // a queued warp not applied yet (shader tour)
@@ -139,7 +140,7 @@ static void warp_test(uint64_t frame) {
     if (next) next++;
 }
 
-#define PROCESS_REQUEST (MAIN_BASE + 0x81ba80)  // performs a pending level-jump request (x0 = request)
+#define PROCESS_REQUEST GA(LEVEL_REQUEST_SITE)  // performs a pending level-jump request (x0 = request)
 
 // LARECOMP_DUMP_MEM=<frame>:<main offset>:<deref offsets, '+'-separated or ->:<bytes>  e.g. 4400:1cb9fb8:0+8:0x2000
 // -> build/memdump.bin (test hook: [[main+off]+0]+8 ...)
@@ -174,15 +175,15 @@ void warp_frame(uint64_t frame) {
     warp_on_load(frame);
     mem_dump_test(frame);
     if (ENV("LARECOMP_LOG_WARPAVAIL") && frame % 300 == 0) {
-        uint64_t gm = LD64(MAIN_BASE + 0x1c97188), ps = LD64(MAIN_BASE + 0x1cc1368);
+        uint64_t gm = LD64(GA(GAME_MGR)), ps = LD64(GA(PLAYER_STATUS_PTR));
         LOG("[warp] frame %llu gm %llx +4b8 %llx +4a8 %llx level '%s'\n", (unsigned long long)frame, (unsigned long long)gm,
             gm ? (unsigned long long)LD64(gm + 0x4b8) : 0, gm ? (unsigned long long)LD64(gm + 0x4a8) : 0,
             ps ? (const char *)(uintptr_t)ps : "");
     }
     if (ENV("LARECOMP_LOG_KEYITEMS") && frame % 120 == 0) {  // PlayerStatus key items vs the save buffer copy
-        uint64_t ps = LD64(MAIN_BASE + 0x1cc1368);
+        uint64_t ps = LD64(GA(PLAYER_STATUS_PTR));
         LOG("[keyitems] frame %llu ps %llx ps+ac %08x save+556c %08x\n", (unsigned long long)frame, (unsigned long long)ps,
-            ps ? *(uint32_t *)(uintptr_t)(ps + 0xac) : 0, *(uint32_t *)(uintptr_t)(MAIN_BASE + 0x1CBB220ull + 0x556c));
+            ps ? *(uint32_t *)(uintptr_t)(ps + 0xac) : 0, *(uint32_t *)(uintptr_t)(GA(LIVE_SAVE) + 0x556c));
     }
 }
 
@@ -217,7 +218,7 @@ static void watch_level_change(uint64_t now) {
     if (g_change && now - g_change_since > CHANGE_TIMEOUT) g_change = 0;
 }
 static int player_component_missing(void) {
-    uint64_t gm = LD64(MAIN_BASE + 0x1c97188), e = gm ? LD64(gm + 0x4a8) : 0, o = e ? LD64(e + 0x88) : 0;
+    uint64_t gm = LD64(GA(GAME_MGR)), e = gm ? LD64(gm + 0x4a8) : 0, o = e ? LD64(e + 0x88) : 0;
     return !o || !LD64(o + 0x618);
 }
 
@@ -268,7 +269,6 @@ void warp_game_tick(Cpu *c) {
 
 // ---- give item (game thread): main+0x7e18b0 = AddItem(itemId, count, index, autoEquip), the call behind the
 // Inventory.AddItemByKey event action (itemId = row of datasheets/Items.gsheet, e.g. 78 PanelDungeonPiece).
-#define ADD_ITEM (MAIN_BASE + 0x7e18b0)
 static int g_give_id, g_give_count, g_give_index;
 
 void give_item_request(int id, int count, int index) {
@@ -315,7 +315,7 @@ static void find_floats_tick(uint64_t frame) {
                             uint64_t v = *(volatile uint64_t *)(uintptr_t)(ra[r] + q), loc = ra[r] + q;
                             for (int t = 0; t < nl; t++)
                                 if (v <= lv[t] && v >= lv[t] - (depth ? 0x800 : 0x10)) {
-                                    bool gl = loc >= MAIN_BASE && loc < MAIN_BASE + 0x2000000;
+                                    bool gl = loc >= MAIN_BASE && loc < GA(MAIN_IMAGE_SCAN_END);
                                     LOG("[findfloats] path d%d %s%llx -> %llx (+%llx)\n", depth, gl ? "MAIN+" : "",
                                         (unsigned long long)(gl ? loc - MAIN_BASE : loc), (unsigned long long)v,
                                         (unsigned long long)(lv[t] - v));
@@ -735,7 +735,7 @@ void give_item_tick(Cpu *c, uint64_t frame) {
                 uint64_t saved[31];
                 memcpy(saved, c->x, sizeof saved);
                 c->x[0] = (uint64_t)id; c->x[1] = (uint64_t)cnt; c->x[2] = (uint64_t)(int64_t)idx; c->x[3] = (uint64_t)equip;
-                guest_call(c, ADD_ITEM);
+                guest_call(c, GA(ADD_ITEM));
                 memcpy(c->x, saved, sizeof saved);
                 LOG("[give] item %d x%d (index %d)\n", id, cnt, idx);
             }
@@ -768,7 +768,7 @@ void give_item_tick(Cpu *c, uint64_t frame) {
         uint64_t saved[31];
         memcpy(saved, c->x, sizeof saved);
         c->x[0] = (uint64_t)g_give_id; c->x[1] = (uint64_t)g_give_count; c->x[2] = (uint64_t)(int64_t)g_give_index; c->x[3] = 0;
-        guest_call(c, ADD_ITEM);
+        guest_call(c, GA(ADD_ITEM));
         memcpy(c->x, saved, sizeof saved);
         LOG("[give] item %d x%d (index %d)\n", g_give_id, g_give_count, g_give_index);
     }

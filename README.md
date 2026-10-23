@@ -20,8 +20,8 @@ For the PC versions (Windows, macOS, Linux), features and the randomizer, see th
 
 > [!NOTE]
 > **No game files are included**, and the app contains nothing from the game. You need your own legally obtained
-> copy of the extracted game files of *Link's Awakening* **v1.0.0**. Instructions on how to obtain them will not be
-> provided.
+> copy of the extracted game files of *Link's Awakening* **v1.0.0, v1.0.1 or v1.1.0**. Instructions on how to obtain
+> them will not be provided.
 
 ## New in 0.4.1
 
@@ -259,7 +259,7 @@ neither driver has.
   included, you provide your own. **Mali**: the game ran on a Mali-G615 at 20-30 fps; since 0.3.3 its textures are
   decoded on the CPU (Mali has no BC textures, the Switch's format), which fixed the colored blocks seen there - still
   to be confirmed on more Mali phones. Xclipse and others should work through the same path: reports are welcome.
-- You need your own v1.0.0 dump, and about **12 GB free** for the setup (the app keeps its own copy of the game
+- You need your own v1.0.0, v1.0.1 or v1.1.0 dump, and about **12 GB free** for the setup (the app keeps its own copy of the game
   files plus a data image built from them); the dump itself can be deleted afterwards.
 - The first setup builds the game code on the phone: about 20 minutes on a Snapdragon 8 Elite.
 - Changing the resolution while the game is running can close the app. Change it on the title screen.
@@ -267,8 +267,8 @@ neither driver has.
 
 ## Installing
 
-You need an arm64 phone with Android 11 or newer (tested on a Snapdragon), your own extracted v1.0.0 game files (the
-folders `exefs` and `romfs`) copied somewhere on the phone, and, for 60 fps on an Adreno GPU, a Turnip driver package
+You need an arm64 phone with Android 11 or newer (tested on a Snapdragon), your own extracted game files (v1.0.0, v1.0.1
+or v1.1.0: the folders `exefs` and `romfs`) copied somewhere on the phone, and, for 60 fps on an Adreno GPU, a Turnip driver package
 (the adrenotools `.zip`, as used by other emulators).
 
 1. Install the APK from the [Releases](https://github.com/mamcjr/LASRecompAndroid/releases) page.

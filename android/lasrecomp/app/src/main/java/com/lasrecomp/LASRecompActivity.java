@@ -713,7 +713,7 @@ public class LASRecompActivity extends SDLActivity {
                 return;
             }
             Doc main = named(children(tree, exefs.id), "main");
-            byte[] head = new byte[0x48];
+            byte[] head = new byte[0x60];  // (the NSO header: the main build ID at 0x40, runtime/game_addresses/versions.h)
             try (InputStream in = getContentResolver().openInputStream(DocumentsContract.buildDocumentUriUsingTree(tree, main.id))) {
                 int got = 0;
                 for (int r; got < head.length && (r = in.read(head, got, head.length - got)) > 0; ) got += r;

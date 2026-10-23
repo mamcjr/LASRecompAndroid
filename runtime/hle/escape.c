@@ -21,8 +21,9 @@
 
 #include "../hle.h"
 #include "../rando.h"
+#include "../game_addresses.h"
 
-#define PLAYER_STATUS_PTR (MAIN_BASE + 0x1CC1368)  // PlayerStatus*: level name at +0, inventory bits at +0xa8
+// GA(PLAYER_STATUS_PTR): PlayerStatus*: level name at +0, inventory bits at +0xa8
 extern uint64_t renderer_present_count(void);
 extern int game_in_play(void);
 extern int warp_busy(void);
@@ -71,7 +72,7 @@ static bool active(void) {
 }
 
 static const char *cur_level(void) {
-    uint64_t ps = LD64(PLAYER_STATUS_PTR);
+    uint64_t ps = LD64(GA(PLAYER_STATUS_PTR));
     return ps ? (const char *)(uintptr_t)ps : "";
 }
 
@@ -152,7 +153,7 @@ RT_ON_RESET(escape_reset) { on = -1; }  // (seed switch: the next seed may diffe
 // GlobalFlags 431 (unused0431) set; the sack is drawn bomb blue then. LARECOMP_BOMB_BAG_TINT=1: always (test).
 #define BOMB_BAG_FLAG 431
 static void bomb_bag_tint(float tint[8]) {
-    const uint8_t *fl = (const uint8_t *)(uintptr_t)(MAIN_BASE + 0x1CBB220 + 0x5DC0);  // (live save: GlobalFlags)
+    const uint8_t *fl = (const uint8_t *)(uintptr_t)(GA(LIVE_SAVE) + 0x5DC0);  // (live save: GlobalFlags)
     if (!((fl[BOMB_BAG_FLAG >> 3] >> (BOMB_BAG_FLAG & 7)) & 1) && !getenv("LARECOMP_BOMB_BAG_TINT")) return;
     // ltint (translate.c): colour.rgb, mix, glow.rgb, luminance power - the bombs' deep navy, lit
     static const float navy[8] = {0.10f, 0.24f, 1.30f, 1.0f, 0.0f, 0.01f, 0.06f, 1.45f};
@@ -167,7 +168,7 @@ void escape_bottle_tint(int kind, const float *ui, uint32_t ui_size, float tint[
         return;
     }
     if (!active()) return;
-    uint64_t ps = LD64(PLAYER_STATUS_PTR);
+    uint64_t ps = LD64(GA(PLAYER_STATUS_PTR));
     if (!ps) return;
     bool owned = LD8(ps + 0xa9) & 0x80;
     if (kind == 2) {

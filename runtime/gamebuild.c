@@ -8,6 +8,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#include "game_addresses.h"
 #include "gamelib.h"
 #include "paths.h"
 #include "platform.h"
@@ -310,7 +311,7 @@ static int cmp_u64(const void *a, const void *b) {
     return x < y ? -1 : x > y;
 }
 
-static void load_hot(const char *path) {
+static void load_hot(const char *path, const GameVersion *v) {
     free(g_hot), g_hot = NULL, g_nhot = 0, g_cold_fns = g_all_fns = 0;
     FILE *f = fopen(path, "r");
     if (!f) return;
@@ -329,6 +330,7 @@ static void load_hot(const char *path) {
         char *end;
         uint64_t a = base + strtoull(p, &end, 16);
         if (end == p) continue;
+        a = game_version_from_v1_0_0(v, a);  // (a list made from 1.0.0: where that function is in these game files)
         if (g_nhot == cap) g_hot = realloc(g_hot, sizeof *g_hot * (cap = cap ? cap * 2 : 4096));
         g_hot[g_nhot++] = a;
     }
@@ -374,6 +376,8 @@ static bool mark_cold(const char *src) {
 }
 #endif
 
+static char g_full_id[GAMELIB_FULL_ID_SIZE];  // this build's library id (gamelib_full_id): GAMELIB_ID-<build ID>
+
 static PlatProc start_compile(const Tools *t, const Unit *u) {
     Args a = {0};
     compiler(&a, t);
@@ -381,7 +385,9 @@ static PlatProc start_compile(const Tools *t, const Unit *u) {
     char inc[1200];
     snprintf(inc, sizeof inc, "-I%s", t->inc);
     add(&a, inc);
-    add(&a, "-DGAMELIB_ID=\"" GAMELIB_ID "\"");
+    char id[GAMELIB_FULL_ID_SIZE + 32];
+    snprintf(id, sizeof id, "-DGAMELIB_ID=\"%s\"", g_full_id);
+    add(&a, id);
     add(&a, "-c");
     add(&a, u->src);
     add(&a, "-o");
@@ -396,6 +402,10 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
     uint64_t t0 = plat_now_ns();
     static bool registered;
     if (!registered) registered = true, atexit(end_all);
+    if (!gamelib_full_id(game_dir, g_full_id, sizeof g_full_id)) {
+        snprintf(why, why_size, "the game files' exefs/main is missing or unreadable");
+        return false;
+    }
     Tools t;
     if (!find_tools(&t)) {
         snprintf(why, why_size, "the game code builder is missing from this copy of LAS Recomp");
@@ -428,7 +438,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         const char *e = getenv("LARECOMP_GAMEBUILD_HOT"), *gen = getenv("LARECOMP_GEN_DIR");
         char hot[1200];
         snprintf(hot, sizeof hot, "%s/gamelib-src/hot_functions.txt", gen ? gen : ".");
-        load_hot(e && strcmp(e, "0") ? e : e ? "" : hot);
+        load_hot(e && strcmp(e, "0") ? e : e ? "" : hot, game_version_of(game_dir));
         LOG("[gamebuild] hot functions: %zu%s\n", g_nhot, g_nhot ? " (the rest compiled with optnone)" : " (all at -O1)");
     }
     {   // (the previous one in internal storage: a failed build must not leave it looking current)
@@ -639,7 +649,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         char idp[1100];
         snprintf(idp, sizeof idp, "%s.id", lib);
         FILE *f = NULL;
-        if (rename(tmp, lib) != 0 || !(f = fopen(idp, "wb")) || fprintf(f, "%s\n", GAMELIB_ID) < 0) {
+        if (rename(tmp, lib) != 0 || !(f = fopen(idp, "wb")) || fprintf(f, "%s\n", g_full_id) < 0) {
             snprintf(why, why_size, "the game code couldn't be saved");
             ok = false;
         }

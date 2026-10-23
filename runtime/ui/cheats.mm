@@ -11,11 +11,11 @@
 extern "C" {
 #include "../hle.h"
 #include "../settings.h"
+#include "../game_addresses.h"
 int game_in_play(void);
 }
 
-#define LIVE_SAVE (MAIN_BASE + 0x1CBB220ull)
-template <typename T> static T &F(uint32_t off) { return *(T *)(uintptr_t)(LIVE_SAVE + off); }
+template <typename T> static T &F(uint32_t off) { return *(T *)(uintptr_t)(GA(LIVE_SAVE) + off); }
 
 enum : uint32_t {
     RUPEES = 0x5540, HP = 0x5544, PIECES = 0x5550, CONTAINERS = 0x5558, UPGRADES = 0x555C, BOMBS = 0x555E,

@@ -20,7 +20,7 @@ case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) EXE=.exe; PY=tools/venv/Scripts/pyth
 LIBMAIN=$(ls -t "$R"/android/lasrecomp/app/build/intermediates/cxx/*/*/obj/arm64-v8a/libmain.so 2>/dev/null | head -1 || true)
 [ -n "$LIBMAIN" ] || { echo "build the app first (android/lasrecomp: gradlew assembleDebug)"; exit 1; }
 
-if [ ! -f "$GEN/main/main_table.c" ] || [ ! -f "$GEN/sdk/sdk_table.c" ]; then
+if [ ! -f "$GEN/main/main_table.c" ] || [ ! -f "$GEN/main/main_build_id.txt" ] || [ ! -f "$GEN/sdk/sdk_table.c" ]; then
     (cd tools && "../$PY" gen.py sdk "$EXEFS/sdk" 0x7004000000 "$GEN/sdk" --hle ../runtime/hle/hle_symbols.txt --simd asm --dyn-base)
     (cd tools && "../$PY" gen.py main "$EXEFS/main" 0x7000000000 "$GEN/main" --simd asm --dyn-base)
 fi

@@ -6,7 +6,12 @@
 //
 // Code patches: gen.py compiled every variant of every patched instruction in (tools/rando/patch_variants.json);
 // rando_word() tells the generated code which one the seed uses (0 = the original instruction).
+//
+// Every supported game version reads 1.0.0.pchtxt: 1.0.1 / 1.1.0 changed one function, and every randomizer patch
+// site is at the same offset with the same original instruction or data in all of them (tools/test_game_addresses.py
+// --game checks the seeds and patch_variants.json against the game files). The file's @nsobid is checked here.
 #include "rando.h"
+#include "game_addresses.h"
 
 #include <dirent.h>
 #include <pthread.h>
@@ -40,7 +45,7 @@ static void apply_data(uint64_t img_off, const uint8_t *bytes, size_t n) {
     memcpy(p, bytes, n);
 }
 
-static bool is_code(uint64_t off) { return off < 0x16a0000; }
+static bool is_code(uint64_t off) { return off < GA(MAIN_CODE_SIZE); }
 
 static void load_pchtxt(const char *path) {
     FILE *f = fopen(path, "r");
@@ -49,6 +54,15 @@ static void load_pchtxt(const char *path) {
     bool enabled = false;
     int ndata = 0;
     while (fgets(line, sizeof line, f)) {
+        if (!strncmp(line, "@nsobid-", 8)) {  // the build the patches were made for: a supported version's offsets
+            uint8_t id[20] = {0};
+            int k = 0;
+            for (unsigned b; k < 20 && sscanf(line + 8 + 2 * k, "%2x", &b) == 1; k++) id[k] = (uint8_t)b;
+            const GameVersion *made = k == 20 ? game_version_by_build_id(id) : NULL, *now = game_version();
+            if (!made) LOG("[rando] %s: made for an unknown game build (%.24s): its patches may not fit\n", path, line + 8);
+            else if (now && made != now) LOG("[rando] patches made for %s, game %s: same patch sites\n", made->label, now->label);
+            continue;
+        }
         if (!strncmp(line, "@enabled", 8)) { enabled = true; continue; }
         if (!strncmp(line, "@stop", 5)) { enabled = false; continue; }
         if (!enabled) continue;

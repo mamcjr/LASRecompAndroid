@@ -49,7 +49,7 @@ on-device game builder. From `android/lasrecomp/`, build a development APK:
 .\gradlew.bat :app:assembleDebug
 ```
 
-On a Unix shell, use `./gradlew :app:assembleDebug`. Use your own legally obtained v1.0.0 game files for setup.
+On a Unix shell, use `./gradlew :app:assembleDebug`. Use your own legally obtained game files (v1.0.0, v1.0.1 or v1.1.0) for setup.
 Release signing keys are not needed to contribute. Back up your saves before replacing an installed app with
 a build signed by a different key.
 
@@ -61,6 +61,14 @@ a build signed by a different key.
 - `tools/gen.py` - the recompiler: translates the game's executables into C (`generated/`, never committed).
   `tools/patches.py` holds code patches applied during generation; every patch site checks the original instruction
   word, so a wrong address fails loudly instead of silently.
+- `runtime/game_addresses/` - the game's addresses, one table per game version: `versions.h` lists the versions
+  by the main program's build ID (1.0.1 and 1.1.0 share one), `patches_<version>.h` holds the addresses used by the
+  patch generator (read by `tools/game_addresses.py`, part of the game code's id) and `runtime_<version>.h` the
+  runtime-only ones. Every version has the same names. The generator and the runtime pick the table by build ID
+  (unknown IDs are refused); runtime code reads an address as `GA(NAME)` (on Android, already moved to where the
+  guest window is). Add a name to `*_v1_0_0.h`, then write the other versions' tables with `tools/version_map.py`
+  (it maps code addresses through identical functions and refuses anything it can't map), and check them with
+  `tools/test_game_addresses.py`.
 - `runtime/` - the host side:
   - `kernel.c`, `loader.c`, `services/` - the Switch OS replacement
   - `hle/` - replacements and features (door jumps, keysanity, pots / bushes, souls, warps, input, ...)

@@ -12,52 +12,39 @@
 #include <string.h>
 
 #include "../hle.h"
+#include "../game_addresses.h"
 
 void guest_call(Cpu *c, uint64_t addr);
 uint64_t doorjump_player(uint64_t frame);  // PlayerCollision component: position at +0x80
 
-#define PLAYER_STATUS_PTR (MAIN_BASE + 0x1CC1368)  // PlayerStatus*: current level name at +0
+// GA(PLAYER_STATUS_PTR): PlayerStatus*: current level name at +0
 
 // per class: vtable, its state machine's change(sm, state) (+0xd current state, +0xe previous; states 0x30 apart
 // from +0x40: ctx, enter, exec, exit member functions), the state machine's offset in the actor, idle state, fight
 // state, position offset (x y z floats: the spawn point), rest state (0xff: none) - one it stays in after a move
 // that ends its fight in its own room (Blaino's knock-out): woken again like idle, then (0: none) - a state it goes
 // on to a few frames after waking (Master Stalfos: 13 shows him, 1 is his fight), at_once: woken as soon as he's
-// loaded, wherever Link is (an idle Master Stalfos is invisible), start (main offset, 0: none) - its own start action,
+// loaded, wherever Link is (an idle Master Stalfos is invisible), start (0: none) - its own start action,
 // called with the actor instead of the state change (Lanmola: what his screen's event runs - up out of the sand)
-typedef struct {
-    uint64_t vt, chg; uint32_t sm, pos; uint8_t idle, fight; const char *name; uint8_t rest, then, at_once; uint32_t start;
+typedef struct {  // (vt, chg, start: GA_FIELD - the address is GA_AT(...))
+    uint16_t vt, chg; uint32_t sm, pos; uint8_t idle, fight; const char *name; uint8_t rest, then, at_once; uint16_t start;
 } Kind;
-#ifdef __ANDROID__
-// (static data can't use the window's start, known at run time: the desktop addresses, moved once by kinds_place)
-#define KB GUEST_CANON
-static Kind g_kinds[] = {
-#else
-#define KB MAIN_BASE
 static const Kind g_kinds[] = {
-#endif
-    {KB + 0x1b80e90, KB + 0x3bfc60, 0xff0, 0x260, 0, 1, "Hinox", 0xff},  // 0x53: 10 = request HinoxStart
+    {GA_FIELD(HINOX_VTABLE), GA_FIELD(HINOX_CHANGE_STATE), 0xff0, 0x260, 0, 1, "Hinox", 0xff},  // 0x53: 10 = request HinoxStart
     // (found 2026-10-12 with tools placing each one on Field_13D: LARECOMP_MB_SCAN_NAME / _FORCE)
-    {KB + 0x1b86e58, KB + 0x4301d0, 0x1110, 0x260, 0, 1, "Smasher", 0xff},       // 0x5c (+ iron ball)
-    {KB + 0x1badc60, KB + 0x6d4f40, 0xff0, 0x260, 0, 1, "Avalaunch", 0xff},      // 0x60
-    {KB + 0x1ba32c8, KB + 0x61f250, 0xff0, 0x260, 0, 1, "Rolling Bones", 0xff},  // 0x51 (+ spike bar)
-    {KB + 0x1b7e0e8, KB + 0x38bf50, 0x1200, 0x260, 13, 0, "Gohma", 0xff},        // 0x5a (heads for Link: GOHMA_*)
-    {KB + 0x1b91408, KB + 0x4ec6c0, 0x11a0, 0x260, 10, 1, "Blaino", 5},          // 0x5f (5: after a knock-out)
-    {KB + 0x1b82f70, KB + 0x3e59a0, 0xff0, 0x260, 0, 3, "Cue Ball", 0xff},       // 0x58 (+ a rail fitted)
+    {GA_FIELD(SMASHER_VTABLE), GA_FIELD(SMASHER_CHANGE_STATE), 0x1110, 0x260, 0, 1, "Smasher", 0xff},       // 0x5c (+ iron ball)
+    {GA_FIELD(AVALAUNCH_VTABLE), GA_FIELD(AVALAUNCH_CHANGE_STATE), 0xff0, 0x260, 0, 1, "Avalaunch", 0xff},      // 0x60
+    {GA_FIELD(ROLLING_BONES_VTABLE), GA_FIELD(ROLLING_BONES_CHANGE_STATE), 0xff0, 0x260, 0, 1, "Rolling Bones", 0xff},  // 0x51 (+ spike bar)
+    {GA_FIELD(GOHMA_VTABLE), GA_FIELD(GOHMA_CHANGE_STATE), 0x1200, 0x260, 13, 0, "Gohma", 0xff},        // 0x5a (heads for Link: GOHMA_*)
+    {GA_FIELD(BLAINO_VTABLE), GA_FIELD(BLAINO_CHANGE_STATE), 0x11a0, 0x260, 10, 1, "Blaino", 5},          // 0x5f (5: after a knock-out)
+    {GA_FIELD(CUE_BALL_VTABLE), GA_FIELD(CUE_BALL_CHANGE_STATE), 0xff0, 0x260, 0, 3, "Cue Ball", 0xff},       // 0x58 (+ a rail fitted)
     // 0x57: 0 = under the sand until his screen's event (AreaEventBox - not copied) runs his start; back in 0, again
-    {KB + 0x1b8bc08, KB + 0x47db50, 0xff0, 0x260, 0, 1, "Lanmola", 0, 0, 0, 0x487ce0},
+    {GA_FIELD(LANMOLA_VTABLE), GA_FIELD(LANMOLA_CHANGE_STATE), 0xff0, 0x260, 0, 1, "Lanmola", 0, 0, 0, GA_FIELD(LANMOLA_START)},
     // 0x59: 12 = hidden until his room's event (AreaEventBox - not copied: intro, music) drops him in; 13 shows him
-    {KB + 0x1b8ea08, KB + 0x4b9be0, 0x1230, 0x260, 12, 13, "Master Stalfos", 0xff, 1, 1},
+    {GA_FIELD(MASTER_STALFOS_VTABLE), GA_FIELD(MASTER_STALFOS_CHANGE_STATE), 0x1230, 0x260, 12, 13, "Master Stalfos", 0xff, 1, 1},
 };
 #define NKINDS (int)(sizeof g_kinds / sizeof g_kinds[0])
-#ifdef __ANDROID__
-__attribute__((constructor(102))) static void kinds_place(void) {  // (after runtime/main.c placed the window: 101)
-    for (int i = 0; i < NKINDS; i++) {
-        g_kinds[i].vt += GUEST_LO - GUEST_CANON;
-        g_kinds[i].chg += GUEST_LO - GUEST_CANON;
-    }
-}
-#endif
+_Static_assert(GA_FIELD(LANMOLA_START) != 0, "start 0: none");
 #define WAKE_DIST 7.0f  // (a Field screen is ~15 x 12 units)
 
 typedef struct { uint64_t obj, first, last, woken_at; int kind, woken; float px, pz; int stuck; uint64_t flip_at; } Seen;
@@ -88,7 +75,7 @@ static uint64_t g_scan_vt[16], g_scan_obj[8], g_scan_sm[8][8];
 static uint8_t g_scan_last[8][8];
 static int g_scan_nv = -1;
 
-static bool code_ptr(uint64_t p) { return p >= MAIN_BASE && p < MAIN_BASE + 0x1600000; }
+static bool code_ptr(uint64_t p) { return p >= MAIN_BASE && p < GA(MAIN_CODE_SCAN_END); }
 
 static void scan_seen(uint64_t o, uint64_t vt) {
     if (g_scan_nv < 0) {
@@ -152,7 +139,7 @@ void rt_mb_seen(uint64_t o) {
     if (ENV("LARECOMP_MB_LOG")) log_new_vtable(o, vt);
     if (ENV("LARECOMP_MB_SCAN") || ENV("LARECOMP_MB_SCAN_NAME")) scan_seen(o, vt);
     int k = 0;
-    while (k < NKINDS && g_kinds[k].vt != vt) k++;
+    while (k < NKINDS && GA_AT(g_kinds[k].vt) != vt) k++;
     if (k == NKINDS) return;
     uint64_t f = renderer_present_count();
     int free_i = -1;
@@ -178,7 +165,7 @@ static void force_tick(Cpu *c, uint64_t frame) {
     if (at == -2) {
         at = -1;
         const char *e = ENV("LARECOMP_MB_FORCE");
-        unsigned long long smo = 0, ch = 0x3bfc60;
+        unsigned long long smo = 0, ch = GA(HINOX_CHANGE_STATE) - MAIN_BASE;
         if (e && sscanf(e, "%ld:%llx:%d:%llx", &at, &smo, &state, &ch) >= 3) sm = smo, chg = MAIN_BASE + ch;
         else at = -1;
     }
@@ -188,7 +175,7 @@ static void force_tick(Cpu *c, uint64_t frame) {
         uint64_t saved[31], sp = c->sp;
         memcpy(saved, c->x, sizeof saved);
         c->x[0] = scan_latest();
-        guest_call(c, MAIN_BASE + 0x29520);
+        guest_call(c, GA(AREA_EVENT_TRIGGER));
         memcpy(c->x, saved, sizeof saved);
         c->sp = sp;
         LOG("[mb-zone] f%llu actor %llx: zone entry call\n", (unsigned long long)frame, (unsigned long long)scan_latest());
@@ -227,7 +214,7 @@ static void miniboss_marker_set(void) {
         }
     }
     if (g_marker < 0 || g_marker >= 2048) return;
-    uint8_t *fl = (uint8_t *)(uintptr_t)(MAIN_BASE + 0x1CBB220 + 0x5DC0);  // (live save: event flag bits)
+    uint8_t *fl = (uint8_t *)(uintptr_t)(GA(LIVE_SAVE) + 0x5DC0);  // (live save: event flag bits)
     fl[g_marker >> 3] |= (uint8_t)(1 << (g_marker & 7));
 }
 
@@ -279,7 +266,7 @@ static bool wall_at(float x, float z) {  // (Gohma's body around (x, z) touches 
 }
 int rt_gohma_free(void) {
     extern const char *rando_seed_dir(void);
-    uint64_t ps = LD64(PLAYER_STATUS_PTR);
+    uint64_t ps = LD64(GA(PLAYER_STATUS_PTR));
     return rando_seed_dir() && ps && !strcmp((const char *)(uintptr_t)ps, "Field");
 }
 
@@ -323,7 +310,7 @@ static void set_state(Cpu *c, const Seen *s, const Kind *k, int state) {  // (it
     memcpy(saved, c->x, sizeof saved);
     c->x[0] = s->obj + k->sm;
     c->x[1] = (uint64_t)state;
-    guest_call(c, k->chg);
+    guest_call(c, GA_AT(k->chg));
     memcpy(c->x, saved, sizeof saved);
     c->sp = sp;
 }
@@ -377,7 +364,7 @@ void miniboss_tick(Cpu *c, uint64_t frame) {
     force_tick(c, frame);
     extern const char *rando_seed_dir(void);
     if (!rando_seed_dir()) return;  // (only seeds put mini-bosses on the Field)
-    uint64_t ps = LD64(PLAYER_STATUS_PTR);
+    uint64_t ps = LD64(GA(PLAYER_STATUS_PTR));
     if (!ps || strcmp((const char *)(uintptr_t)ps, "Field")) return;  // (dungeon arenas start their own)
     uint64_t pc = doorjump_player(frame);
     if (!pc) return;
@@ -385,7 +372,7 @@ void miniboss_tick(Cpu *c, uint64_t frame) {
     memcpy(g_link, lp, sizeof g_link), g_have_link = true;
     for (int i = 0; i < 32; i++) {
         Seen *s = &g_seen[i];
-        if (!s->obj || frame - s->last > 2 || frame - s->first < 30 || LD64(s->obj) != g_kinds[s->kind].vt) continue;
+        if (!s->obj || frame - s->last > 2 || frame - s->first < 30 || LD64(s->obj) != GA_AT(g_kinds[s->kind].vt)) continue;
         const Kind *k = &g_kinds[s->kind];
         if (!strcmp(k->name, "Gohma")) gohma_walls(s->obj);
         if (!strcmp(k->name, "Cue Ball")) cueball_tick(c, s, k, frame);
@@ -410,11 +397,11 @@ void miniboss_tick(Cpu *c, uint64_t frame) {
         miniboss_marker_set();
         if (k->start) {
             c->x[0] = s->obj;
-            guest_call(c, MAIN_BASE + k->start);
+            guest_call(c, GA_AT(k->start));
         } else {
             c->x[0] = s->obj + k->sm;
             c->x[1] = k->fight;
-            guest_call(c, k->chg);
+            guest_call(c, GA_AT(k->chg));
         }
         memcpy(c->x, saved, sizeof saved);
         c->sp = sp;

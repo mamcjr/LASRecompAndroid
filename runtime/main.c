@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "game_addresses.h"
 #include "gamelib.h"
 #include "paths.h"
 #include "settings.h"
@@ -134,6 +135,7 @@ static void boot(const char *root) {
     if (!g_romfs_dir) g_romfs_dir = strdup(romfs);
 
     char why[512];
+    if (!game_version_select(root, why, sizeof why)) FATAL("%s\n", why);  // (the address table: game_addresses.h)
     if (!gamelib_load(root, why, sizeof why)) FATAL("%s\n", why);
     loader_load(exefs);
     rando_boot();  // the chosen seed's data patches go into the freshly loaded module
