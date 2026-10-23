@@ -23,6 +23,20 @@ For the PC versions (Windows, macOS, Linux), features and the randomizer, see th
 > copy of the extracted game files of *Link's Awakening* **v1.0.0, v1.0.1 or v1.1.0**. Instructions on how to obtain
 > them will not be provided.
 
+## New in 0.5.0
+
+Game versions 1.0.1 and 1.1.0, several versions installed side by side, shader preparation and the fixes from upstream LAS Recomp's next beta.
+
+- **Game versions 1.0.1 and 1.1.0**, recognized from the game's own files.
+- **Several versions installed:** Settings > Saves & files > **Add another version**; **PLAY ‹ version ›** on the start screen switches between them. Saves are shared; each version builds its own game code once. The base version 1.0.0 stays while others are installed.
+- **Shader preparation** (from upstream beta 5) on the start screen: fewer stutters the first time an area shows up.
+- **Fixes from upstream beta 5:** all-or-nothing saves, Dampe's amiibo option, a physics crash and hangs, the interior lighting seam with a widened view, wider aspect ratios, the fishing game's pond.
+- Auto's 30 fps is a steady 30; Vulkan 1.1 / 1.2 drivers read the extensions' features correctly; driver packages load their library from `meta.json`; opening with the screen locked waits instead of stopping.
+
+After updating, the game code is built again once.
+
+Validation: on the POCO F7 Ultra (Adreno 830, Turnip), 1.0.0, 1.0.1 and 1.1.0 installed together, switched with the arrows, all three to the village; saves unchanged. Not tested yet on a real Vulkan 1.1 phone or an Adreno that isn't 8xx.
+
 ## New in 0.4.1
 
 Driver compatibility options for GPUs where the game draws wrong with Turnip, and a log file to send with a bug report.

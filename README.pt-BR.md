@@ -23,6 +23,20 @@ Para as versões de PC (Windows, macOS, Linux), os recursos e o randomizer, veja
 > obtida legalmente, dos arquivos extraídos de *Link's Awakening* **v1.0.0, v1.0.1 ou v1.1.0**. Não serão dadas
 > instruções de como obtê-los.
 
+## Novidades da 0.5.0
+
+Versões 1.0.1 e 1.1.0 do jogo, várias versões instaladas lado a lado, preparação de shaders e as correções do próximo beta do LAS Recomp original.
+
+- **Versões 1.0.1 e 1.1.0 do jogo**, reconhecidas pelos próprios arquivos do jogo.
+- **Várias versões instaladas:** Configurações > Saves e arquivos > **Adicionar outra versão**; o **JOGAR ‹ versão ›** da tela inicial alterna entre elas. Os saves são compartilhados; cada versão compila o próprio código do jogo uma vez. A versão base 1.0.0 fica enquanto houver outras instaladas.
+- **Preparação de shaders** (do beta 5 original) na tela inicial: menos engasgos na primeira vez que uma área aparece.
+- **Correções do beta 5 original:** saves tudo ou nada, a opção de amiibo do Dampe, um travamento de física e congelamentos, a emenda na iluminação dos interiores com a visão alargada, proporções mais largas, o lago do jogo da pesca.
+- Os 30 fps do Automático são 30 estáveis; drivers Vulkan 1.1 / 1.2 leem certo os recursos das extensões; pacotes de driver carregam a biblioteca do `meta.json`; abrir com a tela bloqueada espera em vez de parar.
+
+Depois de atualizar, o código do jogo é compilado de novo uma vez.
+
+Validação: no POCO F7 Ultra (Adreno 830, Turnip), 1.0.0, 1.0.1 e 1.1.0 instaladas juntas, alternadas pelas setas, as três até a vila; saves inalterados. Ainda não testado num celular de fato Vulkan 1.1 nem numa Adreno que não seja 8xx.
+
 ## Novidades da 0.4.1
 
 Opções de compatibilidade do driver para GPUs em que o jogo desenha errado com o Turnip, e um arquivo de log para enviar com um relato de bug.
