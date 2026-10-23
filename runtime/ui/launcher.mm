@@ -1385,6 +1385,13 @@ static void prelaunch_tab(float sc) {
             bool ok = rt_remove_game_files(g_root.c_str());  // (runtime/paths.c: only what the extraction made)
             set_job(ok ? "Game files deleted." : "Could not delete the game files (not in LAS Recomp's data folder?).", !ok);
             g_files_deleted = true, gb = -1;
+#ifdef __ANDROID__
+            if (ok) {  // (the release in play gone: another one installed takes its place - the start screen then goes
+                       // to setting up only if that one isn't ready)
+                std::vector<std::string> others = other_versions();
+                if (!others.empty()) switch_version(others.back());
+            }
+#endif
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
@@ -1394,6 +1401,42 @@ static void prelaunch_tab(float sc) {
             ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
+#ifdef __ANDROID__
+    {   // the releases installed (the start screen's PLAY ‹ › switches them), another one added from its folder, one put
+        // aside removed (a tap, then a confirmation)
+        static std::string confirm_rm;
+        std::vector<std::string> others = other_versions();
+        std::string have = "v" + release_of(g_root);
+        for (const std::string &o : others) have += ", v" + o;
+        ImGui::Spacing();
+        ImGui::Text(tr("Game versions: %s"), have.c_str());
+        ImGui::PushTextWrapPos(0);
+        ImGui::TextDisabled("%s", tr("Sets up another release of the game (1.0.0, 1.0.1 or 1.1.0) from its own folder, next to "
+                                     "the ones here: PLAY \xe2\x80\xb9 \xe2\x80\xba on the start screen then switches between them. "
+                                     "Each release takes its own space and builds its own game code once; saves are shared. The "
+                                     "same release set up again replaces its copy."));
+        ImGui::PopTextWrapPos();
+        bool busy_now = g_busy;
+        ImGui::BeginDisabled(busy_now);
+        if (ImGui::Button(tr("Add another version"))) android_call("pickGameFolder");
+        for (const std::string &o : others) {
+            char label[48];
+            bool asking = confirm_rm == o;
+            snprintf(label, sizeof label, tr(asking ? "Yes, remove v%s" : "Remove v%s"), o.c_str());
+            ImGui::SameLine();
+            if (ImGui::Button(label)) {
+                if (!asking) confirm_rm = o;
+                else {
+                    bool ok = remove_version_dir(o);
+                    set_job(ok ? "Game version removed." : "Couldn't remove that game version", !ok);
+                    confirm_rm.clear();
+                    g_version_epoch++;
+                }
+            }
+        }
+        ImGui::EndDisabled();
+    }
+#endif
     ImGui::Spacing();
     ImGui::Spacing();
     heading("Game font");

@@ -1063,11 +1063,11 @@
 {"Add another version",
  "Adicionar outra versão"},
 {"Sets up another release of the game (1.0.0, 1.0.1 or 1.1.0) from its own folder, next to "
- "the ones here: PLAY â¹ âº on the start screen then switches between them. "
+ "the ones here: PLAY ‹ › on the start screen then switches between them. "
  "Each release takes its own space and builds its own game code once; saves are shared. The "
  "same release set up again replaces its copy.",
  "Prepara outra versão do jogo (1.0.0, 1.0.1 ou 1.1.0) a partir da pasta dela, ao lado das que já estão aqui: "
- "o JOGAR â¹ âº da tela inicial passa a alternar entre elas. Cada versão ocupa o próprio "
+ "o JOGAR ‹ › da tela inicial passa a alternar entre elas. Cada versão ocupa o próprio "
  "espaço e compila o próprio código do jogo uma vez; os saves são compartilhados. Preparar de novo a mesma versão "
  "substitui a cópia dela."},
 {"Remove v%s",
@@ -1083,3 +1083,5 @@
  "Versão do jogo removida."},
 {"Couldn't remove that game version",
  "Não foi possível remover essa versão do jogo"},
+{"Game versions: %s",
+ "Versões do jogo: %s"},
