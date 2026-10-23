@@ -13,6 +13,21 @@ uint64_t renderer_present_count(void);
 
 static uint64_t g_world_frame = ~0ull;  // the mirrored scene was drawn
 
+// LARECOMP_LOG_SCENE=<n>: every n presented frames, log the size of the scene image the game composited into the window
+// image (guest sizes, as the game allocated them: its main pass resolution) - checks the game's dynamic resolution.
+#include <stdlib.h>
+#include "../rt.h"
+void scene_size_log(bool composite, uint32_t sw, uint32_t sh, uint32_t w, uint32_t h) {
+    static long every = -1;
+    static uint64_t last = ~0ull;
+    if (every < 0) every = getenv("LARECOMP_LOG_SCENE") ? atol(getenv("LARECOMP_LOG_SCENE")) : 0;
+    if (every <= 0 || !composite) return;
+    uint64_t f = renderer_present_count();
+    if (f / every == last) return;
+    last = f / every;
+    LOG("[scene] frame %llu scene %ux%u window image %ux%u\n", (unsigned long long)f, sw, sh, w, h);
+}
+
 // The renderer found the scene composite (composite): mirror it?
 bool mirror_draw(bool composite) {
     if (!g_settings.mirror_mode || !composite) return false;

@@ -3919,6 +3919,8 @@ static void draw_(CmdRec *r, bool indexed) {
                 scene_composite = (sw * 2 >= w && sw <= w && sh <= h && (a > b2 ? a - b2 : b2 - a) * 100 <= (uint64_t)w * h) ||
                                   (f > 1.01f && sh * 2 >= h && sh <= h && fabsf(sa - want) < 0.01f * want);
             }
+            extern void scene_size_log(bool composite, uint32_t sw, uint32_t sh, uint32_t w, uint32_t h);
+            if (t0) scene_size_log(scene_composite || composite, t0->width, t0->height, st.rt.color[0]->width, st.rt.color[0]->height);
 #endif
         }
 #ifdef __ANDROID__
