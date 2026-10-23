@@ -314,6 +314,8 @@ static void *extract_thread(void *) {
     extern std::atomic<bool> g_android_imported;
     if (g_android_imported.exchange(false)) {  // (the activity copied exefs/ and built romfs.bin: below) the code
         if (!build_game_code()) goto done;
+        extern void android_drop_same_release(void);
+        android_drop_same_release();  // (the same release imported again: it replaces the one put aside)
         goto check;
     }
 #endif
@@ -534,7 +536,10 @@ extern "C" JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeImp
     g_src = n ? n : "";
     pthread_mutex_unlock(&g_lock);
     if (n) env->ReleaseStringUTFChars(name, n);
-    rt_remove_game_files(g_root.c_str());  // (an earlier or interrupted setup's)
+    // a release already here is put aside (the start screen's version choice; the same release imported again
+    // replaces it once this one is ready: extract_thread); an earlier or interrupted setup's files are removed
+    extern bool android_put_aside_current(void);
+    if (!android_put_aside_current()) rt_remove_game_files(g_root.c_str());
     mkdir(g_root.c_str(), 0755);
     g_done = 0, g_total = 0, g_phase_base = 0, g_build_frac = -1, g_copy_skipped = false;
     set_job("Copying the game files...");
@@ -626,6 +631,92 @@ static void *prune_thread(void *) {
     fprintf(stderr, "[launcher] loose game files trimmed to what the runtime opens by path\n");
     return NULL;
 }
+// Several game versions installed (the start screen's PLAY ‹ version ›): the one in play where it always was -
+// extracted/ and the game code next to the executable, res/lasgame.so (+ .id) - and the others beside them as
+// extracted-<release>/ and res/lasgame-<release>.so. Switching renames (no copy); importing another release puts the
+// current one aside first, importing the same release replaces it. Saves are shared.
+static int g_version_epoch;  // (bumped at each switch: the release line reads its label again)
+static std::string release_of(const std::string &root) {
+    char label[32];
+    const char *v = game_release_label((root + "/exefs").c_str(), label, sizeof label);
+    return v ? v : "";
+}
+static bool release_ok(const std::string &r) {  // ("1.0.1": a release label, the only names renamed or removed here)
+    if (r.empty() || r.size() > 15) return false;
+    for (char ch : r)
+        if (!(ch >= '0' && ch <= '9') && ch != '.') return false;
+    return true;
+}
+static std::string version_dir(const std::string &r) { return g_root + "-" + r; }
+static std::string lib_path(const std::string &r) {  // (the game code of release r; "" = the one in play)
+    char exe[1100];
+    if (!plat_exe_path(exe, sizeof exe)) return "";
+    char *sl = strrchr(exe, '/');
+    if (sl) *sl = 0;
+    return std::string(exe) + "/" + (r.empty() ? std::string(GAMELIB_NAME) : "lasgame-" + r + ".so");
+}
+static void move_lib(const std::string &from, const std::string &to) {
+    std::string a = lib_path(from), b = lib_path(to);
+    if (a.empty() || b.empty() || a == b) return;
+    remove(b.c_str()), remove((b + ".id").c_str());
+    rename(a.c_str(), b.c_str()), rename((a + ".id").c_str(), (b + ".id").c_str());
+}
+static bool dir_exists(const std::string &p) {
+    struct stat st;
+    return stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+}
+// The releases put aside (extracted-<release>/ with game files in it)
+static std::vector<std::string> other_versions(void) {
+    std::vector<std::string> out;
+    size_t sl = g_root.find_last_of('/');
+    std::string parent = sl == std::string::npos ? "." : g_root.substr(0, sl);
+    std::string prefix = (sl == std::string::npos ? g_root : g_root.substr(sl + 1)) + "-";
+    if (DIR *d = opendir(parent.c_str())) {
+        while (struct dirent *e = readdir(d)) {
+            std::string n = e->d_name;
+            if (n.compare(0, prefix.size(), prefix) || !release_ok(n.substr(prefix.size()))) continue;
+            std::string r = n.substr(prefix.size());
+            if (file_exists(version_dir(r) + "/exefs/main")) out.push_back(r);
+        }
+        closedir(d);
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+static bool remove_version_dir(const std::string &r) {  // (a release put aside, its game code too)
+    if (!release_ok(r)) return false;
+    std::string lib = lib_path(r);
+    if (!lib.empty()) remove(lib.c_str()), remove((lib + ".id").c_str());
+    return !dir_exists(version_dir(r)) || plat_remove_tree(version_dir(r).c_str());
+}
+// The release in play put aside (false: nothing to put aside - no game files there, or not a known release)
+static bool put_aside_current(void) {
+    std::string r = release_of(g_root);
+    if (!release_ok(r)) return false;
+    if (dir_exists(version_dir(r)) && !remove_version_dir(r)) return false;
+    if (rename(g_root.c_str(), version_dir(r).c_str()) != 0) return false;
+    move_lib("", r);
+    fprintf(stderr, "[launcher] game files %s put aside\n", r.c_str());
+    return true;
+}
+bool android_put_aside_current(void) { return put_aside_current(); }  // (nativeImportBegin, above)
+void android_drop_same_release(void) {  // (extract_thread, above: an import of a release already put aside)
+    std::string r = release_of(g_root);
+    if (release_ok(r) && dir_exists(version_dir(r)) && remove_version_dir(r))
+        fprintf(stderr, "[launcher] game files %s replaced\n", r.c_str());
+    g_version_epoch++;
+}
+// Release r (put aside earlier) in play; the one in play put aside
+static bool switch_version(const std::string &r) {
+    if (!release_ok(r) || !dir_exists(version_dir(r))) return false;
+    if (dir_exists(g_root) && !put_aside_current() && !rt_remove_game_files(g_root.c_str())) return false;
+    if (rename(version_dir(r).c_str(), g_root.c_str()) != 0) return false;
+    move_lib(r, "");
+    g_version_epoch++;
+    fprintf(stderr, "[launcher] game files %s in play\n", r.c_str());
+    return true;
+}
+
 static void android_prune_loose(void) {  // (start screen, game files ready)
     static bool done;
     if (done) return;
@@ -1659,7 +1750,58 @@ extern "C" void launcher_run(const char *root) {
                 can_play = can_play && !g_save_busy.load();
 #endif
 #ifdef __ANDROID__
-                bool pressed = menu_item("PLAY", can_play);
+                // several releases installed: PLAY ‹ v1.0.1 › - the arrows (a tap on one, or left / right while PLAY is
+                // selected) put another one in play; PLAY itself plays the one shown
+                static int vers_epoch = -1;
+                static std::vector<std::string> vers;  // every release here, sorted, the one in play among them
+                static std::string in_play;
+                if (vers_epoch != g_version_epoch || ImGui::GetFrameCount() % 120 == 0) {
+                    vers_epoch = g_version_epoch;
+                    vers = other_versions();
+                    in_play = release_of(g_root);
+                    if (!in_play.empty()) vers.push_back(in_play);
+                    std::sort(vers.begin(), vers.end());
+                }
+                bool multi = vers.size() > 1 && !busy;
+                char vlabel[64];
+                snprintf(vlabel, sizeof vlabel, "%s    \xe2\x80\xb9 v%s \xe2\x80\xba", tr("PLAY"), in_play.empty() ? "?" : in_play.c_str());
+                int arrow = 0;
+                bool hov = false;
+                if (multi) {
+                    ImGui::PushFont(g_font_menu);
+                    ImVec2 at = ImGui::GetCursorScreenPos();
+                    const char *lt = strstr(vlabel, "\xe2\x80\xb9"), *rt = strstr(vlabel, "\xe2\x80\xba");
+                    float h = ImGui::CalcTextSize(vlabel).y, pad = h * 0.45f;  // (a finger: more room than a mouse)
+                    float lx = at.x + ImGui::CalcTextSize(vlabel, lt).x, rx = at.x + ImGui::CalcTextSize(vlabel, rt).x;
+                    float aw = ImGui::CalcTextSize("\xe2\x80\xb9").x;
+                    ImVec2 m = ImGui::GetIO().MousePos;
+                    bool in_y = m.y >= at.y - pad && m.y <= at.y + h + pad;
+                    if (in_y && m.x >= lx - pad && m.x <= lx + aw + pad) arrow = -1;
+                    if (in_y && m.x >= rx - pad && m.x <= rx + aw + pad) arrow = 1;
+                    ImGui::PopFont();
+                }
+                bool pressed = multi ? menu_item(vlabel, true, &hov, strstr(vlabel, "\xe2\x80\xb9") + 4, IM_COL32(246, 232, 176, 255),
+                                                 strstr(vlabel, " \xe2\x80\xba"))
+                                     : menu_item("PLAY", can_play);
+                int step = pressed && arrow && ImGui::IsMouseReleased(0) ? arrow : 0;
+                if (multi && hov) {
+                    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft)) step = -1;
+                    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight)) step = 1;
+                    ImGuiID own = ImGui::GetID("##play_lr");  // (left / right are ours while PLAY is selected)
+                    for (ImGuiKey k : {ImGuiKey_LeftArrow, ImGuiKey_RightArrow, ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight})
+                        ImGui::SetKeyOwner(k, own);
+                }
+                if (step) {
+                    pressed = false;
+                    int n = (int)vers.size(), i = (int)(std::find(vers.begin(), vers.end(), in_play) - vers.begin());
+                    std::string want = vers[((i < n ? i : 0) + step + n) % n];
+                    if (want != in_play && switch_version(want)) {
+                        status = check_game_files(g_root);
+                        g_bg = 0;
+                        if (status.empty()) load_background(dev);
+                    }
+                }
+                if (pressed && !can_play) pressed = false;  // (the choice is usable while that release isn't ready)
 #else
                 bool pressed = menu_item(label, can_play, &hov, name,
                                          choice ? IM_COL32(250, 250, 255, 255) : IM_COL32(246, 232, 176, 255),
@@ -1897,6 +2039,41 @@ extern "C" void launcher_run(const char *root) {
                     if (files_gb < 0) files_gb = rt_game_files_size(g_root.c_str()) / 1e9;
                     char gb[32];
                     snprintf(gb, sizeof gb, "%.1f GB", files_gb);
+#ifdef __ANDROID__
+                    {   // the releases installed (the start screen's PLAY ‹ › switches them), another one added from its
+                        // folder, one put aside removed (a tap, then a confirmation)
+                        static std::string confirm_rm;
+                        std::vector<std::string> others = other_versions();
+                        std::string have = "v" + release_of(g_root);
+                        for (const std::string &o : others) have += ", v" + o;
+                        opt_section("Game versions");
+                        if (busy) opt_disable_next();
+                        if (opt_action("Add another version", have.c_str(),
+                                       "Sets up another release of the game (1.0.0, 1.0.1 or 1.1.0) from its own folder, next to "
+                                       "the ones here: PLAY \xe2\x80\xb9 \xe2\x80\xba on the start screen then switches between them. "
+                                       "Each release takes its own space and builds its own game code once; saves are shared. The "
+                                       "same release set up again replaces its copy.", true))
+                            android_call("pickGameFolder");
+                        first_row();
+                        for (const std::string &o : others) {
+                            char label[48];
+                            bool asking = confirm_rm == o;
+                            snprintf(label, sizeof label, tr(asking ? "Yes, remove v%s" : "Remove v%s"), o.c_str());
+                            if (busy) opt_disable_next();
+                            if (opt_action(label, "", asking ? "Deletes that release's copy of the game files and its game code now."
+                                                             : "Frees the space that release takes. The release in play, saves and "
+                                                               "your own game files stay.", true)) {
+                                if (!asking) confirm_rm = o;
+                                else {
+                                    bool ok = remove_version_dir(o);
+                                    set_job(ok ? "Game version removed." : "Couldn't remove that game version", !ok);
+                                    confirm_rm.clear();
+                                    g_version_epoch++;
+                                }
+                            }
+                        }
+                    }
+#endif
                     opt_section("Game files");
                     if (!g_confirm_delete) {
                         if (opt_action("Delete game files", gb, "Frees the space LAS Recomp's copy of the game files takes. "
@@ -1907,6 +2084,13 @@ extern "C" void launcher_run(const char *root) {
                     } else {
                         if (opt_action("Yes, delete them", gb, "Deletes the extracted game files now.", true)) {
                             bool ok = rt_remove_game_files(g_root.c_str());
+#ifdef __ANDROID__
+                            if (ok) {  // (the release in play gone: another one installed takes its place)
+                                std::vector<std::string> others = other_versions();
+                                if (!others.empty() && switch_version(others.back())) g_bg = 0;
+                                if (!others.empty() && check_game_files(g_root).empty()) load_background(dev);
+                            }
+#endif
                             status = check_game_files(g_root);
                             if (ok) set_job("Game files deleted.");
                             else set_job("Couldn't delete the game files", true, "They aren't in LAS Recomp's data folder, "
@@ -1999,6 +2183,9 @@ extern "C" void launcher_run(const char *root) {
                 struct stat npdm;
                 long long key = stat((g_root + "/exefs/main.npdm").c_str(), &npdm) == 0
                                     ? (long long)npdm.st_mtime * 4096 + (long long)npdm.st_size : -2;
+#ifdef __ANDROID__
+                key = key * 64 + g_version_epoch;  // (another release put in play: read again)
+#endif
                 if (key != label_of) {
                     label_of = key;
                     char label[32];
