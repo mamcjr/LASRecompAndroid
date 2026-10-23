@@ -2,6 +2,7 @@
 // TSV: loops warmup_seconds pause_seconds tolerance; then x y z waypoints (first is start).
 #ifdef __ANDROID__
 #include "../platform.h"
+#include "../game_addresses.h"
 #include <stdio.h>
 
 static void benchmark_route_log(const char *event, int loop, int leg, uint64_t frame, const float *p) {
@@ -36,7 +37,7 @@ static void benchmark_route(uint64_t frame, int32_t *lx, int32_t *ly, uint64_t *
     if (!count) return;
     if (state == 4) { *lx = *ly = 0; *buttons = 0; return; }
     if (frame < 2400) return; // title script is finished before taking control
-    uint64_t ps = LD64(MAIN_BASE + 0x1CC1368);
+    uint64_t ps = LD64(GA(PLAYER_STATUS_PTR));
     if (!ps || strcmp((const char *)(uintptr_t)ps, "Field")) {
         if (state >= 2) { LOG("[route-error] left Field\n"); state = 4; }
         return;

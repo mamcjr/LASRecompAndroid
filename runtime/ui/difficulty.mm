@@ -12,13 +12,13 @@
 extern "C" {
 #include "../hle.h"
 #include "../settings.h"
+#include "../game_addresses.h"
 int game_in_play(void);
 int rt_hookshot_seed_forced(void);  // hle/hookshot.c
 int rt_no_buff_seed_forced(void);   // hle/qol.c
 }
 
-#define LIVE_SAVE (MAIN_BASE + 0x1CBB220ull)
-#define HERO_FLAG (LIVE_SAVE + 0x55E0)  // PlayerStatus (save+0x54C0) + 0x120
+#define HERO_FLAG (GA(LIVE_SAVE) + 0x55E0)  // PlayerStatus (save+0x54C0) + 0x120
 
 extern "C" int rt_hero_mode(void) { return *(volatile uint8_t *)(uintptr_t)HERO_FLAG == 1; }
 

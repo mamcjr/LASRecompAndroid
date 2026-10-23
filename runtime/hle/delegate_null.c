@@ -36,10 +36,11 @@
 
 #include "../hle.h"
 #include "../platform.h"
+#include "../game_addresses.h"
 
-// (main-relative: on Android the game is loaded wherever the guest window is, rt.h)
-#define JOB_VTABLE_LIVE (MAIN_BASE + 0x1c51308ull)
-#define JOB_VTABLE_BASE (MAIN_BASE + 0x1c51358ull)
+// (the game version's, moved with the guest window: runtime/game_addresses.h)
+#define JOB_VTABLE_LIVE GA(DELEGATE_JOB_VTABLE_LIVE)
+#define JOB_VTABLE_BASE GA(DELEGATE_JOB_VTABLE_BASE)
 
 static uint64_t rd64(uint64_t a) { return __atomic_load_n((uint64_t *)(uintptr_t)a, __ATOMIC_ACQUIRE); }
 static uint32_t rd32(uint64_t a) { return __atomic_load_n((uint32_t *)(uintptr_t)a, __ATOMIC_ACQUIRE); }

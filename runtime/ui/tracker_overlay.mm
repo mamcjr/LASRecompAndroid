@@ -20,12 +20,13 @@ extern "C" {
 #include "../hle.h"
 #include "../rando.h"
 #include "../settings.h"
+#include "../game_addresses.h"
 uint64_t renderer_present_count(void);
 int kernel_data_regions(uint64_t *addr, uint64_t *size, int max);
 const char *souls_at(int i, int *kind, bool *owned);  // runtime/hle/souls.c
 }
 
-#define SAVE (MAIN_BASE + 0x1CBB220)
+#define SAVE GA(LIVE_SAVE)
 #define EVENT_FLAGS (SAVE + 0x5DC0)
 
 static volatile uint64_t g_map_frame, g_map_opened;

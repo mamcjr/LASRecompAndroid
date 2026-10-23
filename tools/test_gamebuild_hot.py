@@ -49,9 +49,11 @@ body = source[start:source.index('#endif', source.index('static bool mark_cold('
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+typedef struct GameVersion { int unused; } GameVersion;  // (1.0.0 here: its functions stay where the list has them)
+static uint64_t game_version_from_v1_0_0(const GameVersion *v, uint64_t a) { (void)v; return a; }
 ''' + body + r'''
 int main(int argc, char **argv) {
-    load_hot(argv[1]);
+    load_hot(argv[1], NULL);
     if (!mark_cold(argv[2])) return 1;
     printf("%llu %llu %zu\n", g_cold_fns, g_all_fns, g_nhot);
     return 0;

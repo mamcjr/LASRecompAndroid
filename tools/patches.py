@@ -5,17 +5,18 @@ projection aspect. These loads are redirected to rt_aspect_site(), which returns
 current output shape (or 16:9) per site, so only the 3D cameras widen.
 """
 import struct
+from game_addresses import ADDRESS as A, addr_text
 
-ASPECT_LITERAL = 0x70016afba4
+ASPECT_LITERAL = A.ASPECT_LITERAL
 
 # address of `ldr sN, [xM, #0xba4]` -> site id (0x7001023c70 is UI layout math: left alone)
 ASPECT_SITES = {
-    0x700001092c: 0,
-    0x7000010b58: 1,
-    0x70000c1c84: 2,
-    0x70000c3228: 3,
-    0x70000c3edc: 4,
-    0x700085f824: 5,
+    A.ASPECT_SITES_0: 0,
+    A.ASPECT_SITES_1: 1,
+    A.ASPECT_SITES_2: 2,
+    A.ASPECT_SITES_3: 3,
+    A.ASPECT_SITES_4: 4,
+    A.ASPECT_SITES_5: 5,
 }
 
 
@@ -33,7 +34,7 @@ PATCHES = {a: _aspect_load for a in ASPECT_SITES}
 # Off-screen culling: the scene's visibility pass loads the camera's aspect from [x27, #0x570] into s9
 # (`ldr s9, [x27, #0x570]` at 0x7000852ad4). The community 32:9 patch (Jaddey / KeatonTheBot, build
 # AE16F71E...) forces s9 here; we load the runtime aspect instead (site 6).
-CULL_ASPECT = 0x7000852ad4
+CULL_ASPECT = A.CULL_ASPECT
 
 
 def _cull_aspect(gen, a):
@@ -49,7 +50,7 @@ PATCHES[CULL_ASPECT] = _cull_aspect
 
 # Vertical field of view (camera field +0x564): taller-than-16:9 outputs keep the designed horizontal view
 # and widen the vertical one ("Vert+"). Loaded by the main camera and by the culling pass.
-FOVY_SITES = {0x7000010914: (0xbd4566e0, 23), 0x7000852ad0: (0xbd456768, 27)}
+FOVY_SITES = {A.FOVY_SITES_0: (0xbd4566e0, 23), A.FOVY_SITES_1: (0xbd456768, 27)}
 
 
 def _fovy_load(gen, a):
@@ -70,7 +71,7 @@ for _a in FOVY_SITES:
 # Link stands inside its box, the piece's centre +-(67.5, 50, 27) - its own reach plus half a 16:9 view. With a wider
 # view the next piece is needed sooner: at 32:9 the screen beside Link's showed black (no sky, no sea) until Link came
 # within 67.5. The box's across bounds are widened by the extra view (runtime/hle/widescreen.c rt_skysea_margin).
-SKYSEA_BOX_SITES = {0x70008fb1b8: (0x3dc0bae1, 0x2e0, 1.0), 0x70008fb1c4: (0x3dc0b6e2, 0x2d0, -1.0)}
+SKYSEA_BOX_SITES = {A.SKYSEA_BOX_MAX_SITE: (0x3dc0bae1, 0x2e0, 1.0), A.SKYSEA_BOX_MIN_SITE: (0x3dc0b6e2, 0x2d0, -1.0)}
 
 
 def _skysea_box(gen, a):
@@ -89,7 +90,7 @@ for _a in SKYSEA_BOX_SITES:
 
 # Indoor detection: 0x7001023c70 (`ldr s1, =16/9`) is in the indoor shadow setup (community patch notes:
 # "Indoor Shadow AR"). It keeps loading 16:9 and tells the runtime an interior is being rendered.
-INDOOR_SITE = 0x7001023c70
+INDOOR_SITE = A.INDOOR_SITE
 
 
 def _indoor(gen, a):
@@ -106,7 +107,7 @@ PATCHES[INDOOR_SITE] = _indoor
 # Warp support: the level-jump request object (filled by GameControl.RequestLevelJump via main+0x81b950)
 # registers itself in its parent while a level loads: `str xR, [x8, #0x1c0]` at these two sites (two scene
 # kinds). Record it so runtime/hle/warp.c can fill the request itself.
-WARP_REQUEST_SITES = {0x700080c464: 20, 0x700080d718: 19}
+WARP_REQUEST_SITES = {A.WARP_REQUEST_SITES_0: 20, A.WARP_REQUEST_SITES_1: 19}
 
 
 def _warp_request(gen, a):
@@ -123,13 +124,13 @@ for _a in WARP_REQUEST_SITES:
 
 # Blaino's knock-out: Link flies up and a countdown (main+0xd97df0, +0xb8) starts MightPunchCrashOut - fade, then a
 # restart warp to his ring's start. On the Field there's no ring: no event (runtime/hle/miniboss.c), Link falls back.
-CRASHOUT_SITE = 0x7000d97e2c
+CRASHOUT_SITE = A.CRASHOUT_SITE
 
 
 def _crashout(gen, a):
     w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
     assert w == 0xb900b81f, hex(w)  # str wzr, [x0, #0xb8]
-    return ('{ extern int rt_crashout_skip(void); ST32(c->x[0] + 0xb8, 0); if (rt_crashout_skip()) goto L_7000d97ea4; }'
+    return addr_text('{ extern int rt_crashout_skip(void); ST32(c->x[0] + 0xb8, 0); if (rt_crashout_skip()) goto L_@CRASHOUT_SKIP@; }'
             f'  /* {a:#x}: str wzr, [x0, #0xb8] (Blaino knock-out: no crash-out event on the Field) */')
 
 
@@ -139,8 +140,8 @@ PATCHES[CRASHOUT_SITE] = _crashout
 # the shared movement controller at +0x15c0 turns to it and the mover moves it, walls and all) toward a track end,
 # snapping onto the end when there (main+0x399550). The Field has no track: the heading points at Link and there is
 # no end - each move runs until its own timer (runtime/hle/miniboss.c).
-GOHMA_HEADING_SITES = (0x70003996e4, 0x700039a2c4)  # str w8, [x19, #0x15ec] (then the same to +0x15f0)
-GOHMA_ARRIVED_SITE = 0x700039957c  # ldr q0, [x19, #0x1600] (the track end, against Gohma's spot)
+GOHMA_HEADING_SITES = (A.GOHMA_HEADING_SITES_0, A.GOHMA_HEADING_SITES_1)  # str w8, [x19, #0x15ec] (then the same to +0x15f0)
+GOHMA_ARRIVED_SITE = A.GOHMA_ARRIVED_SITE  # ldr q0, [x19, #0x1600] (the track end, against Gohma's spot)
 
 
 def _gohma_heading(gen, a):
@@ -154,7 +155,7 @@ def _gohma_heading(gen, a):
 def _gohma_arrived(gen, a):
     w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
     assert w == 0x3dc58260, hex(w)  # ldr q0, [x19, #0x1600]
-    return ('{ extern int rt_gohma_free(void); if (rt_gohma_free()) { c->x[0] = 0; goto L_70003995c0; } '
+    return addr_text('{ extern int rt_gohma_free(void); if (rt_gohma_free()) { c->x[0] = 0; goto L_@GOHMA_ARRIVED_SKIP@; } '
             'memcpy(&c->v[0], (const void *)(uintptr_t)(c->x[19] + 0x1600), 16); }'
             f'  /* {a:#x}: ldr q0, [x19, #0x1600] (Gohma: no track end on the Field) */')
 
@@ -162,7 +163,7 @@ def _gohma_arrived(gen, a):
 # Master Stalfos' body collision (CharaBodyCollision, main+0x1841c0 from his constructor) blocks Link - in his arena,
 # fine; on the Field Link couldn't damage-boost past him as past the other mini-bosses. Its flag (x6 -> sp+0x328) off
 # there (seeds, level Field).
-MSTALFOS_BODY_SITE = 0x70004b47c8  # mov w8, #1
+MSTALFOS_BODY_SITE = A.MSTALFOS_BODY_SITE  # mov w8, #1
 
 
 def _mstalfos_body(gen, a):
@@ -177,7 +178,7 @@ PATCHES[MSTALFOS_BODY_SITE] = _mstalfos_body
 # Master Stalfos' jump (state 4 exec) sets its vertical speed to 6 * sin(phase) - height: an arc from his arena's floor
 # (height 0). On the Field the ground is higher - he dropped through it. There the arc starts from his takeoff height
 # (his movement component [+0x1160] + 0x28c, stored as the jump starts); in the arena that is 0 anyway.
-MSTALFOS_JUMP_SITE = 0x70004bde08  # fsub s0, s0, s1
+MSTALFOS_JUMP_SITE = A.MSTALFOS_JUMP_SITE  # fsub s0, s0, s1
 
 
 def _mstalfos_jump(gen, a):
@@ -193,13 +194,13 @@ PATCHES[MSTALFOS_JUMP_SITE] = _mstalfos_jump
 
 # Moblin Chief deletes himself in his init (main+0x1f8af0) unless a story bit is set (player status +0xac bit 7 - his
 # hideout's time); on the Field (seeds) that check is skipped. The defeated check before it stays.
-MCHIEF_STORY_SITE = 0x70001f8b30  # tbnz w8, #7, 0x70001f8b58
+MCHIEF_STORY_SITE = A.MCHIEF_STORY_SITE  # tbnz w8, #7, 0x70001f8b58
 
 
 def _mchief_story(gen, a):
     w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
     assert w == 0x37380148, hex(w)  # tbnz w8, #7, +0x28
-    return ('{ extern int rt_gohma_free(void); if (rt_gohma_free() || ((c->x[8] >> 7) & 1)) goto L_70001f8b58; }'
+    return addr_text('{ extern int rt_gohma_free(void); if (rt_gohma_free() || ((c->x[8] >> 7) & 1)) goto L_@MCHIEF_STORY_SKIP@; }'
             f'  /* {a:#x}: tbnz w8, #7 (Moblin Chief: no story check on the Field) */')
 
 
@@ -211,7 +212,7 @@ PATCHES[GOHMA_ARRIVED_SITE] = _gohma_arrived
 
 # Generated dungeons (runtime/hle/chamber.c): every level jump goes through the request processor main+0x81ba80
 # (x0 = request); its prologue reports the request so jumps into Tail Cave can be redirected.
-LEVEL_REQUEST_SITE = 0x700081ba80
+LEVEL_REQUEST_SITE = A.LEVEL_REQUEST_SITE
 
 
 def _level_request(gen, a):
@@ -227,14 +228,14 @@ PATCHES[LEVEL_REQUEST_SITE] = _level_request
 # Chamber staircase exit prompt ("Return to Arranging/List" vs "Back to Adventuring"): main+0x7f1540 opens it with
 # `bl main+0xf05280` at 0x7f15e0; the callback only stores the chosen option at [main+0x1cb9fb8]+0x18f8 (0 = leave).
 # In a generated dungeon the dialog is skipped and 0 stored, so the staircase leaves directly (runtime/hle/chamber.c).
-ADV_EXIT_DIALOG_SITE = 0x70007f15e0
+ADV_EXIT_DIALOG_SITE = A.ADV_EXIT_DIALOG_SITE
 
 
 def _adv_exit_dialog(gen, a):
     w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
     assert w == 0x9402_5d28 or (w >> 26) == 0x25, hex(w)  # bl
-    return ('{ extern int rt_adv_exit_choice(void); extern void f_7000f05280(Cpu *); '
-            'if (!rt_adv_exit_choice()) { c->x[30] = 0x70007f15e4ull; f_7000f05280(c); } }'
+    return addr_text('{ extern int rt_adv_exit_choice(void); extern void f_@ADV_EXIT_DIALOG_TARGET@(Cpu *); '
+            'if (!rt_adv_exit_choice()) { c->x[30] = 0x@ADV_EXIT_DIALOG_RETURN@ull; f_@ADV_EXIT_DIALOG_TARGET@(c); } }'
             f'  /* {a:#x}: bl 0xf05280 (chamber exit prompt) */')
 
 
@@ -244,9 +245,9 @@ PATCHES[ADV_EXIT_DIALOG_SITE] = _adv_exit_dialog
 # Difficulty (runtime/ui/difficulty.mm): Link's damage is computed as `damage << hero` (Hero Mode doubles it;
 # hero = PlayerStatus+0x120 == 1) at these `lsl Wd, Wn, Wm` sites, then subtracted from health (+0x84).
 # Each is redirected to rt_damage(damage, shift) so the difficulty multiplier / one-hit KO applies.
-DAMAGE_LSL_SITES = (0x7000d7c8c0, 0x7000d9694c, 0x7000d4c738)
+DAMAGE_LSL_SITES = (A.DAMAGE_LSL_SITES_0, A.DAMAGE_LSL_SITES_1, A.DAMAGE_LSL_SITES_2)
 # Fixed damage (-2 quarter hearts, -4 in Hero Mode: `csel w20, w10, w9, eq` with w10=-4, w9=-2).
-DAMAGE_FIXED_SITE = 0x7000db1f6c
+DAMAGE_FIXED_SITE = A.DAMAGE_FIXED_SITE
 
 
 def _damage_lsl(gen, a):
@@ -273,7 +274,7 @@ PATCHES[DAMAGE_FIXED_SITE] = _damage_fixed
 # Items page description ("UI:ItemExplanation_{n}"): main+0xeb6604.. builds the item name then looks the explanation
 # message up (bl 0x903250 -> [sp+0xf0]); a null result takes the no-text path (buffer already cleared). In randomizer
 # seeds the explanation is hidden (it overlaps the key / trade-item rows of the inventory overlay; player knows).
-ITEM_EXPLANATION_SITE = 0x7000eb66c0
+ITEM_EXPLANATION_SITE = A.ITEM_EXPLANATION_SITE
 
 
 def _item_explanation(gen, a):
@@ -288,14 +289,14 @@ PATCHES[ITEM_EXPLANATION_SITE] = _item_explanation
 
 # ... and the item NAME ("UI:ItemName_{0}"): main+0xeb6658 `bl 0xf8c8b0` sets the name pane from that message; in
 # randomizer seeds it is skipped too (user 2026-10-08: the name showed under the key rows of the inventory overlay).
-ITEM_NAME_SITE = 0x7000eb6658
+ITEM_NAME_SITE = A.ITEM_NAME_SITE
 
 
 def _item_name(gen, a):
     w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
     assert w == 0x94035896, hex(w)  # bl 0x7000f8c8b0
-    return ('c->x[30] = 0x7000eb665cull; { extern int rt_hide_item_explanation(void); '
-            'if (!rt_hide_item_explanation()) f_7000f8c8b0(c); }'
+    return addr_text('c->x[30] = 0x@ITEM_NAME_RETURN@ull; { extern int rt_hide_item_explanation(void); '
+            'if (!rt_hide_item_explanation()) f_@ITEM_NAME_TARGET@(c); }'
             f'  /* {a:#x}: bl 0xf8c8b0 (set the item name pane) */')
 
 
@@ -304,7 +305,7 @@ PATCHES[ITEM_NAME_SITE] = _item_name
 
 # Keysanity (runtime/hle/keysanity.c): AddItem (main+0x7e18b0, x0 item / x1 count / x2 index) only adds dungeon
 # items to the current dungeon; with an explicit dungeon index the hook updates that dungeon's save record instead.
-ADD_ITEM_SITE = 0x70008d08e0  # inner add (34 callers: events, chests, drops); AddItem 0x7e18b0 wraps it
+ADD_ITEM_SITE = A.ADD_ITEM_SITE  # inner add (34 callers: events, chests, drops); AddItem 0x7e18b0 wraps it
 
 
 def _add_item(gen, a):
@@ -319,7 +320,7 @@ PATCHES[ADD_ITEM_SITE] = _add_item
 
 # Trendsanity (runtime/hle/shopsanity.c): AddPrizeByKey (main+0x7e1c70) looked the prize row up (x0) and is about to
 # call AddPrize(row, count, index) (main+0x1489c0, rows 0-20 only): a randomized prize row sets its check's flags.
-PRIZE_ADD_SITE = 0x70007e1d10
+PRIZE_ADD_SITE = A.PRIZE_ADD_SITE
 
 
 def _prize_add(gen, a):
@@ -334,7 +335,7 @@ PATCHES[PRIZE_ADD_SITE] = _prize_add
 
 # Inventory overlay (runtime/ui/inventory_overlay.mm): main+0xeb7cd0 runs once per frame only while the pause
 # menu's Items page is shown (found by profiling Items vs Map/System pages). Its prologue reports that.
-ITEMS_PAGE_SITE = 0x7000eb7cd0
+ITEMS_PAGE_SITE = A.ITEMS_PAGE_SITE
 
 
 def _items_page(gen, a):
@@ -349,7 +350,7 @@ PATCHES[ITEMS_PAGE_SITE] = _items_page
 
 # Check tracker (runtime/ui/tracker_overlay.mm): main+0xe93800 runs once per frame only while the pause menu's
 # Map page is shown (fnprof diff of Map vs Items/System/closed). Its prologue reports that.
-MAP_PAGE_SITE = 0x7000e93800
+MAP_PAGE_SITE = A.MAP_PAGE_SITE
 
 
 def _map_page(gen, a):
@@ -364,7 +365,7 @@ PATCHES[MAP_PAGE_SITE] = _map_page
 
 # Chaos map letters (runtime/ui/chaos_overlay.mm): main+0xe78740 runs once per frame while the DUNGEON map page is
 # shown (fnprof: map open vs closed in Face Shrine); x0 = the dungeon map page.
-DGN_MAP_SITE = 0x7000e78740
+DGN_MAP_SITE = A.DGN_MAP_SITE
 
 
 def _dgn_map(gen, a):
@@ -379,7 +380,7 @@ PATCHES[DGN_MAP_SITE] = _dgn_map
 
 # Debug (LARECOMP_LOG_RESNAME=1): main+0x10def30 builds a resource handle from a name (x2 -> {char *name, ...})
 # and looks it up; the generated-dungeon map crash dereferences a handle whose resource wasn't found.
-RES_NAME_SITE = 0x70010def30
+RES_NAME_SITE = A.RES_NAME_SITE
 
 
 def _res_name(gen, a):
@@ -396,7 +397,7 @@ PATCHES[RES_NAME_SITE] = _res_name
 # room's start event runs, which never happens in the Field. f_70000ec310 (an actor component's per-frame update)
 # asks its actor a type question through vtable +0x68 every frame: the runtime sees each actor there, picks out the
 # mini-boss classes by vtable and moves them into their fight state itself.
-MB_SEEN_SITE = 0x70000ec354
+MB_SEEN_SITE = A.MB_SEEN_SITE
 
 
 def _mb_seen(gen, a):
@@ -413,7 +414,7 @@ PATCHES[MB_SEEN_SITE] = _mb_seen
 # the swap interval it reads from the system object (+0x812c, written only by the interval setter f_7000017800). It
 # reads it here and nowhere else: we hand it the number of vsyncs that really passed since the last frame, so a
 # late frame advances the world by the time that passed (no slow motion below 60 fps).
-FRAME_STEPS_SITE = 0x700000c954
+FRAME_STEPS_SITE = A.FRAME_STEPS_SITE
 
 
 def _frame_steps(gen, a):
@@ -430,7 +431,7 @@ PATCHES[FRAME_STEPS_SITE] = _frame_steps
 # Digsanity (runtime/hle/digs.c): the shovel's dig commit (f_7000ddc530) spawns the hole actor (ObjHolesDug 0x1cd)
 # through f_7000d228d0(&out, transform x21, zone, &room, ...); right after it the hole (out at [sp+0x10]) and its
 # snapped tile-centre position (x21) tell the runtime which tile was dug - the first dig of a tile gives its item.
-DIG_HOLE_SITE = 0x7000ddc5cc
+DIG_HOLE_SITE = A.DIG_HOLE_SITE
 
 
 def _dig_hole(gen, a):
@@ -444,7 +445,7 @@ PATCHES[DIG_HOLE_SITE] = _dig_hole
 
 # The game keeps its dug holes in a list (main+0x1cbae80, count at +0x10) and fills in the oldest ones once there are
 # more than 80 (f_7000d22d10: while count > 0x50). Digsanity keeps holes open: the limit comes from the runtime.
-HOLE_CAP_SITES = {0x7000d22d30: (0xf101451f, 0, 'cmp x8, #0x51'), 0x7000d22dc0: (0xf101411f, 1, 'cmp x8, #0x50')}
+HOLE_CAP_SITES = {A.HOLE_CAP_SITES_0: (0xf101451f, 0, 'cmp x8, #0x51'), A.HOLE_CAP_SITES_1: (0xf101411f, 1, 'cmp x8, #0x50')}
 
 
 def _hole_cap(gen, a):
@@ -463,7 +464,7 @@ for _a in HOLE_CAP_SITES:
 # dialog, menu or transition). main+0xd50e60 is the third bottle's (slot 0xf): owned (PlayerStatus+0xa9 bit 7) and
 # empty (+0xc0 bit 2 clear) -> `cset w0, eq` = yes, and the bottle swing starts. In randomizer seeds that bottle is the
 # Escape Bottle: the runtime warps instead and the answer is no.
-BOTTLE3_USE_SITE = 0x7000d50f0c
+BOTTLE3_USE_SITE = A.BOTTLE3_USE_SITE
 
 
 def _bottle3_use(gen, a):
@@ -479,7 +480,7 @@ PATCHES[BOTTLE3_USE_SITE] = _bottle3_use
 # Boss souls (runtime/hle/souls.c): the actor factory f_70008f5ea0 (x2 = spawn info, type u16 at +8) takes the type's
 # create function from the actor table (main+0x1bcc898, 0x58 bytes per type, +0 create fn, +0x50 name); a null fn is
 # its "no such actor" path (the caller gets an empty handle). A dungeon boss whose soul isn't found yet gets that path.
-BOSS_SPAWN_SITE = 0x70008f5ed4
+BOSS_SPAWN_SITE = A.BOSS_SPAWN_SITE
 
 
 def _boss_spawn(gen, a):
@@ -495,7 +496,7 @@ PATCHES[BOSS_SPAWN_SITE] = _boss_spawn
 
 # Hookshot anything (runtime/hle/hookshot.c): the hookshot's Shot update (main+0xd7ecc0) loads the attribute word of
 # the surface its ray hit; bit 0x4000 (hookshot target) makes it latch (Adhere) instead of bouncing off (Return).
-HOOKSHOT_ATTR_SITE = 0x7000d7ee9c
+HOOKSHOT_ATTR_SITE = A.HOOKSHOT_ATTR_SITE
 
 
 def _hookshot_attr(gen, a):
@@ -512,7 +513,7 @@ PATCHES[HOOKSHOT_ATTR_SITE] = _hookshot_attr
 # 360-degree movement (runtime/hle/qol.c, setting move_360): main+0xded9f0 snaps Link's stick vector (s1 = x, s2 = y)
 # to one of 8 directions and returns it as a 32-bit angle (full turn = 2^32, 0 = down). With the setting on, the
 # runtime returns the stick's own angle instead (as the community "360 Controls" mod does).
-SNAP_DIR_SITE = 0x7000ded9f0
+SNAP_DIR_SITE = A.SNAP_DIR_SITE
 
 
 def _snap_dir(gen, a):
@@ -528,7 +529,7 @@ PATCHES[SNAP_DIR_SITE] = _snap_dir
 # No Guardian Acorns / Pieces of Power (randomizer no-buff-drops, runtime/hle/qol.c): the drop roll main+0x89b960 reads
 # its ItemDrop row's mAllowBuffReplace (+0x38); set, the kill counters may turn the drop into a Piece of Power / Guardian
 # Acorn. Read as false for such seeds.
-BUFF_REPLACE_SITE = 0x700089ba34
+BUFF_REPLACE_SITE = A.BUFF_REPLACE_SITE
 
 
 def _buff_replace(gen, a):
@@ -544,7 +545,7 @@ PATCHES[BUFF_REPLACE_SITE] = _buff_replace
 # Blur removal (runtime/hle/qol.c, setting blur_removal): main+0x1071220 sets up the post-process's tilt-shift object
 # (x0) once, looking its shader parameters up by name; qol.c keeps the object and takes the parameter handle out / puts
 # it back live.
-TILT_INIT_SITE = 0x7001071220
+TILT_INIT_SITE = A.TILT_INIT_SITE
 
 
 def _tilt_init(gen, a):
@@ -562,14 +563,14 @@ PATCHES[TILT_INIT_SITE] = _tilt_init
 # 'boneName' out (tl/WindFishSong: learning Marin's song; tl/HippoModelSlap); on the Switch the throw is caught up in
 # the event system, but recompiled code can't unwind (crash). A missing String reads as "" instead - what the other
 # events pass for boneName (tl/ManboTamegoro's PlayOneshotSE has no 'label': no sound).
-MISSING_STRING_SITE = 0x700109fca8
+MISSING_STRING_SITE = A.MISSING_STRING_SITE
 
 
 def _missing_string(gen, a):
     w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
     assert w == 0x321c03e0, hex(w)  # mov w0, #0x10 (orr w0, wzr, #0x10: __cxa_allocate_exception size)
     # "" (the terminator of ".ptcl" right before the message; callers strlen() the result, so not NULL)
-    return ('{ ST64(c->sp + 0x18, 0x70016cf23aull); ST32(c->sp + 0x20, 0); goto L_700109fc78; }'
+    return addr_text('{ ST64(c->sp + 0x18, 0x@EMPTY_STRING@ull); ST32(c->sp + 0x20, 0); goto L_@MISSING_STRING_RETURN@; }'
             f'  /* {a:#x}: mov w0, #0x10 (missing String event parameter: return "", no throw) */')
 
 
@@ -579,7 +580,7 @@ PATCHES[MISSING_STRING_SITE] = _missing_string
 # instrument pedestal (any non-instrument) runs an action whose Float 'time' is missing - picking it up crashed
 # (bug report 2026-10-11, reproduced on rando/DevInstr1 Tail Cave). A missing Float reads as 0.0 instead: the reader
 # (0x7f3c90) treats time <= 0 as instant.
-MISSING_FLOAT_SITE = 0x700109fb18
+MISSING_FLOAT_SITE = A.MISSING_FLOAT_SITE
 
 
 def _missing_float(gen, a):
@@ -599,8 +600,8 @@ PATCHES[MISSING_FLOAT_SITE] = _missing_float
 # bit in the tunics byte (PlayerStatus +0x9c = save +0x555C: 0x40 red, 0x80 blue), then clears the other one; with
 # the seed option the clear is skipped, so both tunics (and both effects) are kept.
 TUNIC_CLEAR_SITES = {
-    0x70008d1118: (0x12197929, 0xffffffbf, 'and w9, w9, #0xffffffbf (blue tunic: red cleared)'),
-    0x70008d12f8: (0x12001929, 0x7f, 'and w9, w9, #0x7f (red tunic: blue cleared)'),
+    A.TUNIC_CLEAR_SITES_0: (0x12197929, 0xffffffbf, 'and w9, w9, #0xffffffbf (blue tunic: red cleared)'),
+    A.TUNIC_CLEAR_SITES_1: (0x12001929, 0x7f, 'and w9, w9, #0x7f (red tunic: blue cleared)'),
 }
 
 
@@ -621,14 +622,14 @@ for _a in TUNIC_CLEAR_SITES:
 # appear?" (main+0x8c4510) asks the inventory whether Link owns its item (bl HasItem(item +0x2e8, 1, index +0xbc)). The
 # sunken heart-piece actors hold randomized items now and hide by their own flag (Npc.gsheet layout condition), so for
 # heart-piece actors in seeds made with it the answer is "not owned" (runtime/hle/qol.c rt_underwater_skip_owned).
-UNDERWATER_OWNED_SITE = 0x70008c45b8
+UNDERWATER_OWNED_SITE = A.UNDERWATER_OWNED_SITE
 
 
 def _underwater_owned(gen, a):
     w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
     assert w == 0x9400351e, hex(w)  # bl 0x8d1a30 (HasItem)
-    return ('{ extern int rt_underwater_skip_owned(uint64_t); if (rt_underwater_skip_owned(c->x[20])) c->x[0] = 0; '
-            'else { extern void f_70008d1a30(Cpu *); c->x[30] = 0x70008c45bcull; f_70008d1a30(c); } }'
+    return addr_text('{ extern int rt_underwater_skip_owned(uint64_t); if (rt_underwater_skip_owned(c->x[20])) c->x[0] = 0; '
+            'else { extern void f_@HAS_ITEM@(Cpu *); c->x[30] = 0x@UNDERWATER_OWNED_RETURN@ull; f_@HAS_ITEM@(c); } }'
             f'  /* {a:#x}: bl HasItem (sunken heart pieces: their own flag decides) */')
 
 
@@ -639,7 +640,7 @@ PATCHES[UNDERWATER_OWNED_SITE] = _underwater_owned
 # under_water - the heart piece's do, other items' don't. Model setup (main+0xff53d8 loop over a material's options)
 # reads it at 0xff54b4; in underwater-item seeds every material counts as under_water (as LAS-Randomizer's 0.5 dev
 # build does: its exlaunch mod writes mov w27, #1 here).
-UNDERWATER_VIEW_SITE = 0x7000ff54c0
+UNDERWATER_VIEW_SITE = A.UNDERWATER_VIEW_SITE
 
 
 def _underwater_view(gen, a):
@@ -653,14 +654,14 @@ PATCHES[UNDERWATER_VIEW_SITE] = _underwater_view
 
 # ...and picking one up gives only its own item (its event): the heart-piece actor's pickup (main+0x855a0, x19 = the
 # actor) would also add a heart piece (bl 0x89b960; LAS-Randomizer's 0.5 dev build NOPs it).
-UNDERWATER_PICKUP_SITE = 0x70000856e4
+UNDERWATER_PICKUP_SITE = A.UNDERWATER_PICKUP_SITE
 
 
 def _underwater_pickup(gen, a):
     w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
     assert w == 0x9420589f, hex(w)  # bl 0x89b960
-    return ('{ extern int rt_underwater_skip_owned(uint64_t); if (!rt_underwater_skip_owned(c->x[19])) '
-            '{ extern void f_700089b960(Cpu *); c->x[30] = 0x70000856e8ull; f_700089b960(c); } }'
+    return addr_text('{ extern int rt_underwater_skip_owned(uint64_t); if (!rt_underwater_skip_owned(c->x[19])) '
+            '{ extern void f_@HEART_PIECE_ADD@(Cpu *); c->x[30] = 0x@UNDERWATER_PICKUP_RETURN@ull; f_@HEART_PIECE_ADD@(c); } }'
             f'  /* {a:#x}: bl 0x89b960 (adds the heart piece: skipped for sunken items) */')
 
 
@@ -674,9 +675,9 @@ PATCHES[UNDERWATER_PICKUP_SITE] = _underwater_pickup
 # Recompiled code can't unwind, so the throw goes straight into the catch block, without the C++ runtime's
 # begin / end catch (nothing was thrown).
 NO_HANDLER_SITES = {
-    0x700108edc8: (0x321d03e0, 'goto L_700108ef3c;', 'mov w0, #8 (bad_function_call: to the catch block)'),
-    0x700108ef40: (0x940e8868, '', 'bl __cxa_begin_catch (skipped)'),
-    0x700108f074: (0x940e887b, '', 'bl __cxa_end_catch (skipped)'),
+    A.NO_HANDLER_SITES_0: (0x321d03e0, addr_text('goto L_@NO_HANDLER_CATCH@;'), 'mov w0, #8 (bad_function_call: to the catch block)'),
+    A.NO_HANDLER_SITES_1: (0x940e8868, '', 'bl __cxa_begin_catch (skipped)'),
+    A.NO_HANDLER_SITES_2: (0x940e887b, '', 'bl __cxa_end_catch (skipped)'),
 }
 
 
@@ -693,7 +694,7 @@ for _a in NO_HANDLER_SITES:
 
 # Mirror mode: the HUD update places the in-world action prompt (main+0xeaa800: stp s2, s0, [x8, #0x30] = the
 # pane's translation x, y from the target's screen spot); x is mirrored there for that pane (runtime/hle/mirror.c).
-PROMPT_POS_SITE = 0x7000eab138
+PROMPT_POS_SITE = A.PROMPT_POS_SITE
 
 
 def _prompt_pos(gen, a):
@@ -715,7 +716,7 @@ PATCHES[PROMPT_POS_SITE] = _prompt_pos
 # Hot Head (Turtle Rock) crashed reading 0x11 when the Magic Rod's fire hit him (LASRecomp issue #314, beta_5). Right
 # after the lookup, a shape the simulation doesn't hold skips the update to the function's own return (both are branch
 # targets there already); runtime/hle/physx.c logs the first few.
-SHAPE_SIM_SITES = {0x7001408de0: (0xaa0003f4, 20, 0x7001408e0c), 0x7001408d80: (0xaa0003e1, 1, 0x7001408d98)}
+SHAPE_SIM_SITES = {A.SHAPE_SIM_SITES_0: (0xaa0003f4, 20, A.SHAPE_SIM_SKIP_0), A.SHAPE_SIM_SITES_1: (0xaa0003e1, 1, A.SHAPE_SIM_SKIP_1)}
 
 
 def _shape_sim(gen, a):
@@ -738,14 +739,14 @@ for _a in SHAPE_SIM_SITES:
 # code (no unwinding), so the throw ended in std::terminate. Seen with Warp tab jumps; same family as NO_HANDLER_SITES
 # (the action dispatcher's). beta_5 hooks the call itself; here the instruction right before it (the call's second
 # argument) also skips the call when the function is empty, to where the catch goes (a branch target already).
-EMPTY_HANDLER_SITE = 0x700108de44  # add x1, sp, #0x18 (then bl main+0x108dfc0)
+EMPTY_HANDLER_SITE = A.EMPTY_HANDLER_SITE  # add x1, sp, #0x18 (then bl main+0x108dfc0)
 
 
 def _empty_handler(gen, a):
     w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
     assert w == 0x910063e1, hex(w)  # add x1, sp, #0x18
-    return ('{ extern void rt_empty_handler(void); c->x[1] = c->sp + 0x18; '
-            'if (!c->x[0]) { rt_empty_handler(); goto L_700108de00; } }'
+    return addr_text('{ extern void rt_empty_handler(void); c->x[1] = c->sp + 0x18; '
+            'if (!c->x[0]) { rt_empty_handler(); goto L_@EMPTY_HANDLER_CATCH@; } }'
             f'  /* {a:#x}: add x1, sp, #0x18 (an empty event handler: to where its catch goes, issue #41) */')
 
 
@@ -759,13 +760,13 @@ PATCHES[EMPTY_HANDLER_SITE] = _empty_handler
 # the object's slot +0x00 (main+0x10cce00) re-initialises it, clearing the delegate: the tick can then land on a
 # freshly reset object and the forwarder dereferences NULL (signal 11 at main+0x10cce50+0x8, always the same object).
 # runtime/hle/delegate_null.c makes both forwarders read a missing delegate as "nothing to do" as well.
-DELEGATE_FORWARDER_SITES = [0x70010cce50, 0x70010cce30]
+DELEGATE_FORWARDER_SITES = [A.DELEGATE_FORWARDER_SITES_0, A.DELEGATE_FORWARDER_SITES_1]
 
 
 def _delegate_forwarder(gen, a):
     w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
     assert w == 0xaa0003e1, hex(w)  # mov x1, x0
-    slot = 0x28 if a == 0x70010cce50 else 0x30
+    slot = 0x28 if a == A.DELEGATE_FORWARDER_SITES_0 else 0x30
     return ('{ extern int rt_delegate_null(Cpu *, int); if (rt_delegate_null(c, %#x)) return; c->x[1] = c->x[0]; }'
             f'  /* {a:#x}: mov x1, x0 (delegate forwarder: nothing to forward to) */' % slot)
 
@@ -781,8 +782,8 @@ for _a in DELEGATE_FORWARDER_SITES:
 # frame first; the late finish then wipes the new J, whose release is dropped, and the main thread waits for X's done
 # flag forever. Each kick-off first waits for the previous run's finish (runtime/hle/delegate_null.c), then does its
 # instruction; the finish site only serves a debug delay to force the race.
-FRAME_JOB_KICKOFF_SITES = {0x7000015780: 22, 0x7000015834: 22, 0x70000158e8: 22, 0x70000159b0: 21}  # add x19, xN, #0x1e0
-FRAME_JOB_FINISH_SITE = 0x70010ccfa0  # ldr x8, [x0]
+FRAME_JOB_KICKOFF_SITES = {A.FRAME_JOB_KICKOFF_SITES_0: 22, A.FRAME_JOB_KICKOFF_SITES_1: 22, A.FRAME_JOB_KICKOFF_SITES_2: 22, A.FRAME_JOB_KICKOFF_SITES_3: 21}  # add x19, xN, #0x1e0
+FRAME_JOB_FINISH_SITE = A.FRAME_JOB_FINISH_SITE  # ldr x8, [x0]
 
 # Startup hang (Windows, few cores): a call run on its object's owner thread. main+0x1048cf0 (slot +0x48 of the class
 # whose vtable is 0x7001c490b0; a loader thread calls it for an object O the main thread owns) locks O's mutex (O+0x18),
@@ -792,7 +793,7 @@ FRAME_JOB_FINISH_SITE = 0x70010ccfa0  # ldr x8, [x0]
 # while the main thread waits for that loader's load (key in its own task queue). Just before the notify the runtime
 # takes and drops O's mutex (LASRecomp beta_5 51acaf4; a hook point there): the loader holds it from before the post
 # until its wait has begun, so the notify always lands.
-OWNER_CALL_NOTIFY_SITE = 0x7001049f08  # add x0, x21, #0x38 (then bl notify_one)
+OWNER_CALL_NOTIFY_SITE = A.OWNER_CALL_NOTIFY_SITE  # add x0, x21, #0x38 (then bl notify_one)
 
 
 def _frame_job_kickoff(gen, a):

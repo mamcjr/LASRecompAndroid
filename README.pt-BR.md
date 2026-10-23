@@ -20,8 +20,8 @@ Para as versões de PC (Windows, macOS, Linux), os recursos e o randomizer, veja
 
 > [!NOTE]
 > **Nenhum arquivo do jogo está incluído**, e o app não contém nada do jogo. Você precisa da sua própria cópia,
-> obtida legalmente, dos arquivos extraídos de *Link's Awakening* **v1.0.0**. Não serão dadas instruções de como
-> obtê-los.
+> obtida legalmente, dos arquivos extraídos de *Link's Awakening* **v1.0.0, v1.0.1 ou v1.1.0**. Não serão dadas
+> instruções de como obtê-los.
 
 ## Novidades da 0.4.1
 
@@ -264,7 +264,7 @@ que nenhum dos dois drivers tem.
   decodificadas na CPU (a Mali não tem texturas BC, o formato do Switch), o que corrige os blocos coloridos vistos
   nela - ainda a confirmar em mais celulares Mali. Xclipse e outras devem funcionar pelo mesmo caminho: relatos são
   bem-vindos.
-- Você precisa do seu próprio dump v1.0.0 e de cerca de **12 GB livres** para a configuração (o app guarda a sua
+- Você precisa do seu próprio dump v1.0.0, v1.0.1 ou v1.1.0 e de cerca de **12 GB livres** para a configuração (o app guarda a sua
   própria cópia dos arquivos do jogo mais uma imagem de dados gerada a partir deles); o dump pode ser apagado depois.
 - A primeira configuração compila o código do jogo no celular: cerca de 20 minutos em um Snapdragon 8 Elite.
 - Mudar a resolução com o jogo rodando pode fechar o app. Mude na tela de título.
@@ -273,7 +273,7 @@ que nenhum dos dois drivers tem.
 ## Instalação
 
 Você precisa de um celular arm64 com Android 11 ou mais novo (testado num Snapdragon), dos seus próprios arquivos
-extraídos da v1.0.0 (as pastas `exefs` e `romfs`) copiados em alguma pasta do celular e, para 60 fps numa GPU Adreno,
+extraídos (v1.0.0, v1.0.1 ou v1.1.0: as pastas `exefs` e `romfs`) copiados em alguma pasta do celular e, para 60 fps numa GPU Adreno,
 de um pacote do driver Turnip (o `.zip` do adrenotools, o mesmo usado por outros emuladores).
 
 1. Instale o APK da página de [Releases](https://github.com/mamcjr/LASRecompAndroid/releases).

@@ -43,6 +43,17 @@ char *getenv(const char *name) {
     return tracing && !key[i] && !name[i] ? "1" : NULL;
 }
 int atoi(const char *s) { return s[0] - '0'; }
+int strncmp(const char *a, const char *b, size_t n) {
+    for (size_t i = 0; i < n; i++) { if (a[i] != b[i] || !a[i]) return (unsigned char)a[i] - (unsigned char)b[i]; }
+    return 0;
+}
+char *strncpy(char *d, const char *s, size_t n) {
+    size_t i = 0;
+    for (; i < n && s[i]; i++) d[i] = s[i];
+    for (; i < n; i++) d[i] = 0;
+    return d;
+}
+const char *game_level_name(void) { return "Field"; }  // (one scene: trials never start over here)
 uint64_t plat_now_ns(void) { return clock_ns; }
 bool vk_async_on(void) { return true; }
 uint64_t vk_async_frame_work_ns(void) { return render_ns; }

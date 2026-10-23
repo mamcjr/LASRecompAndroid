@@ -9,6 +9,7 @@
 #include "../hle.h"
 #include "../rando.h"
 #include "../settings.h"
+#include "../game_addresses.h"
 
 // 360-degree movement: main+0xded9f0 (tools/patches.py SNAP_DIR_SITE) turns the stick vector (s1 = x, s2 = y) into
 // one of 8 directions, returned in w0 as an angle (full turn = 2^32, 0 = down, 2^30 = right). With the setting on
@@ -28,7 +29,7 @@ int rt_snap_dir(Cpu *c) {
         static Cpu tmp;
         tmp = *c;
         inner = true;
-        dispatch_lookup(MAIN_BASE + 0xded9f0)(&tmp);
+        dispatch_lookup(GA(SNAP_DIR_SITE))(&tmp);
         inner = false;
         LOG("[qol] snap (%.3f, %.3f): 8-way %#x, 360 %#x (%s)\n", x, y, (uint32_t)tmp.x[0], a, on ? "360" : "8-way");
     }
@@ -148,7 +149,7 @@ int rt_buff_replace(int allow) {
     static int test = -1;
     if (test < 0) test = ENV("LARECOMP_BUFF_PRIME") ? atoi(ENV("LARECOMP_BUFF_PRIME")) : 0;
     if (test) {
-        uint64_t ps = LD64(MAIN_BASE + 0x1CC1368);  // PlayerStatus*
+        uint64_t ps = LD64(GA(PLAYER_STATUS_PTR));  // PlayerStatus*
         if (ps) ST8(ps + 0xa5, 14);
         if (test == 2) allow = 1;
         { extern uint64_t renderer_present_count(void); LOG("[qol] f%llu drop roll: buff replace %d -> %d\n", (unsigned long long)renderer_present_count(), allow, allow && !no_buff()); }

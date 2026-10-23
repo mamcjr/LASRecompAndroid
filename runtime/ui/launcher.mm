@@ -1,7 +1,7 @@
 // Start screen, shown before the game boots (user 2026-10-08, styled after Dusklight's launcher): PLAY (with
 // ‹ Vanilla / seed › picker), SETTINGS, QUIT, game-files status at the lower left. Nothing of the game ships with
-// LAS Recomp: on first launch the user picks the folder with their own game files (v1.0.0), we check the main
-// module's build id, copy the files and build the game's data image; PLAY stays disabled until that worked. The background is a frame of the game's own title movie (from the user's files) once extracted.
+// LAS Recomp: on first launch the user picks the folder with their own game files (1.0.0, 1.0.1 or 1.1.0), we check
+// the main module's build id (runtime/game_addresses/versions.h), copy the files and build the game's data image; PLAY stays disabled until that worked. The background is a frame of the game's own title movie (from the user's files) once extracted.
 //
 // Skipped with --play, LARECOMP_NO_LAUNCHER=1, or any scripted test run (LARECOMP_INPUT): tests boot straight in.
 // The in-game menu's "Title screen" comes back here without leaving the process (runtime/main.c reboots the game).
@@ -42,6 +42,7 @@ extern "C" {
 #include "platform.h"
 #include "paths.h"
 #include "gamebuild.h"
+#include "game_addresses.h"
 #include "gamelib.h"
 #include "romfs_build.h"
 #include "settings.h"
@@ -89,7 +90,6 @@ static void save_png(id<MTLTexture> tex, const char *path) {
 }
 #endif
 
-static const uint8_t BUILD_ID[8] = {0xae, 0x16, 0xf7, 0x1e, 0x00, 0x2a, 0xf8, 0xcb};  // Link's Awakening v1.0.0 main
 // The release tag this build is (also names the release files; Makefile / tools/bundle_macos.sh / make_dmg.sh read
 // it): beta_<n> until 1.0, then v<major>.<minor>.<patch>.
 #ifdef __ANDROID__
@@ -181,13 +181,8 @@ static bool file_exists(const std::string &p) {
 
 // The copied game files alone ("" = there), without the game code built from them
 static std::string check_copied_files(const std::string &root) {
-    FILE *f = fopen((root + "/exefs/main").c_str(), "rb");
-    if (!f) return "No game files";
-    uint8_t id[8] = {0};
-    fseek(f, 0x40, SEEK_SET);
-    size_t n = fread(id, 1, 8, f);
-    fclose(f);
-    if (n != 8 || memcmp(id, BUILD_ID, 8)) return "Wrong game version (needs v1.0.0)";
+    if (!file_exists(root + "/exefs/main")) return "No game files";
+    if (!game_version_of(root.c_str())) return "Wrong game version (needs v1.0.0, v1.0.1 or v1.1.0)";
     if (!file_exists(root + "/romfs/region_common") || !file_exists(root + "/romfs.bin")) return "Game data missing";
     return "";
 }
@@ -229,7 +224,7 @@ static void set_failure(int k) {
         "Choose the folder that holds the game files.",
         "Choose the folder that holds the game files.",
         "Make sure there's about 12 GB free and try again.",
-        "LAS Recomp needs version 1.0.0 of the game, without updates.",
+        "LAS Recomp needs version 1.0.0, 1.0.1 or 1.1.0 of the game.",
         "Some files are missing. Choose the folder again; if it happens again, dump the game again.",
         "Make sure there's about 2 GB free and try again. If it keeps happening, report it on Discord or GitHub."};
     if (k >= 1 && k <= 6) set_job(head[k], true, hint[k]);
@@ -262,14 +257,12 @@ static void find_game(const std::string &dir, int depth, std::string &exefs, std
     for (auto &s : sub) find_game(s, depth + 1, exefs, romfs, unusable);
 }
 
-static bool build_id_ok(const std::string &main_path) {
-    FILE *f = fopen(main_path.c_str(), "rb");
-    if (!f) return false;
-    uint8_t id[8] = {0};
-    fseek(f, 0x40, SEEK_SET);
-    size_t n = fread(id, 1, 8, f);
-    fclose(f);
-    return n == 8 && !memcmp(id, BUILD_ID, 8);
+// A supported game version (runtime/game_addresses/versions.h)? Logs which one.
+static bool build_id_ok(const std::string &exefs) {
+    char label[32];
+    const char *v = game_release_label(exefs.c_str(), label, sizeof label);
+    fprintf(stderr, "[launcher] game files: %s\n", v ? (std::string("version ") + v).c_str() : "an unsupported version");
+    return v != NULL;
 }
 
 // progress (the overlay's bar): the romfs copy, then the image build - each about the size of romfs/
@@ -332,7 +325,7 @@ static void *extract_thread(void *) {
     set_job("Looking for the game files...");
     find_game(src, 0, exefs, romfs, unusable);
     if (exefs.empty() || romfs.empty()) { set_failure(unusable ? FAIL_UNUSABLE : FAIL_NOT_FOUND); goto done; }
-    if (!build_id_ok(exefs + "/main")) { set_failure(FAIL_VERSION); goto done; }
+    if (!build_id_ok(exefs)) { set_failure(FAIL_VERSION); goto done; }
     {
         // (the picked folder can't be LAS Recomp's own copy: setting up again deletes that first)
         char a[4096], b[4096];
@@ -518,10 +511,12 @@ extern "C" JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeLog
 }
 
 extern "C" JNIEXPORT jboolean JNICALL Java_com_lasrecomp_LASRecompActivity_nativeBuildIdOk(JNIEnv *env, jclass, jbyteArray head) {
-    if (env->GetArrayLength(head) < 0x48) return JNI_FALSE;
-    jbyte b[8];
-    env->GetByteArrayRegion(head, 0x40, 8, b);
-    return memcmp(b, BUILD_ID, 8) == 0 ? JNI_TRUE : JNI_FALSE;
+    if (env->GetArrayLength(head) < 0x54) return JNI_FALSE;
+    uint8_t b[20];  // (the main program's build ID: a supported version, runtime/game_addresses/versions.h)
+    env->GetByteArrayRegion(head, 0x40, 20, (jbyte *)b);
+    const GameVersion *v = game_version_by_build_id(b);
+    fprintf(stderr, "[launcher] game files: %s%s\n", v ? "version " : "an unsupported version", v ? v->label : "");
+    return v ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeImportChecking(JNIEnv *, jclass) {
@@ -1858,7 +1853,7 @@ extern "C" void launcher_run(const char *root) {
                     dl->AddLine(ImVec2(x + u * 0.35f, cy + u * 0.35f), ImVec2(x + u, cy - u * 0.4f), g, fs * 0.11f);
                 };
                 std::string src_d = tr("The folder with your own game folders (exefs/romfs) of The Legend of Zelda: Link's "
-                                       "Awakening for Nintendo Switch, version 1.0.0. The game isn't included with LAS Recomp.");
+                                       "Awakening for Nintendo Switch. The game isn't included with LAS Recomp.");
                 if (!src.empty()) src_d += std::string(tr("\n\nChosen: ")) + src;
                 // the step that's running / its result, under the rows and in the Set up row's explanation
                 const std::string &job_line = job;
@@ -1999,6 +1994,17 @@ extern "C" void launcher_run(const char *root) {
                 }
                 ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.55f, 1), "%s", tr("Game files ready."));
                 ImGui::SetCursorPosX(x0);
+                static std::string version_label;  // (the copied files' release, "1.0.1": read again when they change)
+                static long long label_of = -1;
+                struct stat npdm;
+                long long key = stat((g_root + "/exefs/main.npdm").c_str(), &npdm) == 0
+                                    ? (long long)npdm.st_mtime * 4096 + (long long)npdm.st_size : -2;
+                if (key != label_of) {
+                    label_of = key;
+                    char label[32];
+                    const char *v = game_release_label((g_root + "/exefs").c_str(), label, sizeof label);
+                    version_label = v ? v : "?";
+                }
 #ifdef __ANDROID__
                 if (g_prep_running.load()) {  // (shader preparation, in place of the version line meanwhile)
                     int d = g_prep_done.load(), t = g_prep_total.load();
@@ -2007,7 +2013,7 @@ extern "C" void launcher_run(const char *root) {
                                        g_play_after_prep ? tr(" - the game starts when done (PLAY again: now)") : "");
                 } else
 #endif
-                ImGui::TextColored(ImVec4(0.66f, 0.76f, 0.98f, 1), "Nintendo Switch  \xc2\xb7  v1.0.0");
+                ImGui::TextColored(ImVec4(0.66f, 0.76f, 0.98f, 1), "Nintendo Switch  \xc2\xb7  v%s", version_label.c_str());
             } else {
                 ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "!  %s", tr(busy ? "Setting up the game files..." : status.c_str()));
                 ImGui::SetCursorPosX(x0);
