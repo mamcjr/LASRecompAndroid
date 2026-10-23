@@ -24,6 +24,9 @@ uint64_t g_frame_steps_late;             // (stats) frames that advanced more th
 // (Turnip with the render thread) brought the 60 fps mode back however slow the counters said the GPU was. So for
 // the fixed 30 the minimum is raised to the maximum - the game's own 30 fps mode, two world steps a frame - and put
 // back for Auto / 60. (We are inside the frame timer here, tools/patches.py FRAME_STEPS_SITE: x23 is its state.)
+// Auto holds its 30 the same way while the pacer (vulkan/exec.c) holds it: the counters alone left the game choosing
+// 60 for one frame in eight (2026-10-23, the stock driver at 23 ms of GPU a frame: slow motion in each) - after
+// LASRecomp beta_5 cb9bc8d, "a real 30".
 static void fixed_30(void) {
     static uint64_t obj;
     static int saved = -1;  // the game's own minimum while raised
@@ -31,10 +34,12 @@ static void fixed_30(void) {
     uint64_t sys = c ? c->x[23] : 0;
     if (!sys) return;
     uint8_t *min = (uint8_t *)(uintptr_t)(sys + 0x4e2), max = *(uint8_t *)(uintptr_t)(sys + 0x4e3);
-    if (g_settings.fps_mode == 1) {
+    extern bool vk_pace_holds_30(void);
+    bool auto_hold = g_settings.fps_mode == 0 && vk_pace_holds_30();
+    if (g_settings.fps_mode == 1 || auto_hold) {
         if (saved < 0 || obj != sys) {
             saved = *min, obj = sys;
-            LOG("[pace] frame rate 30: the game's minimum interval %u -> %u\n", saved, max);
+            LOG("[pace] %s: the game's minimum interval %u -> %u\n", auto_hold ? "auto holds 30" : "frame rate 30", saved, max);
         }
         *min = max;
     } else if (saved >= 0 && obj == sys) {

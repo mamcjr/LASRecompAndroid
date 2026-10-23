@@ -195,6 +195,10 @@ extern __thread uint64_t g_blocked_ns;  // kernel.c: this thread's time blocked 
 static _Atomic bool pace_slow;
 static uint64_t stat_pace_over;
 static _Atomic int pace_on = -1;
+#ifdef __ANDROID__
+// (runtime/hle/framepace.c: Auto's hold also raises the game's least interval - every frame two world steps)
+bool vk_pace_holds_30(void) { return pace_on > 0 && pace_slow; }
+#endif
 
 void vk_pace_frame(void) {
     if (pace_on < 0) { const char *e = getenv("LARECOMP_PACE"); pace_on = !e || atoi(e) != 0; }
@@ -341,6 +345,17 @@ void vk_pace_frame(void) {
     // passes there - one hitch (a pipeline compile) kept the overworld at 30 for good. Every probe_wait seconds at
     // 30 the game's own choice comes back for a trial; frames that don't fit within 3 s bring the 30 back (each
     // failed trial doubles the wait, up to 80 s; a trial that holds resets it).
+    {   // another level: the failed trials were the last one's - its own chances start over (after LASRecomp beta_5
+        // 28b211c, whose counts start over at each scene change)
+        extern const char *game_level_name(void);
+        static char level[32];
+        const char *lv = game_level_name();
+        if (strncmp(lv, level, sizeof level - 1)) {
+            if (level[0] && probe_wait > 10000000000ull) LOG("[pace] %s: trials start over\n", lv);
+            strncpy(level, lv, sizeof level - 1);
+            probe_wait = 10000000000ull;
+        }
+    }
     if (pace_slow && !slow_since) slow_since = now;
     if (probe_at && now - probe_at < 1000000000ull) nover = 0, memset(over, 0, sizeof over);  // (the game switching)
     if (probe_at && !pace_slow && now - probe_at >= 3000000000ull) probe_at = 0, probe_wait = 10000000000ull;
@@ -358,8 +373,11 @@ void vk_pace_frame(void) {
         calm = avg < 13.0 && nover <= 2 ? calm + 1 : 0;
 #ifdef __ANDROID__
         // (headroom at 30 doesn't mean 60 fits: in the overworld this went back and forth every few seconds, slow
-        // motion each time - it is a trial too, so a quick failure doubles the wait, and it waits a quarter of it)
-        if (calm >= 120 && now - slow_since >= probe_wait / 4) {
+        // motion each time - it is a trial too, so a quick failure doubles the wait, and it waits a quarter of it;
+        // once one has failed here, all of it: a GPU-bound phone shows CPU headroom at 30 all along - the stock
+        // driver on the Snapdragon 8 Elite went back every 20 s, slow motion each time. Its GPU time can't tell: a
+        // phone's GPU clocks down at 30, Turnip's 12 ms a frame there became 16, the stock driver's 18.8)
+        if (calm >= 120 && now - slow_since >= (probe_wait > 10000000000ull ? probe_wait : probe_wait / 4)) {
             pace_slow = false, nover = 0;
             memset(over, 0, sizeof over);
             probe_at = now;
