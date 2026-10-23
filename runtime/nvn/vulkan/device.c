@@ -382,9 +382,9 @@ static void create_device(void) {
                                                        .pNext = &q_b8};
     VkPhysicalDevice16BitStorageFeatures q_b16 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES,
                                                   .pNext = &q_sbl};
-    if (g_vk.api < VK_API_VERSION_1_3) {
+    if (g_vk.api < VK_API_VERSION_1_3) {  // (q_term -> ... -> q_dr, then 1.2's own 11 / 12 or 1.1's extensions')
         h12.pNext = NULL;
-        q_term.pNext = g_vk.api >= VK_API_VERSION_1_2 ? (void *)&h11 : (void *)&q_b16;
+        q_dr.pNext = g_vk.api >= VK_API_VERSION_1_2 ? (void *)&h11 : (void *)&q_b16;
         have.pNext = &q_term;
     }
 #endif
