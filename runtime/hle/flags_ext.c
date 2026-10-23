@@ -21,7 +21,9 @@
 
 #define FLAG_PTR (MAIN_BASE + 0x1CC1388)
 #define FLAG_CAP (MAIN_BASE + 0x1CC1390)
+#ifndef LIVE_SAVE  // (tools/test_host_fs.h: a buffer)
 #define LIVE_SAVE (MAIN_BASE + 0x1CBB220)
+#endif
 #define LIVE_FLAGS (LIVE_SAVE + 0x5DC0)
 #define BODY_CRC 0x5EC4
 #define NFLAGS 45056

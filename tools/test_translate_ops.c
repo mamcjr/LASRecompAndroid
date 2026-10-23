@@ -3,9 +3,10 @@
 // Each case is a tiny compute program: MOV32I loads the inputs, then the instruction under test. Its MSL body
 // (the GLSL is the same text after glsl_rewrite) is written into a C++ file with stand-ins for the few MSL
 // built-ins it uses, compiled and run on the CPU, and the registers / predicates are compared with values worked
-// out by hand from the instruction's definition. tools/test_translate_ops.sh drives it.
+// out by hand from the instruction's definition. tools/test_translate_ops.sh drives it. With "glsl" the GLSL bodies
+// are run instead (Vulkan), and with "glsl 32" the ones for drivers without 64-bit integers (maxwell_no_int64).
 //
-// usage: test_translate_ops <out.cpp>
+// usage: test_translate_ops <out.cpp> [glsl [32]]
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -105,13 +106,16 @@ static const char prelude[] =
     "static float2 hx(uint v, uint swz) { if (swz == 1u) { float f = as_type<float>(v); return {f, f}; }"
     " float2 h = {h2f(v & 0xFFFFu), h2f(v >> 16)}; return swz == 2u ? float2{h.x, h.x} : swz == 3u ? float2{h.y, h.y} : h; }\n"
     "static float2 operator-(float2 a) { return {-a.x, -a.y}; }\n"
+    "typedef float2 vec2;\n"  // (GLSL)
     "static int fails;\n"
     "static void check(const char *name, uint got, uint want) {\n"
     "    if (got != want) { printf(\"FAIL %s: got 0x%08x, want 0x%08x\\n\", name, got, want); fails++; }\n"
     "}\n";
 
 int main(int argc, char **argv) {
-    if (argc < 2) { fprintf(stderr, "usage: %s <out.cpp>\n", argv[0]); return 2; }
+    if (argc < 2) { fprintf(stderr, "usage: %s <out.cpp> [glsl [32]]\n", argv[0]); return 2; }
+    bool glsl = argc > 2;
+    maxwell_no_int64 = argc > 3;
     FILE *o = fopen(argv[1], "w");
     if (!o) { perror(argv[1]); return 2; }
     fputs(prelude, o);
@@ -127,11 +131,13 @@ int main(int argc, char **argv) {
         if (m % 4 == 0) prog[m++] = 0;
         prog[m++] = EXIT;
         while (m % 4) prog[m++] = NOP;
-        ShaderKey key = {0};
+        ShaderKey key = {.glsl = glsl};
         ShaderInfo *s = maxwell_translate((const uint8_t *)prog, (size_t)m * 8, STAGE_COMPUTE, &key);
-        const char *b = s->msl ? strstr(s->msl, "kernel void main0(") : NULL;
+        const char *b = s->msl ? strstr(s->msl, glsl ? "void main() {" : "kernel void main0(") : NULL;
         b = b ? strstr(b, "{\n") : NULL;
-        const char *e = b ? strstr(b, "  return;\n}") : NULL;
+        const char *e = b && !glsl ? strstr(b, "  return;\n}") : NULL;
+        if (b && glsl)  // (the GLSL main's closing brace: the last line)
+            for (const char *q = b; (q = strstr(q, "\n}\n")); q++) e = q + 1;
         if (!e) { printf("FAIL %s: translation: %s\n", cs[i].name, s->msl ? "unexpected layout" : s->error); bad++; continue; }
         fprintf(o, "static void case%d() %.*s  check(\"%s\", (uint)%s, 0x%08xu);\n}\n", i, (int)(e - b), b, cs[i].name, cs[i].var,
                 cs[i].expect);
