@@ -42,7 +42,7 @@ Frame generation (30 → 60 and 60 → 120), game mods, menus in Portuguese and 
 - **Dynamic resolution at a fixed 30 fps** aims at 30's budget, not 60's.
 - Menu and on-screen controls themed after Link's Awakening. No randomizer on Android.
 
-Validation: on the POCO F7 Ultra, frame generation 30 → 60, 60 → 120 and 30 → 120 with Turnip and with the stock driver; mods (the translation applied, turned off, imported with the picker); translated menus; the menu with simulated controller presses; the overlay dragged; SGSR 1. Not tested on a phone yet: setting the game up from scratch with the new `romfs.bin`, Vulkan 1.1 drivers (Mali) and the Adreno 750.
+Validation: on the POCO F7 Ultra, frame generation 30 → 60, 60 → 120 and 30 → 120 with Turnip and with the stock driver; mods (the translation applied, turned off, imported with the picker); translated menus; the menu with simulated controller presses; the overlay dragged; SGSR 1; setting the game up from scratch from the picked folder (about 7 min 40 s: `romfs.bin` in about 45 s, then the compile), after which the game ran with the translation mod into the village. Not tested on a phone yet: Vulkan 1.1 drivers (Mali) and the Adreno 750.
 
 ## New in 0.3.9
 

@@ -42,7 +42,7 @@ Geração de quadros (30 → 60 e 60 → 120), mods do jogo, menus em português
 - **Resolução Dinâmica com 30 fps fixos** mira o orçamento de 30, não o de 60.
 - Visual do menu e dos controles na tela no estilo do Link's Awakening. Sem randomizer no Android.
 
-Validação: no POCO F7 Ultra, geração de quadros 30 → 60, 60 → 120 e 30 → 120 com Turnip e com o driver padrão; mods (tradução aplicada, desligar, importar pelo seletor); menus traduzidos; menu com controle simulado; overlay arrastado; SGSR 1. Ainda não testados num celular: a configuração do jogo do zero com o novo `romfs.bin`, drivers Vulkan 1.1 (Mali) e a Adreno 750.
+Validação: no POCO F7 Ultra, geração de quadros 30 → 60, 60 → 120 e 30 → 120 com Turnip e com o driver padrão; mods (tradução aplicada, desligar, importar pelo seletor); menus traduzidos; menu com controle simulado; overlay arrastado; SGSR 1; a configuração do jogo do zero a partir da pasta escolhida (~7 min 40 s: o `romfs.bin` em ~45 s, depois a compilação), e o jogo rodou com o mod de tradução até a vila. Ainda não testados num celular: drivers Vulkan 1.1 (Mali) e a Adreno 750.
 
 ## Novidades da 0.3.9
 
