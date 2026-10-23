@@ -46,6 +46,7 @@ typedef struct {
 #ifdef __ANDROID__
     bool map_placed;              // VK_EXT_map_memory_placed: the guest heap mapped as GPU memory (exec.c vk_heap_place)
     uint64_t placed_align;
+    bool bda;                     // bufferDeviceAddress on: the placed heap can be reached by pointer (exec.c gmem_bda)
     bool exec_stats;              // (Android, LARECOMP_SHADER_STATS=1) the compiler's statistics of each pipeline, logged
     uint32_t api;                 // the device's Vulkan version as used: 1.3, or 1.1 / 1.2 with extensions (device.c)
 #endif

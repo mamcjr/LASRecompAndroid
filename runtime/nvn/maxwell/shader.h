@@ -74,6 +74,7 @@ typedef struct {
                             // dispatch's storage buffers - when found, stores too (copied back after the dispatch).
                             // runtime/nvn/vulkan/exec.c
     bool uses_gmem_store;   // writes global memory (STG)
+    bool gmem_bda;          // (maxwell_gmem_bda) its GMEM_BUFFER_INDEX binding is the heap's address, not the heap
     bool uses_tint;        // fragment: reads the per-draw tint (buffer 19, float4[2]) applied to color target 0
     bool uses_rscale;       // reads the resolution-scale table (fragment/compute buffer 18): float4 [0] = render
                             // target scale, [1 + i] = allocation scale of texture i
@@ -93,6 +94,10 @@ extern uint64_t maxwell_gmem_base, maxwell_gmem_size;
 // (GLSL) every stage's global memory through the GMap table, not only compute: set by a backend that can't wrap the
 // guest heap in a buffer (Android: no VK_EXT_external_memory_host; vulkan/exec.c copies the bound ranges instead)
 extern bool maxwell_gmem_map_all;
+// (GLSL; Android, the heap placed in GPU memory) global memory through a buffer reference to the heap instead of the
+// GMem storage buffer, whose range a driver may cap far below the heap (Turnip on Adreno 7xx: 128 MB). Binding
+// GMEM_BUFFER_INDEX then holds the heap's device address: `readonly buffer GHeapAddr { uvec2 a; }`.
+extern bool maxwell_gmem_bda;
 // Vulkan drivers without shaderInt64: preserve address/carry semantics using 32-bit words.
 extern bool maxwell_no_int64;
 // (diagnostics, Android copy mode) a mapped access outside the table records its heap offset at the end of the gfast_

@@ -24,6 +24,7 @@
 
 uint64_t maxwell_gmem_base, maxwell_gmem_size;
 bool maxwell_gmem_map_all;
+bool maxwell_gmem_bda;
 bool maxwell_no_int64;
 bool maxwell_gmem_miss_log;
 unsigned maxwell_gmem_miss_stages = ~0u;
@@ -2245,6 +2246,8 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     Str s = {0};
     sp(&s, "#version 460\n");
     if (!maxwell_no_int64) sp(&s, "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n");
+    if (info->uses_gmem && maxwell_gmem_bda)
+        sp(&s, "#extension GL_EXT_buffer_reference : require\n#extension GL_EXT_buffer_reference_uvec2 : require\n");
     sp(&s, "%s", glsl_prelude);
     if (maxwell_no_int64) sp(&s, "%s", glsl_int32_helpers);
     if (maxwell_native_half && stage != STAGE_VERTEX) {
@@ -2272,7 +2275,14 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
         if (!n) n = 1;
         sp(&s, "layout(std140, set = %d, binding = %d) uniform CB%d { uvec4 cb%d[%u]; };\n", set, i, i, i, n);
     }
-    if (info->uses_gmem)
+    if (info->uses_gmem && maxwell_gmem_bda) {  // (the same gmem_.w[] accesses, through the heap's device address)
+        info->gmem_bda = true;
+        sp(&s, "layout(buffer_reference, std430, buffer_reference_align = 4) %sbuffer GHeap { uint w[]; };\n",
+           c->uses_gmem_store ? "" : "readonly ");
+        sp(&s, "layout(std430, set = %d, binding = %d) readonly buffer GHeapAddr { uvec2 a; } gheap_;\n", set,
+           GMEM_BUFFER_INDEX);
+        sp(&s, "#define gmem_ GHeap(gheap_.a)\n");
+    } else if (info->uses_gmem)
         sp(&s, "layout(std430, set = %d, binding = %d) %sbuffer GMem { uint w[]; } gmem_;\n", set, GMEM_BUFFER_INDEX,
            c->uses_gmem_store ? "" : "readonly ");
     if (info->uses_gmem_map) {  // (compute) the dispatch's storage buffers, device-local: gmap[i] = heap offset, size, word

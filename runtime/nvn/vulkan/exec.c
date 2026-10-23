@@ -94,6 +94,9 @@ static void cq_resolve_done(uint64_t done);
 
 #ifdef __ANDROID__
 static bool gcopy_mode;   // (no heap import: global memory copied by the CPU, gcopy_prepare)
+#ifdef __ANDROID__
+static uint64_t gmem_bda;  // the placed heap's device address when shaders reach it by pointer (vk_heap_place), else 0
+#endif
 static VkSpan gc_span;    // this draw's / dispatch's copy, gc_size bytes (0: none)
 static uint64_t gc_size;
 static void gcopy_retire(uint64_t done);
@@ -1723,6 +1726,7 @@ static void translate_program(void *arg) {
 #ifdef __ANDROID__
     maxwell_no_int64 = !g_vk.shader_int64 || g_settings.shader_int32 || getenv("LARECOMP_VK_INT32") != NULL;
     maxwell_gmem_map_all = gcopy_mode;
+    maxwell_gmem_bda = gmem_bda != 0;
     maxwell_gmem_miss_log = gcopy_mode && !getenv("LARECOMP_NO_GMISS");
     if (getenv("LARECOMP_GMISS_STAGES"))  // (a test: which stages log misses - 1 vertex, 2 fragment, 32 compute)
         maxwell_gmem_miss_stages = (unsigned)strtoul(getenv("LARECOMP_GMISS_STAGES"), NULL, 0);
@@ -2534,6 +2538,9 @@ static bool gmem_import(uint64_t size) {
 static uint64_t gmem_tried;  // heap size the import was last attempted for (gmem_info imports / re-imports)
 
 #ifdef __ANDROID__
+static bool gmem_bda_wanted(uint64_t size);
+static bool gaddr_write(uint64_t a);
+
 // Turnip (VK_EXT_map_memory_placed): the guest heap *is* GPU memory. When the game sets its heap size (kernel.c
 // SetHeapSize, before it writes there), host-visible device memory is mapped over the heap's range at HEAP_BASE itself
 // (replacing the window's anonymous pages) and becomes the global memory buffer: shaders read and write the guest's
@@ -2565,7 +2572,8 @@ bool vk_heap_place(uint64_t size) {
     }
     VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = size,
                              .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                                      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT};
+                                      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+                                      (g_vk.bda ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0)};
     VkBuffer buf;
     if (vkCreateBuffer(g_vk.dev, &bi, NULL, &buf) != VK_SUCCESS) return false;
     VkMemoryRequirements mr;
@@ -2581,8 +2589,9 @@ bool vk_heap_place(uint64_t size) {
         if (f & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) break;
     }
     VkDeviceMemory mem = VK_NULL_HANDLE;
-    VkMemoryAllocateInfo ai = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = mr.size,
-                               .memoryTypeIndex = (uint32_t)type};
+    VkMemoryAllocateFlagsInfo af = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO, .flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT};
+    VkMemoryAllocateInfo ai = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .pNext = g_vk.bda ? &af : NULL,
+                               .allocationSize = mr.size, .memoryTypeIndex = (uint32_t)type};
     VkResult r = type < 0 ? VK_ERROR_FEATURE_NOT_PRESENT : vkAllocateMemory(g_vk.dev, &ai, NULL, &mem);
     if (r == VK_SUCCESS) r = vkBindBufferMemory(g_vk.dev, buf, mem, 0);
     void *p = NULL;
@@ -2603,11 +2612,54 @@ bool vk_heap_place(uint64_t size) {
     gmem_mem = mem;
     gmem_size = size;
     gcopy_mode = false;
-    LOG("[vk] guest heap %llu MB is GPU memory (placed at %llx, memory type %d, flags 0x%x, storage range %llu MB)\n",
-        (unsigned long long)(size >> 20), (unsigned long long)HEAP_BASE, type, (unsigned)mp.memoryTypes[type].propertyFlags,
+    gmem_bda = 0;
+    if (gmem_bda_wanted(size)) {
+        VkBufferDeviceAddressInfo di = {.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, .buffer = buf};
+        uint64_t a = vkGetBufferDeviceAddress(g_vk.dev, &di);
+        if (a && gaddr_write(a)) gmem_bda = a;
+    }
+    LOG("[vk] guest heap %llu MB is GPU memory (placed at %llx, memory type %d, flags 0x%x): shaders reach it %s "
+        "(storage range %llu MB)\n", (unsigned long long)(size >> 20), (unsigned long long)HEAP_BASE, type,
+        (unsigned)mp.memoryTypes[type].propertyFlags, gmem_bda ? "by pointer" : "through a storage buffer",
         (unsigned long long)(g_vk.props.limits.maxStorageBufferRange >> 20));
     return true;
 }
+
+// Shaders reach the placed heap by pointer (translate.c maxwell_gmem_bda) where one storage buffer can't cover it: the
+// descriptor reaches maxStorageBufferRange from the heap's start, and Turnip on Adreno 7xx caps that at 128 MB - the
+// game's data further up read as zeros there (missing text, wrong colors: issue #3). LARECOMP_VK_GMEM_BDA=0 / 1: never /
+// always.
+static bool gmem_bda_wanted(uint64_t size) {
+    const char *e = getenv("LARECOMP_VK_GMEM_BDA");
+    if (!g_vk.bda) return false;
+    if (e) return atoi(e) != 0;
+    return size > g_vk.props.limits.maxStorageBufferRange;
+}
+
+// The heap's device address for the shaders (binding GMEM_BUFFER_INDEX: GHeapAddr { uvec2 a; }), in a small buffer of
+// its own that lives as long as the device: a reset's new heap only rewrites it
+static VkBuffer gaddr_buf;
+static VmaAllocation gaddr_mem;
+static bool gaddr_write(uint64_t a) {
+    static uint32_t *ptr;
+    if (!gaddr_buf) {
+        VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = 256, .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT};
+        VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO,
+                                      .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT};
+        VmaAllocationInfo inf;
+        if (vmaCreateBuffer(g_vk.vma, &bi, &ai, &gaddr_buf, &gaddr_mem, &inf) != VK_SUCCESS || !inf.pMappedData) {
+            gaddr_buf = VK_NULL_HANDLE;
+            return false;
+        }
+        ptr = inf.pMappedData;
+    }
+    ptr[0] = (uint32_t)a;
+    ptr[1] = (uint32_t)(a >> 32);
+    vmaFlushAllocation(g_vk.vma, gaddr_mem, 0, VK_WHOLE_SIZE);
+    return true;
+}
+
+static VkDescriptorBufferInfo gaddr_info(void) { return (VkDescriptorBufferInfo){gaddr_buf, 0, 16}; }
 #endif
 
 static VkDescriptorBufferInfo gmem_info(void) {
@@ -3435,6 +3487,7 @@ void vk_exec_reset(void) {
     }
     gmem_size = gmem_tried = 0;
 #ifdef __ANDROID__
+    gmem_bda = 0;
     gcopy_mode = !g_vk.host_import && !getenv("LARECOMP_VK_NO_GCOPY");  // (until the next heap is placed: vk_heap_place)
     gres_reset();  // (the arena's resident ranges: keyed by the old heap's addresses)
 #endif
@@ -3554,6 +3607,7 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
         } else if (b->type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) {
 #ifdef __ANDROID__
             if (b->binding == GMISS_BUFFER_INDEX) bi[n] = gmiss_info();
+            else if (b->binding == GMEM_BUFFER_INDEX && si->gmem_bda) bi[n] = gaddr_info();  // (the heap's address)
             else
 #endif
             bi[n] = b->binding == GFAST_BUFFER_INDEX ? gfast_info() : gmem_info();
@@ -3679,6 +3733,7 @@ static void translate_compute(void *arg) {
 #ifdef __ANDROID__
     maxwell_no_int64 = !g_vk.shader_int64 || g_settings.shader_int32 || getenv("LARECOMP_VK_INT32") != NULL;
     maxwell_gmem_map_all = cp->copy_mode;
+    maxwell_gmem_bda = gmem_bda != 0;
     maxwell_gmem_miss_log = cp->copy_mode && !getenv("LARECOMP_NO_GMISS");
     if (getenv("LARECOMP_GMISS_STAGES"))  // (a test: which stages log misses - 1 vertex, 2 fragment, 32 compute)
         maxwell_gmem_miss_stages = (unsigned)strtoul(getenv("LARECOMP_GMISS_STAGES"), NULL, 0);

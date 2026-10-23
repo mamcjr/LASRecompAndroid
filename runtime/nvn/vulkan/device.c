@@ -468,6 +468,10 @@ static void create_device(void) {
         f12.shaderInt8 = h12.shaderInt8;
         f12.uniformAndStorageBuffer8BitAccess = h12.uniformAndStorageBuffer8BitAccess;
         f12.storageBuffer8BitAccess = h12.storageBuffer8BitAccess;
+        // device addresses: shaders reach the heap placed in GPU memory through a pointer where a storage buffer's
+        // range can't cover it (exec.c vk_heap_place; Turnip on Adreno 7xx: 128 MB). Required from Vulkan 1.3 on.
+        g_vk.bda = g_vk.api >= VK_API_VERSION_1_2 && h12.bufferDeviceAddress && g_vk.map_placed;
+        f12.bufferDeviceAddress = g_vk.bda;
     }
     // Below 1.3: the same features through the extensions' structures (1.2: its own 11 / 12 ones and the 1.3
     // extensions'; 1.1: the extensions' for both), ahead of the optional ones f13 led to
@@ -1363,6 +1367,12 @@ void ui_window_init(void) {
     if (!SDL_Vulkan_CreateSurface(window, g_vk.inst, NULL, &g_vk.surface)) FATAL("SDL_Vulkan_CreateSurface: %s\n", SDL_GetError());
 #endif
     pick_device();
+#ifdef __ANDROID__
+    if (getenv("LARECOMP_VK_STORAGE_RANGE_MB")) {  // (a test: a storage buffer reaching less, as Turnip's 128 MB on Adreno 7xx)
+        uint64_t mb = strtoull(getenv("LARECOMP_VK_STORAGE_RANGE_MB"), NULL, 0);
+        if (mb && (mb << 20) < g_vk.props.limits.maxStorageBufferRange) g_vk.props.limits.maxStorageBufferRange = (uint32_t)(mb << 20);
+    }
+#endif
     create_device();
 #ifdef __ANDROID__
     if (strcmp(g_settings.gpu_model, g_vk.props.deviceName)) {  // (for turnip_lrz's Automatic at the next start)
