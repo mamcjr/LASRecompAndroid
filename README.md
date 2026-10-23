@@ -23,6 +23,27 @@ For the PC versions (Windows, macOS, Linux), features and the randomizer, see th
 > copy of the extracted game files of *Link's Awakening* **v1.0.0**. Instructions on how to obtain them will not be
 > provided.
 
+## New in 0.4.0
+
+Frame generation (30 → 60 and 60 → 120), game mods, menus in Portuguese and a new upscaler.
+
+- **Frame generation** (Video > Frame generation, off by default): in-between frames made from the picture, the scene's depth and the camera's movement, adapted from [LASRecomp-Android-Plus](https://github.com/Nycolazs/LASRecomp-Android-Plus). The game's 30 fps become 60 and, with the 120 Hz option, its 60 become 120 (the game keeps its own 60 Hz clock). The HUD stays put and Link doesn't shake; when the GPU can't keep up it pauses by itself and tries again later. On the POCO F7 Ultra with Turnip, at 60 → 120 in the village, it cost ~0.4 ms of GPU per real frame and stayed on the whole time. With Qualcomm's stock driver, use 30 fps.
+- **120 Hz option** (under frame generation, off by default): on, it asks for the display's fastest mode and the game's 60 fps become 120; off, it asks for 60 Hz. Where the phone's own settings fix the display at 120 Hz, the in-between frames follow the display.
+- **Objects' own movement** (experimental): characters that move on their own move in the in-between frames too.
+- **Mods** (Settings > Mods): folders with a `romfs` folder inside, as for Eden and Ryujinx, each turned on or off; a mod's folder can be imported with the Android folder picker. Tested with the [Triforce Heroes](https://triforce-heroes.com.br) team's Brazilian Portuguese translation, which doesn't come with the app.
+- **Menus in Portuguese** on a phone set to Portuguese: settings, the start screen, the save editor and messages.
+- **Snapdragon Game Super Resolution 1 upscaler** (Qualcomm): a single pass, lighter than FSR 1.
+- **Performance overlay:** the frame rate with frame generation (FPS+FG), a compact one-line style (FPS, FPS+FG, RAM, battery temperature), and it can be dragged anywhere on the screen.
+- **Menu with a controller:** the first press is no longer lost, left / right change values, A or L / R go into the page and B closes.
+- **Vulkan 1.1 / 1.2 drivers** with the extensions matching 1.3 are accepted now (such as stock Mali drivers); when one is missing, the message names it.
+- **32-bit shader math** (Video): for drivers that draw lighting, grass or text wrong.
+- **Setup takes less space:** `romfs.bin` is built straight from the picked folder. The free space it asks for went from ~14 GiB to ~8 GiB, and existing installs get ~5.7 GiB back by themselves.
+- **Setup's compile step:** the game's functions outside the play profiles (LASRecomp-Android-Plus's list) are compiled without optimization.
+- **Dynamic resolution at a fixed 30 fps** aims at 30's budget, not 60's.
+- Menu and on-screen controls themed after Link's Awakening. No randomizer on Android.
+
+Validation: on the POCO F7 Ultra, frame generation 30 → 60, 60 → 120 and 30 → 120 with Turnip and with the stock driver; mods (the translation applied, turned off, imported with the picker); translated menus; the menu with simulated controller presses; the overlay dragged; SGSR 1. Not tested on a phone yet: setting the game up from scratch with the new `romfs.bin`, Vulkan 1.1 drivers (Mali) and the Adreno 750.
+
 ## New in 0.3.9
 
 Focused on compatibility with more phones and drivers.

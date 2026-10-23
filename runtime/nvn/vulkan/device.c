@@ -7,6 +7,10 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef __ANDROID__
+#include <android/native_window.h>
+#include <dlfcn.h>
+#endif
 
 #include "../../paths.h"
 #include "../../settings.h"
@@ -749,10 +753,40 @@ static struct ANativeWindow *android_window(void) {
     return SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER, NULL);
 }
 
+// The display rate frame generation wants (framegen.c: 60, or 120 with its 120 Hz option), on the game's own surface -
+// the games' way to ask (ANativeWindow_setFrameRate, a fixed source: the display picks a rate it divides evenly); the
+// activity's preferred display mode alone (LASRecompActivity.preferRefreshRate) was overruled to 120 on the POCO F7
+// Ultra. 0: none asked. Asked again for a new surface (back from the background).
+static float surface_hz;
+static void surface_rate_apply(struct ANativeWindow *aw) {
+    if (!aw || surface_hz <= 0) return;
+    // (libnativewindow's: API 30 / 31 - looked up, the build links only libandroid)
+    typedef int32_t (*SetRate)(struct ANativeWindow *, float, int8_t);
+    typedef int32_t (*SetRate2)(struct ANativeWindow *, float, int8_t, int8_t);  // (API 31: always, not only seamless)
+    static SetRate set1;
+    static SetRate2 set2;
+    static bool looked;
+    if (!looked) {
+        looked = true;
+        void *lib = dlopen("libnativewindow.so", RTLD_NOW);
+        if (lib) set1 = (SetRate)dlsym(lib, "ANativeWindow_setFrameRate"),
+                 set2 = (SetRate2)dlsym(lib, "ANativeWindow_setFrameRateWithChangeStrategy");
+    }
+    int32_t r = set2   ? set2(aw, surface_hz, ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE, 1 /* ALWAYS */)
+                : set1 ? set1(aw, surface_hz, ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)
+                       : -1;
+    LOG("[vk] surface frame rate %.0f Hz asked (%d)\n", surface_hz, r);
+}
+void vk_surface_frame_rate(float hz) {
+    surface_hz = hz;
+    surface_rate_apply(surface_aw);
+}
+
 static void android_create_surface(struct ANativeWindow *aw) {
     VkAndroidSurfaceCreateInfoKHR si = {.sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR, .window = aw};
     VK_CHECK(vkCreateAndroidSurfaceKHR(g_vk.inst, &si, NULL, &g_vk.surface));
     surface_aw = aw;
+    surface_rate_apply(aw);
 }
 
 static bool android_surface_ready(void) {  // false: no window to draw into now

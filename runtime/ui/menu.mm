@@ -586,9 +586,15 @@ static void tab_display(void) {
                "translated from now on: restart the app for all of them.");
     opt_toggle("Frame generation", &g_settings.frame_gen, false,
                "In-between frames made from the picture, the scene's depth and the camera's movement, shown between the "
-               "game's own: its 30 fps become 60, or its 60 become 120 on a 120 Hz display (it asks for the display's "
-               "fastest mode). Characters' own movement stays at the game's rate unless Objects' own movement is on. "
-               "Pauses by itself when the game can't hold its frame rate. Takes effect at the next start of the app.");
+               "game's own: its 30 fps become 60, or with 120 Hz on, its 60 become 120. Characters' own movement stays "
+               "at the game's rate unless Objects' own movement is on. Pauses by itself when the game can't hold its "
+               "frame rate. Takes effect at the next start of the app.");
+    if (!g_settings.frame_gen) opt_disable_next();
+    opt_toggle("120 Hz", &g_settings.frame_gen_120, false,
+               "Asks for the display's fastest mode (on a 120 Hz screen): the game's 60 fps become 120, and its 30 "
+               "become 120 too, with three in-between frames - heavier on the GPU. Off: the display at 60 Hz, the "
+               "game's 30 become 60. Where the phone's own setting keeps the display faster (Settings > Display > "
+               "Refresh rate), the in-between frames follow it.");
     if (!g_settings.frame_gen) opt_disable_next();
     opt_toggle("Objects' own movement", &g_settings.frame_gen_flow, false,
                "Experimental: the in-between frames also move characters and objects that moved on their own, found by "

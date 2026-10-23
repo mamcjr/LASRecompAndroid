@@ -46,9 +46,9 @@ static const char kWarp[] =
     "layout(set = 0, binding = 3) uniform sampler2D depthT;\n" // the scene's depth
     "layout(location = 0) in vec2 uv;\n"
     "layout(location = 0) out vec4 o;\n"
-    // m0..m3: rows of (generated view-projection) x inverse(this frame's); rect: the game picture in the window (uv);
+    // m0.x: the in-between frame's step (a share of the real frame's period); rect: the game picture in the window (uv);
     // crop: the part of the presented picture shown there; a: flags (1 y flip: game NDC up = the image's first row, 2 depth in
-    // [-1, 1], 4 present flip, 8 comp in the game's layout, 16 sRGB-encoded picture, 32 objects' own movement; its fraction: the in-between frame's step), Link's radius (uv, 0 = none), his depth, the mode; b: Link (uv), the depth's scale (zw)
+    // [-1, 1], 4 present flip, 8 comp in the game's layout, 16 sRGB-encoded picture, 32 objects' own movement), Link's radius (uv, 0 = none), his depth, the mode; b: Link (uv), the depth's scale (zw)
     "layout(push_constant) uniform P { vec4 m0; vec4 m1; vec4 m2; vec4 m3; vec4 rect; vec4 crop; vec4 a; vec4 b; } p;\n"
     "bool flag(uint f) { return (uint(p.a.x) & f) != 0u; }\n"
     // (flag 8: comp is the presented picture in the game's texture layout, sampled at game uv; else the window picture)
@@ -64,33 +64,19 @@ static const char kWarp[] =
     "  if (!flag(16u)) return c;\n"
     "  return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));\n"
     "}\n"
-    "layout(set = 0, binding = 4) uniform sampler2D hudMask;\n"  // where the HUD is: a quarter of the presented picture
-    // how much of the HUD's neighbourhood g is in (0..1): the mask a quarter texel further around (the faint edge of
-    // the hearts' soft shadow is under the mask's threshold - moved with the scenery it left a dark line under them)
-    "float hudW(vec2 g) {\n"
-    "  vec2 t = 1.0 / vec2(textureSize(hudMask, 0));\n"
-    "  float w = textureLod(hudMask, g, 0.0).r;\n"
-    "  for (int i = 0; i < 4; i++) w = max(w, textureLod(hudMask, g + t * vec2((i & 1) == 0 ? -1.0 : 1.0, (i & 2) == 0 ? -1.0 : 1.0), 0.0).r);\n"
-    "  return clamp(w * 2.0, 0.0, 1.0);\n"
-    "}\n"
-    // where the scene point at g lands in the generated picture
+    "layout(set = 0, binding = 4) uniform sampler2D hudMask;\n"  // where the HUD is (the debug view; kPrep has it dilated)
+    "layout(set = 0, binding = 6) uniform sampler2D prepT;\n"   // kPrep, once per real frame: D c (xy, w in z), the HUD (a)
+    // how much of the HUD's neighbourhood g is in (0..1): kPrep's dilated mask
+    "float hudW(vec2 g) { return textureLod(prepT, g, 0.0).a; }\n"
+    // where the scene point at g lands in the generated picture: the generated camera is VP + k (VP - VPprev), so
+    // VPg inverse(VP) = I + k D and h = c + k D c - D c per real frame from kPrep, the step k here (exact for any k)
     "vec2 moved(vec2 g) {\n"
-    "  vec2 n = g;\n"
-    // the depth as an average over ~9x9 pixels (five plain fetches, as view distance): the exact depth tore thin
-    // layered things (tall grass, plants) into rows when the camera moved - neighbouring pixels near and far
-    "  vec2 o = 4.0 / vec2(textureSize(depthT, 0));\n"
-    "  float z = 0.0;\n"
-    "  for (int i = 0; i < 5; i++) {\n"
-    "    vec2 q = n * p.b.zw + o * (i == 0 ? vec2(0.0) : vec2((i & 1) == 1 ? -1.0 : 1.0, (i & 2) == 2 ? -1.0 : 1.0));\n"
-    "    z += 1.0 / max(1.0 - textureLod(depthT, q, 0.0).r, 1e-6);\n"
-    "  }\n"
-    "  float d = 1.0 - 5.0 / z;\n"
-    "  vec4 c = vec4(n.x * 2.0 - 1.0, flag(1u) ? 1.0 - 2.0 * n.y : 2.0 * n.y - 1.0, flag(2u) ? d * 2.0 - 1.0 : d, 1.0);\n"
-    "  vec4 h = vec4(dot(p.m0, c), dot(p.m1, c), dot(p.m2, c), dot(p.m3, c));\n"
-    "  if (h.w <= 1e-5) return g;\n"
-    "  vec2 e = h.xy / h.w;\n"
-    "  vec2 n2 = vec2(e.x * 0.5 + 0.5, flag(1u) ? 0.5 - e.y * 0.5 : e.y * 0.5 + 0.5);\n"
-    "  return n2;\n"
+    "  vec4 q = textureLod(prepT, g, 0.0);\n"
+    "  float hw = 1.0 + p.m0.x * q.z;\n"
+    "  if (hw <= 1e-5) return g;\n"
+    "  vec2 c = vec2(g.x * 2.0 - 1.0, flag(1u) ? 1.0 - 2.0 * g.y : 2.0 * g.y - 1.0);\n"
+    "  vec2 e = (c + p.m0.x * q.xy) / hw;\n"
+    "  return vec2(e.x * 0.5 + 0.5, flag(1u) ? 0.5 - e.y * 0.5 : e.y * 0.5 + 0.5);\n"
     "}\n"
     // Link (the player) moves on his own and the camera follows him: kept where the real frame has him instead of
     // being moved with the scenery (he shook back and forth). How much (1 = held): around his projected position,
@@ -111,7 +97,7 @@ static const char kWarp[] =
     "  vec4 f = textureLod(flowT, g, 0.0);\n"
     "  if (f.w < 0.5) return vec2(0.0);\n"
     "  float z = 1.0 / max(1.0 - textureLod(depthT, g * p.b.zw, 0.0).r, 1e-6);\n"
-    "  return abs(z - f.z) > 0.15 * f.z ? vec2(0.0) : f.xy * fract(p.a.x);\n"
+    "  return abs(z - f.z) > 0.15 * f.z ? vec2(0.0) : f.xy * p.m0.x;\n"
     "}\n"
     "void main() {\n"
     // (outside the game picture first: the plain copy below, sampled there, stretched the picture's last column of
@@ -132,9 +118,41 @@ static const char kWarp[] =
     // (Link held only where his block's own movement wasn't found: found, it already keeps him with the camera)
     "  s = mix(s, g, any(notEqual(objMove(g), vec2(0.0))) ? 0.0 : linkW(g));\n"
     // the scenery: where the source is near the HUD, from the scene before it (soft: a quarter of the size)
-    "  vec3 bg = mix(compAt(s).rgb, sceneAt(s), hudW(s));\n"
+    "  vec3 bg = compAt(s).rgb;\n"
+    "  float ws = hudW(s);\n"
+    "  if (ws > 0.0) bg = mix(bg, sceneAt(s), ws);\n"
     // the HUD and its surroundings stay as in the real frame, fading into the moved scenery over a quarter texel
-    "  o = vec4(mix(bg, compAt(g).rgb, w), 1.0);\n"
+    "  o = vec4(w > 0.0 ? mix(bg, compAt(g).rgb, w) : bg, 1.0);\n"
+    "}\n";
+
+// Once per real frame with in-between ones (fg_copy_window, after the HUD mask), at the mask's size (a quarter of the
+// presented picture): what kWarp did per pixel and per iteration - the depth averaged over ~9x9 pixels (five plain
+// fetches, as view distance: the exact depth tore thin layered things - tall grass, plants - into rows when the camera
+// moved) times D = (VP - VPprev) inverse(VP), and the HUD mask a texel further around (the faint edge of the hearts'
+// soft shadow is under the mask's threshold - moved with the scenery it left a dark line under them). m: D's rows;
+// a.x: flags 1 / 2 as kWarp's; b.zw: the depth's scale. Out: (D c).x, .y, .w and the HUD's weight
+static const char kPrep[] =
+    "#version 450\n"
+    "layout(set = 0, binding = 0) uniform sampler2D depthT;\n"
+    "layout(set = 0, binding = 1) uniform sampler2D hudMask;\n"
+    "layout(location = 0) in vec2 uv;\n"
+    "layout(location = 0) out vec4 o;\n"
+    "layout(push_constant) uniform P { vec4 m0; vec4 m1; vec4 m2; vec4 m3; vec4 a; vec4 b; } p;\n"
+    "bool flag(uint f) { return (uint(p.a.x) & f) != 0u; }\n"
+    "void main() {\n"
+    "  vec2 n = uv;\n"
+    "  vec2 off = 4.0 / vec2(textureSize(depthT, 0));\n"
+    "  float z = 0.0;\n"
+    "  for (int i = 0; i < 5; i++) {\n"
+    "    vec2 q = n * p.b.zw + off * (i == 0 ? vec2(0.0) : vec2((i & 1) == 1 ? -1.0 : 1.0, (i & 2) == 2 ? -1.0 : 1.0));\n"
+    "    z += 1.0 / max(1.0 - textureLod(depthT, q, 0.0).r, 1e-6);\n"
+    "  }\n"
+    "  float d = 1.0 - 5.0 / z;\n"
+    "  vec4 c = vec4(n.x * 2.0 - 1.0, flag(1u) ? 1.0 - 2.0 * n.y : 2.0 * n.y - 1.0, flag(2u) ? d * 2.0 - 1.0 : d, 1.0);\n"
+    "  vec2 t = 1.0 / vec2(textureSize(hudMask, 0));\n"
+    "  float w = textureLod(hudMask, n, 0.0).r;\n"
+    "  for (int i = 0; i < 4; i++) w = max(w, textureLod(hudMask, n + t * vec2((i & 1) == 0 ? -1.0 : 1.0, (i & 2) == 0 ? -1.0 : 1.0), 0.0).r);\n"
+    "  o = vec4(dot(p.m0, c), dot(p.m1, c), dot(p.m3, c), clamp(w * 2.0, 0.0, 1.0));\n"
     "}\n";
 
 // the HUD mask: each texel covers 4x4 pixels of the presented picture, set where it differs from the scene's copy
@@ -274,6 +292,9 @@ static void build_flow(VkCommandBuffer cb);
 static TexBackend g_mask;
 static TexBackend *g_fin;
 static bool build_mask(VkCommandBuffer cb);
+static TexBackend g_prep;  // kPrep's output, this real frame's
+static bool g_prep_ok;
+static void build_prep(VkCommandBuffer cb);
 static VkDescriptorSetLayout g_mdsl;
 static VkPipelineLayout g_mlayout;
 static VkPipeline g_mpipe;
@@ -354,7 +375,7 @@ static void pick_depth(void) {
 }
 
 // exec.c draw_, right after the scene's composite into the presented picture (outside any pass)
-static _Atomic bool g_paused;  // (fg_frame_wanted: in-between frames paused - the GPU full)
+static _Atomic bool g_paused;  // (fg_frame_wanted: no in-between frames - paused, the GPU full, or none to make)
 void fg_scene_composited(VkCommandBuffer cb, TexBackend *rt) {
     // (paused: no copy either - its full barriers mid-frame cost the driver it paused for: Qualcomm's on the POCO F7
     // Ultra, 8% of real frames late paused against 2.9% with frame generation off; the first frame after a pause goes
@@ -451,10 +472,18 @@ bool fg_frame_wanted(uint64_t frame, TexBackend *fin) {
     extern bool menu_is_open(void);
     extern bool widescreen_camera(uint64_t frame, float vp[16]);
     if (!fg_enabled()) return false;
-    static bool asked;
-    if (!asked) {
-        asked = true;
-        prefer_refresh(getenv("LARECOMP_FG_HZ") ? (float)atof(getenv("LARECOMP_FG_HZ")) : 1000.0f);  // (the fastest)
+    {   // the display's rate: Video > 120 Hz (settings frame_gen_120) - off, 60 (the game's 30 become 60); on, the
+        // display's fastest (its 60 become 120, its 30 too: three in-between frames). LARECOMP_FG_HZ=<hz> over it
+        static float asked = -1;
+        static int env = -2;
+        if (env == -2) env = getenv("LARECOMP_FG_HZ") ? atoi(getenv("LARECOMP_FG_HZ")) : -1;
+        float want = env > 0 ? (float)env : g_settings.frame_gen_120 ? 120.0f : 60.0f;
+        if (want != asked) {
+            extern void vk_surface_frame_rate(float hz);
+            asked = want;
+            prefer_refresh(want > 61 ? 1000.0f : want);  // (above 60: the fastest mode)
+            vk_surface_frame_rate(want);
+        }
     }
     int nb = frames_between(g_present_interval);
     pick_depth();
@@ -503,7 +532,7 @@ bool fg_frame_wanted(uint64_t frame, TexBackend *fin) {
     } else if (!paused && trial_at > 0 && now - trial_at >= 20000) {
         trial_at = 0, wait_ms = 5000;  // (it held)
     }
-    g_paused = paused;
+    g_paused = paused || nb == 0;  // (none to make either - the game's 60 on a 60 Hz display: no scene copy)
     bool ok = have && g_have_prev && g_scene_ok && g_depth && g_depth->backend && nb > 0 && !menu_is_open() && !paused;
     g_fg_n = ok ? nb : 0;
     static int logwhy = -1;  // LARECOMP_LOG_FRAMEGEN=1: why frames went without an in-between one, every 2 s
@@ -518,6 +547,12 @@ bool fg_frame_wanted(uint64_t frame, TexBackend *fin) {
             if (why[0] + why[1] + why[2] + why[3] + why[5])
                 LOG("[framegen] of %d frames without: camera %d, scene %d, depth %d, interval %d, menu %d, paused %d (late %d of 60)\n", n,
                     why[0], why[1], why[2], why[3], why[4], why[5], nlate);
+            extern uint64_t vk_gpu_busy_ns(void);  // (the GPU's load meanwhile: its time per real frame)
+            static uint64_t busy0;
+            uint64_t busy = vk_gpu_busy_ns();
+            if (busy0 && n) LOG("[framegen] gpu %.2f ms per real frame, %.0f%% busy\n", (busy - busy0) / 1e6 / n,
+                                (busy - busy0) / 1e4 / (now - at));
+            busy0 = busy;
             n = 0, memset(why, 0, sizeof why), at = now;
         }
     }
@@ -531,7 +566,7 @@ void fg_copy_window(VkCommandBuffer cb, VkImage sc, VkFormat fmt, uint32_t w, ui
     g_comp_ok = false;
     if (!fg_wincopy()) {  // (only the HUD mask: the in-between frame draws from the presented picture)
         g_comp_ok = build_mask(cb);
-        if (g_comp_ok) build_flow(cb);
+        if (g_comp_ok) build_flow(cb), build_prep(cb);
         return;
     }
     if (!make_image(&g_comp, fmt, w, h, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)) return;
@@ -554,7 +589,7 @@ void fg_copy_window(VkCommandBuffer cb, VkImage sc, VkFormat fmt, uint32_t w, ui
     b[1].srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT, b[1].dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT;
     vkCmdPipelineBarrier2(cb, &di);
     g_comp_ok = (fg_test() & 4) ? true : build_mask(cb);
-    if (g_comp_ok) build_flow(cb);
+    if (g_comp_ok) build_flow(cb), build_prep(cb);
 }
 
 // a fullscreen triangle, uv = position (top-left 0, 0)
@@ -616,7 +651,7 @@ static VkPipelineLayout set_layout(int nbind, uint32_t push, VkDescriptorSetLayo
 
 static VkPipeline warp_pipeline(VkFormat fmt) {
     if (g_pipe && g_pipe_fmt == fmt) return g_pipe;
-    if (!g_layout) g_layout = set_layout(6, 128, &g_dsl);
+    if (!g_layout) g_layout = set_layout(7, 128, &g_dsl);
     static VkShaderModule fs;
     if (!fs) fs = vk_compile_glsl(kWarp, STAGE_FRAGMENT, "framegen.frag");
     VkPipeline p = fs ? fs_pipeline(fs, fmt, g_layout) : VK_NULL_HANDLE;
@@ -703,6 +738,37 @@ static bool run_pass(VkCommandBuffer cb, TexBackend *target, VkPipeline pipe, Vk
     vkCmdEndRendering(cb);
     vk_full_barrier(cb);
     return true;
+}
+
+static void build_prep(VkCommandBuffer cb) {
+    extern uint32_t nvn_window_origin(void);
+    extern uint32_t nvn_depth_mode(void);
+    static VkDescriptorSetLayout dsl;
+    static VkPipelineLayout layout;
+    static VkPipeline pipe;
+    g_prep_ok = false;
+    NvnTexture *dt = g_depth;
+    if (!g_fg_n || !dt || !dt->backend || !g_mask.image || !g_have_prev) return;
+    float inv[16], diff[16];
+    struct { float m[16], a[4], b[4]; } pc = {{0}};
+    if (!mat_inv(g_vp, inv)) return;
+    for (int i = 0; i < 16; i++) diff[i] = g_vp[i] - g_vp_prev[i];
+    mat_mul(diff, inv, pc.m);
+    pc.a[0] = (float)((nvn_window_origin() != 0 ? 1 : 0) | (nvn_depth_mode() == 0 ? 2 : 0));
+    pc.b[2] = g_depth_scale[0], pc.b[3] = g_depth_scale[1];
+    const VkFormat f = VK_FORMAT_R16G16B16A16_SFLOAT;
+    if (!make_image(&g_prep, f, g_mask.width, g_mask.height, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)) return;
+    if (!layout) layout = set_layout(2, sizeof pc, &dsl);
+    if (!pipe) {
+        VkShaderModule fs = vk_compile_glsl(kPrep, STAGE_FRAGMENT, "framegen_prep.frag");
+        pipe = fs ? fs_pipeline(fs, f, layout) : VK_NULL_HANDLE;
+    }
+    TexBackend *db = dt->backend;
+    VkComponentMapping ident = {0};
+    VkImageView v[2] = {vk_image_view(db, VK_IMAGE_VIEW_TYPE_2D, db->format, 0, 1, 0, 1, ident, VK_IMAGE_ASPECT_DEPTH_BIT),
+                        color_view(&g_mask)};
+    static const bool lin[2] = {false, true};
+    g_prep_ok = run_pass(cb, &g_prep, pipe, layout, dsl, 2, v, lin, &pc, sizeof pc);
 }
 
 // objects' own movement (fg_copy_window, after the HUD mask): this frame's brightness picture, then - with the
@@ -802,7 +868,7 @@ static uint64_t g_generated;
 uint64_t fg_generated_frames(void) { return g_generated; }
 
 // device.c, after the real frame's in-between ones: their inputs are spent
-void fg_frame_done(void) { g_scene_ok = false, g_depth = NULL; }
+void fg_frame_done(void) { g_scene_ok = false, g_depth = NULL, g_prep_ok = false; }
 
 // device.c, inside an in-between frame's rendering into the swapchain image: draws it. fin: the presented picture;
 // rect: where it lies in the window (pixels), crop: the part of it shown; flip_present: lower-left origin; step: how far
@@ -814,25 +880,22 @@ bool fg_draw(VkCommandBuffer cb, VkFormat fmt, uint32_t ww, uint32_t wh, TexBack
     NvnTexture *dt = g_depth;
     extern VkImageView vk_last_present_src(void);
     VkImageView psrc = fg_wincopy() ? VK_NULL_HANDLE : vk_last_present_src();
-    if (!g_comp_ok || !fin || !fin->image || !dt || !dt->backend || (!fg_wincopy() && !psrc)) return false;
+    if (!g_comp_ok || !g_prep_ok || !fin || !fin->image || !dt || !dt->backend || (!fg_wincopy() && !psrc)) return false;
     TexBackend *db = dt->backend;
     VkPipeline pipe = warp_pipeline(fmt);
     if (!pipe) return false;
-    // generated camera: half a step on (rows); M = VPg x inverse(VP)
-    float vpg[16], inv[16], m[16];
+    // the generated camera: k of a step on (kPrep has D c; the step goes to the shader)
     static float t_env = -1;  // LARECOMP_FRAMEGEN_T=<t>: how far on (tests: 1 = where the next real frame should be)
     if (t_env < 0) t_env = getenv("LARECOMP_FRAMEGEN_T") ? (float)atof(getenv("LARECOMP_FRAMEGEN_T")) : 0;
     float step = t_env > 0 ? t_env : step_at;
-    for (int i = 0; i < 16; i++) vpg[i] = g_vp[i] + step * (g_vp[i] - g_vp_prev[i]);
-    if (!mat_inv(g_vp, inv)) return false;
-    mat_mul(vpg, inv, m);
     VkComponentMapping ident = {0};
-    VkImageView v[6] = {psrc ? psrc : color_view(&g_comp), color_view(&g_scene), color_view(fin),
+    VkImageView v[7] = {psrc ? psrc : color_view(&g_comp), color_view(&g_scene), color_view(fin),
                         vk_image_view(db, VK_IMAGE_VIEW_TYPE_2D, db->format, 0, 1, 0, 1, ident, VK_IMAGE_ASPECT_DEPTH_BIT), color_view(&g_mask),
-                        g_flow_ok ? color_view(&g_flow) : color_view(&g_mask)};  // (no movement: a stand-in, unread)
-    for (int i = 0; i < 6; i++) if (!v[i]) return false;
-    struct { float m[16], rect[4], crop[4], a[4], b[4]; } pc;
-    memcpy(pc.m, m, sizeof m);
+                        g_flow_ok ? color_view(&g_flow) : color_view(&g_mask),  // (no movement: a stand-in, unread)
+                        color_view(&g_prep)};
+    for (int i = 0; i < 7; i++) if (!v[i]) return false;
+    struct { float m[16], rect[4], crop[4], a[4], b[4]; } pc = {{0}};
+    pc.m[0] = step;
     pc.rect[0] = rect[0] / ww, pc.rect[1] = rect[1] / wh, pc.rect[2] = rect[2] / ww, pc.rect[3] = rect[3] / wh;
     memcpy(pc.crop, crop, sizeof pc.crop);
     // (flag 1: the game's lower-left origin is drawn flipped and presented flipped back, so in the presented picture's and
@@ -840,7 +903,7 @@ bool fg_draw(VkCommandBuffer cb, VkFormat fmt, uint32_t ww, uint32_t wh, TexBack
     // scenery backwards when the camera moved vertically: -5 / +17 pixels per shown frame instead of +6 / +6, S20 FE)
     bool srgb = fin->format == VK_FORMAT_R8G8B8A8_SRGB || fin->format == VK_FORMAT_B8G8R8A8_SRGB;
     pc.a[0] = (float)((nvn_window_origin() != 0 ? 1 : 0) | (nvn_depth_mode() == 0 ? 2 : 0) | (flip_present ? 4 : 0) | (psrc ? 8 : 0) |
-                      (srgb ? 16 : 0) | (g_flow_ok ? 32 : 0)) + fminf(step, 0.999f);  // (the fraction: objMove's step)
+                      (srgb ? 16 : 0) | (g_flow_ok ? 32 : 0));
     pc.a[1] = 0, pc.a[2] = 0, pc.b[0] = pc.b[1] = 0;
     link_on_screen(pc.a[0], pc.b, &pc.a[1], &pc.a[2]);
     // a camera that didn't move: the real picture again, without the per-pixel reprojection
@@ -858,11 +921,17 @@ bool fg_draw(VkCommandBuffer cb, VkFormat fmt, uint32_t ww, uint32_t wh, TexBack
             g_depth_scale[0], g_depth_scale[1], fin->width, fin->height, rect[0], rect[1], rect[2], rect[3], crop[0], crop[1], crop[2], crop[3]);
     pc.b[2] = g_depth_scale[0], pc.b[3] = g_depth_scale[1];
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
-    static const bool lin[6] = {true, true, true, false, true, false};
-    bind_images(cb, g_layout, g_dsl, 6, v, lin);
+    static const bool lin[7] = {true, true, true, false, true, false, true};
+    bind_images(cb, g_layout, g_dsl, 7, v, lin);
     vkCmdPushConstants(cb, g_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, &pc);
     VkViewport vp = {0, 0, (float)ww, (float)wh, 0, 1};
     VkRect2D sc = {{0, 0}, {ww, wh}};
+    if (psrc) {  // (only the game picture: the bars stay as vk_frame_begin cleared them, black - a fifth of the screen)
+        int32_t x0 = (int32_t)floorf(rect[0]), y0 = (int32_t)floorf(rect[1]);
+        int32_t x1 = (int32_t)ceilf(rect[0] + rect[2]), y1 = (int32_t)ceilf(rect[1] + rect[3]);
+        x0 = x0 < 0 ? 0 : x0, y0 = y0 < 0 ? 0 : y0, x1 = x1 > (int32_t)ww ? (int32_t)ww : x1, y1 = y1 > (int32_t)wh ? (int32_t)wh : y1;
+        if (x1 > x0 && y1 > y0) sc = (VkRect2D){{x0, y0}, {(uint32_t)(x1 - x0), (uint32_t)(y1 - y0)}};
+    }
     vkCmdSetViewport(cb, 0, 1, &vp);
     vkCmdSetScissor(cb, 0, 1, &sc);
     vkCmdDraw(cb, 3, 1, 0, 0);

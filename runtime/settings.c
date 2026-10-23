@@ -146,6 +146,7 @@ void settings_load(void) {
         else if (!strcmp(key, "shader_int32")) g_settings.shader_int32 = atoi(val) != 0;
         else if (!strcmp(key, "frame_gen")) g_settings.frame_gen = atoi(val) != 0;
         else if (!strcmp(key, "frame_gen_flow")) g_settings.frame_gen_flow = atoi(val) != 0;
+        else if (!strcmp(key, "frame_gen_120")) g_settings.frame_gen_120 = atoi(val) != 0;
         else if (!strcmp(key, "overlay")) g_settings.overlay_style = !strcmp(val, "compact");
         else if (!strcmp(key, "overlay_pos")) sscanf(val, "%f,%f", &g_settings.overlay_pos[0], &g_settings.overlay_pos[1]);
         else if (!strcmp(key, "mods_off")) snprintf(g_settings.mods_off, sizeof g_settings.mods_off, "%s", val);
@@ -224,6 +225,7 @@ void settings_save(void) {
     fprintf(f, "shader_int32 = %d\n", g_settings.shader_int32);
     fprintf(f, "frame_gen = %d\n", g_settings.frame_gen);
     fprintf(f, "frame_gen_flow = %d\n", g_settings.frame_gen_flow);
+    fprintf(f, "frame_gen_120 = %d\n", g_settings.frame_gen_120);
     fprintf(f, "overlay = %s\n", g_settings.overlay_style == 1 ? "compact" : "full");
     fprintf(f, "overlay_pos = %.4f,%.4f\n", g_settings.overlay_pos[0], g_settings.overlay_pos[1]);
     fprintf(f, "mods_off = %s\n", g_settings.mods_off);

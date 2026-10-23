@@ -145,6 +145,7 @@ uint64_t vk_pending_seq(void) { return submit_seq + 1; }
 // before.
 #define CQ_QUERIES (CQ_MAX + 2)
 static _Atomic uint64_t gpu_busy_total;  // (GPU ns working, all submissions so far: ADPF's GPU time per frame)
+uint64_t vk_gpu_busy_ns(void) { return gpu_busy_total; }  // (framegen.c's log: the GPU's load)
 #else
 #define CQ_QUERIES CQ_MAX
 #endif
@@ -276,9 +277,12 @@ void vk_pace_frame(void) {
         static uint64_t le, lu;
 #ifdef __ANDROID__
         extern int g_present_interval;
-        LOG("[pace] period %.2f blocked %.2f busy %.2f ms exec %.2f tex %.2f interval %d slow %d game %.2f render %.2f\n",
+        static uint64_t lg;  // (gpu: the GPU's time resolved since the last line - the submissions finish a frame or two late)
+        uint64_t g = gpu_busy_total;
+        LOG("[pace] period %.2f blocked %.2f busy %.2f ms exec %.2f tex %.2f interval %d slow %d game %.2f render %.2f gpu %.2f\n",
             p / 1e6, wt / 1e6, busy, (cum_exec - le) / 1e6, (prof_up_cum - lu) / 1e6, g_present_interval, pace_slow,
-            game_busy, render_busy);
+            game_busy, render_busy, lg ? (g - lg) / 1e6 : 0.0);
+        lg = g;
 #else
         LOG("[pace] period %.2f blocked %.2f busy %.2f ms exec %.2f tex %.2f\n", p / 1e6, wt / 1e6, busy,
             (cum_exec - le) / 1e6, (prof_up_cum - lu) / 1e6);

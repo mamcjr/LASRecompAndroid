@@ -38,6 +38,7 @@ typedef struct {
     bool shader_int32;    // shader address math in 32-bit words even where the driver offers 64-bit (vulkan/exec.c)
     bool frame_gen;       // 60 on the screen from the game's 30: an in-between frame by reprojection (vulkan/framegen.c)
     bool frame_gen_flow;  // ... characters' own movement too, by block matching (experimental; framegen.c build_flow)
+    bool frame_gen_120;   // ... with the display at 120 Hz: the game's 60 become 120 (off: 60 Hz, its 30 become 60)
     int overlay_style;    // Show FPS's overlay (ui/perf_overlay.mm): 0 full, 1 compact (one line)
     float overlay_pos[2]; // its top left, a share of the screen, dragged there with a finger (negative: the corner)
     char mods_off[512];   // the game mods turned off in the menu (runtime/mods.c), their folder names separated by '|'
