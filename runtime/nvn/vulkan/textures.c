@@ -165,6 +165,18 @@ static bool format_supports(VkFormat f, VkFormatFeatureFlags want) {
 }
 
 #ifdef __ANDROID__
+// The format a render target of NVN format f gets (as texture_create picks it for a format that isn't BC / ASTC) and
+// its aspects: shader preparation (exec.c renderer_prepare) makes the pass formats begin_pass would from these
+VkFormat vk_target_format(uint32_t f, VkImageAspectFlags *aspect) {
+    VkFormat vf = vk_format(f);
+    if (!format_supports(vf, VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT))
+        vf = VK_FORMAT_R8G8B8A8_UNORM;
+    if (aspect) *aspect = renderer_format_is_depth(f) ? aspect_of(f) : VK_IMAGE_ASPECT_COLOR_BIT;
+    return vf;
+}
+#endif
+
+#ifdef __ANDROID__
 // BC textures on a GPU without BC (Mali, and others outside Adreno): decoded on the CPU at upload (bcdec, MIT /
 // Unlicense) into the smallest plain format that holds them - BC4 R8, BC5 RG8 (2x the size), BC1/2/3/7 RGBA8 (4-8x),
 // BC6H RGBA16F. They used to become RGBA8 images left unwritten: colored 4x4 garbage on every BC texture (a

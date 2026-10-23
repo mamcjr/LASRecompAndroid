@@ -178,6 +178,13 @@ int main(int argc, char **argv) {
         else if (argv[i][0] != '-') root = arg_root;
     }
     rt_paths_init();  // the data root becomes the working directory (runtime/paths.h)
+#ifdef __ANDROID__
+    {   // (tests) LARECOMP_RM_CACHE_DIRS=<name>[,<name>...]: remove those folders of the data root - test runs set the
+        // shader caches aside as cache-<something>, and adb can't delete the app's files; only such names are taken
+        extern void rm_cache_dirs(const char *list);
+        if (getenv("LARECOMP_RM_CACHE_DIRS")) rm_cache_dirs(getenv("LARECOMP_RM_CACHE_DIRS"));
+    }
+#endif
     for (bool title = !skip_launcher;;) {
         if (title) {  // start screen (runtime/ui/launcher.mm): game files setup, seed choice, settings
             extern void launcher_run(const char *root);

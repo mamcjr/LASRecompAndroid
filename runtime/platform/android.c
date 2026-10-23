@@ -782,3 +782,15 @@ void plat_adpf_stats(PlatAdpfStats *out) {
     out->render_cpu = s_render_cpu;
     pthread_mutex_unlock(&adpf_lock);
 }
+
+// (tests: runtime/main.c LARECOMP_RM_CACHE_DIRS) remove folders of the data root named cache-<something>, with all in them
+void rm_cache_dirs(const char *list) {
+    char *l = strdup(list);
+    for (char *s = l, *n; s && *s; s = n) {
+        n = strchr(s, ',');
+        if (n) *n++ = 0;
+        if (strncmp(s, "cache-", 6) || strchr(s, '/') || strstr(s, "..")) { LOG("[paths] not removed: %s\n", s); continue; }
+        LOG("[paths] removed %s: %s\n", s, plat_remove_tree(s) ? "ok" : strerror(errno));
+    }
+    free(l);
+}

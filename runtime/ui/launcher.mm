@@ -46,6 +46,9 @@ extern "C" {
 #include "romfs_build.h"
 #include "settings.h"
 #include "input_bind.h"
+#ifdef __ANDROID__
+#include "nvn/shader_prep.h"
+#endif
 void controls_bindings_draw(float scale);  // ui/controls_ui.mm
 void ui_window_init(void);
 SDL_Window *ui_window(void);
@@ -390,6 +393,36 @@ static std::string g_driver_msg;
 static bool g_driver_restart;  // (that message asks for a restart: the Restart now button)
 static std::string g_save_msg;
 static std::atomic<bool> g_save_busy{false};
+
+// Shader preparation (runtime/nvn/shader_prep.h): on the start screen, in the background, when the shader caches are
+// cold (a new build, translator, GPU driver or memory mode since the last one); PLAY waits for it
+static std::atomic<bool> g_prep_running{false};
+static std::atomic<int> g_prep_done{0}, g_prep_total{0};
+static bool g_play_after_prep;
+static volatile int g_prep_cancel;
+static void prep_progress(int done, int total) { g_prep_done = done, g_prep_total = total; }
+struct PrepArgs { char *root, *tag; };
+static void *prep_thread(void *arg) {
+    PrepArgs *a = (PrepArgs *)arg;
+    if (shader_prep_run(a->root, prep_progress, &g_prep_cancel) && !g_prep_cancel) shader_prep_done(a->tag);
+    free(a->root), free(a->tag), free(a);
+    g_prep_running = false;
+    return NULL;
+}
+static void android_prep_start(void) {  // (the game files are ready)
+    if (g_prep_running.load()) return;
+    char tag[1024];
+    renderer_prepare_tag(tag, sizeof tag);
+    if (!shader_prep_due(tag)) return;
+    fprintf(stderr, "[shader] preparation due (%s)\n", tag);
+    g_prep_running = true;
+    g_prep_done = 0, g_prep_total = 0;
+    PrepArgs *a = (PrepArgs *)malloc(sizeof *a);
+    a->root = strdup(g_root.c_str()), a->tag = strdup(tag);
+    pthread_t t;
+    if (pthread_create(&t, NULL, prep_thread, a) == 0) pthread_detach(t);
+    else { free(a->root), free(a->tag), free(a); g_prep_running = false; }
+}
 
 static std::string save_transfer_path() {
     const char *override = getenv("LARECOMP_SAVE_DIR");
@@ -1365,6 +1398,7 @@ extern "C" void launcher_run(const char *root) {
     if (status.empty()) load_background(dev);
 #ifdef __ANDROID__
     if (status.empty()) android_prune_loose();
+    if (status.empty()) android_prep_start();
 #endif
     std::vector<std::string> seeds = list_seeds();
     std::vector<std::string> choices = {"Vanilla"};
@@ -1416,6 +1450,9 @@ extern "C" void launcher_run(const char *root) {
         fprintf(stderr, "[launcher] delete %.1f GB: %s -> %s\n", gb, ok ? "ok" : "refused", status.c_str());
         if (!status.empty()) { g_bg = 0; page = SETUP; }
     }
+#ifdef __ANDROID__
+    if (play && g_prep_running.load()) play = false, g_play_after_prep = true;  // (LARECOMP_LAUNCHER_AUTOPLAY too)
+#endif
     while (!play) {
         menu_apply_window_requests(win);  // (the Video tab's Fullscreen)
         // the seed PLAY would start, kept current (Settings > Gameplay greys out what that seed forces)
@@ -1452,6 +1489,9 @@ extern "C" void launcher_run(const char *root) {
         if (was_busy && !busy) {
             status = check_game_files(g_root);
             if (status.empty()) { load_background(dev); page = MAIN; }
+#ifdef __ANDROID__
+            if (status.empty()) android_prep_start();
+#endif
         }
         was_busy = busy;
 
@@ -1959,6 +1999,14 @@ extern "C" void launcher_run(const char *root) {
                 }
                 ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.55f, 1), "%s", tr("Game files ready."));
                 ImGui::SetCursorPosX(x0);
+#ifdef __ANDROID__
+                if (g_prep_running.load()) {  // (shader preparation, in place of the version line meanwhile)
+                    int d = g_prep_done.load(), t = g_prep_total.load();
+                    ImGui::TextColored(ImVec4(0.98f, 0.85f, 0.45f, 1), "%s %d%%%s", tr("Preparing shaders:"),
+                                       t > 0 ? (int)((long long)d * 100 / t) : 0,
+                                       g_play_after_prep ? tr(" - the game starts when done (PLAY again: now)") : "");
+                } else
+#endif
                 ImGui::TextColored(ImVec4(0.66f, 0.76f, 0.98f, 1), "Nintendo Switch  \xc2\xb7  v1.0.0");
             } else {
                 ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "!  %s", tr(busy ? "Setting up the game files..." : status.c_str()));
@@ -2048,6 +2096,15 @@ extern "C" void launcher_run(const char *root) {
             if (shot) exit(0);
 #endif
         }
+#ifdef __ANDROID__
+        // PLAY while the shaders are being prepared: the game starts once they are (the progress line says how far);
+        // PLAY again: now - what isn't built yet is built at first use, as before, and the next start prepares again
+        if (play && g_prep_running.load()) {
+            if (g_play_after_prep) g_prep_cancel = 1;
+            else play = false, g_play_after_prep = true;
+        }
+        if (g_play_after_prep && !g_prep_running.load()) g_play_after_prep = false, play = true;
+#endif
     }
     // play: remember the choice, hand the window to the game
     snprintf(g_settings.rando_seed, sizeof g_settings.rando_seed, "%s", choice ? choices[choice].c_str() : "");

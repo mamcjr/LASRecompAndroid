@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #include "../../kernel.h"
 #include "shaders.h"
@@ -17,6 +18,9 @@
 #include "../renderer.h"
 #include "../../settings.h"
 #include "../../paths.h"
+#ifdef __ANDROID__
+#include "../shader_prep.h"
+#endif
 
 static uint64_t stat_draws, stat_skipped, stat_passes, stat_dispatches, stat_wait_ns, stat_flushes, stat_feedback_copies;
 static uint64_t stat_upload_bytes;
@@ -1625,7 +1629,94 @@ typedef struct {
     VkPipelineLayout layout;
     bool vs_uses_vid;
     _Atomic int state;  // 0 building, 1 ready, 2 failed
+#ifdef __ANDROID__
+    bool prep, pcopy, pbda;      // (shader preparation: translated for the global memory mode the game will use)
+    uint64_t prep_vh, prep_fh;   // (prepared: its shaders' code hashes)
+#endif
 } Prog;
+
+#ifdef __ANDROID__
+// ================================================================== prepared objects (shader_prep.h)
+// Built before the game from the variant lists; found by content (code hashes + keys + the translator's switches) at
+// first use, as code addresses differ from run to run. Kept for the whole process (reboots included). prep_lock
+// guards the tables.
+static pthread_mutex_t prep_lock = PTHREAD_MUTEX_INITIALIZER;
+typedef struct { uint64_t key; void *obj; } PrepEnt;
+static PrepEnt *prep_progs, *prep_pipes, *prep_cs;  // program / pipeline / compute content key -> Prog / Pipe / CsProg
+static size_t prep_progs_cap, prep_pipes_cap, prep_cs_cap, prep_progs_n, prep_pipes_n, prep_cs_n;
+static _Atomic int prep_pending, prep_queued;
+
+static void *prep_get(PrepEnt *t, size_t cap, uint64_t key) {
+    if (!cap) return NULL;
+    if (!key) key = 1;
+    for (size_t j = key & (cap - 1); t[j].key; j = (j + 1) & (cap - 1))
+        if (t[j].key == key) return t[j].obj;
+    return NULL;
+}
+static void prep_put(PrepEnt **t, size_t *cap, size_t *n, uint64_t key, void *obj) {
+    if (!key) key = 1;
+    if (*n * 2 >= *cap) {
+        size_t nc = *cap ? *cap * 2 : 1024;
+        PrepEnt *nt = calloc(nc, sizeof *nt);
+        for (size_t i = 0; i < *cap; i++)
+            if ((*t)[i].key) {
+                size_t j = (*t)[i].key & (nc - 1);
+                while (nt[j].key) j = (j + 1) & (nc - 1);
+                nt[j] = (*t)[i];
+            }
+        free(*t);
+        *t = nt, *cap = nc;
+    }
+    size_t j = key & (*cap - 1);
+    while ((*t)[j].key && (*t)[j].key != key) j = (j + 1) & (*cap - 1);
+    if (!(*t)[j].key) (*n)++;
+    (*t)[j] = (PrepEnt){key, obj};
+}
+#define PREP_GET(tab, key) ({ pthread_mutex_lock(&prep_lock); void *o_ = prep_get(tab, tab##_cap, key); pthread_mutex_unlock(&prep_lock); o_; })
+#define PREP_PUT(tab, key, obj) do { pthread_mutex_lock(&prep_lock); prep_put(&tab, &tab##_cap, &tab##_n, key, obj); pthread_mutex_unlock(&prep_lock); } while (0)
+
+// A preparation's builds, counted (renderer_prepare_pending): on threads of their own, all the cores but one - the
+// game's workers (run_job) leave room for the game, but on the start screen nothing else runs (a cold preparation
+// took 96 s on 4 workers). LARECOMP_PREP_WORKERS=<n>: that many.
+static Job *pjobs_head, *pjobs_tail;
+static pthread_mutex_t pjobs_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t pjobs_cond = PTHREAD_COND_INITIALIZER;
+static void *prep_worker(void *a) {
+    (void)a;
+    for (;;) {
+        pthread_mutex_lock(&pjobs_lock);
+        while (!pjobs_head) pthread_cond_wait(&pjobs_cond, &pjobs_lock);
+        Job *j = pjobs_head;
+        pjobs_head = j->next;
+        if (!pjobs_head) pjobs_tail = NULL;
+        pthread_mutex_unlock(&pjobs_lock);
+        j->fn(j->arg);
+        free(j);
+        prep_pending--;
+    }
+    return NULL;
+}
+static void prep_job(void (*fn)(void *), void *arg) {
+    prep_pending++, prep_queued++;
+    if (sync_shaders()) { fn(arg); prep_pending--; return; }
+    static bool started;
+    if (!started) {
+        started = true;
+        int n = SDL_GetNumLogicalCPUCores() - 1;
+        if (getenv("LARECOMP_PREP_WORKERS")) n = atoi(getenv("LARECOMP_PREP_WORKERS"));
+        if (n < 1) n = 1;
+        if (n > 12) n = 12;
+        for (int i = 0; i < n; i++) { pthread_t t; pthread_create(&t, NULL, prep_worker, NULL); }
+    }
+    Job *j = malloc(sizeof *j);
+    j->fn = fn; j->arg = arg; j->next = NULL;
+    pthread_mutex_lock(&pjobs_lock);
+    if (pjobs_tail) pjobs_tail->next = j; else pjobs_head = j;
+    pjobs_tail = j;
+    pthread_cond_signal(&pjobs_cond);
+    pthread_mutex_unlock(&pjobs_lock);
+}
+#endif
 
 static VkPipelineLayout make_layout(Prog *p, int nsets, VkShaderStageFlags s0, VkShaderStageFlags s1) {
 #ifdef __ANDROID__
@@ -1736,25 +1827,58 @@ static bool qcom_no_switch(void) {
     return on;
 }
 
+#ifdef __ANDROID__
+// The translator's switches for a global memory mode (copy: the CPU-copied arena; bda: the placed heap reached by
+// pointer) - what makes the same shader translate differently on this device. Part of a prepared program's content
+// key: one translated for another mode than the game's is never used.
+typedef struct {
+    uint8_t no_int64, map_all, bda, miss_log, brx_window, static_stacks, structured, no_switch, no_local_struct,
+        native_half, fast_minmax, pad;
+    uint32_t miss_stages;
+} XCfg;
+static XCfg xcfg(bool copy, bool bda) {
+    XCfg c = {0};
+    c.no_int64 = !g_vk.shader_int64 || g_settings.shader_int32 || getenv("LARECOMP_VK_INT32") != NULL;
+    c.map_all = copy;
+    c.bda = bda;
+    c.miss_log = copy && !getenv("LARECOMP_NO_GMISS");
+    // (a test: which stages log misses - 1 vertex, 2 fragment, 32 compute)
+    c.miss_stages = getenv("LARECOMP_GMISS_STAGES") ? (uint32_t)strtoul(getenv("LARECOMP_GMISS_STAGES"), NULL, 0)
+                                                    : (uint32_t)maxwell_gmem_miss_stages;
+    c.brx_window = !getenv("LARECOMP_BRX_ALL_LABELS");
+    c.static_stacks = !getenv("LARECOMP_DYN_STACKS");
+    c.structured = structure_on();
+    c.no_switch = qcom_no_switch();
+    c.no_local_struct = qcom_no_switch() && !getenv("LARECOMP_QCOM_LOCAL");
+    c.native_half = !getenv("LARECOMP_BITWISE_HALF");
+    c.fast_minmax = !getenv("LARECOMP_SAFE_MATH");
+    return c;
+}
+static void xcfg_apply(const XCfg *c) {  // (translate_lock held)
+    maxwell_no_int64 = c->no_int64;
+    maxwell_gmem_map_all = c->map_all;
+    maxwell_gmem_bda = c->bda;
+    maxwell_gmem_miss_log = c->miss_log;
+    maxwell_gmem_miss_stages = c->miss_stages;
+    maxwell_brx_window = c->brx_window;
+    maxwell_static_stacks = c->static_stacks;
+    maxwell_structured = c->structured;
+    maxwell_no_switch = c->no_switch;
+    maxwell_no_local_struct = c->no_local_struct;
+    maxwell_native_half = c->native_half;
+    maxwell_fast_minmax = c->fast_minmax;
+}
+static uint64_t xcfg_hash(XCfg c) { return hmix(0xcbf29ce484222325ull, &c, sizeof c); }
+#endif
+
 static void translate_program(void *arg) {
     Prog *p = arg;
     pthread_mutex_lock(&translate_lock);
     maxwell_gmem_base = HEAP_BASE;
     maxwell_gmem_size = HEAP_MAX;
 #ifdef __ANDROID__
-    maxwell_no_int64 = !g_vk.shader_int64 || g_settings.shader_int32 || getenv("LARECOMP_VK_INT32") != NULL;
-    maxwell_gmem_map_all = gcopy_mode;
-    maxwell_gmem_bda = gmem_bda != 0;
-    maxwell_gmem_miss_log = gcopy_mode && !getenv("LARECOMP_NO_GMISS");
-    if (getenv("LARECOMP_GMISS_STAGES"))  // (a test: which stages log misses - 1 vertex, 2 fragment, 32 compute)
-        maxwell_gmem_miss_stages = (unsigned)strtoul(getenv("LARECOMP_GMISS_STAGES"), NULL, 0);
-    maxwell_brx_window = !getenv("LARECOMP_BRX_ALL_LABELS");
-    maxwell_static_stacks = !getenv("LARECOMP_DYN_STACKS");
-    maxwell_structured = structure_on();
-    maxwell_no_switch = qcom_no_switch();
-    maxwell_no_local_struct = qcom_no_switch() && !getenv("LARECOMP_QCOM_LOCAL");
-    maxwell_native_half = !getenv("LARECOMP_BITWISE_HALF");
-    maxwell_fast_minmax = !getenv("LARECOMP_SAFE_MATH");
+    XCfg xc = p->prep ? xcfg(p->pcopy, p->pbda) : xcfg(gcopy_mode, gmem_bda != 0);
+    xcfg_apply(&xc);
 #endif
     p->vi = maxwell_translate_bounded((const uint8_t *)(uintptr_t)p->code[0], p->cmax[0], p->const_bytes[0], STAGE_VERTEX, &p->vkey);
     if (p->vi->msl) {
@@ -1776,7 +1900,8 @@ static void translate_program(void *arg) {
     {   // LARECOMP_DUMP_FS=<fs hash, as [gpuprof] / [fshash] print it>: that fragment shader's GLSL (and its vertex
         // shader's) to cache/fs_<hash>.glsl, for looking at a slow one
         const char *want = getenv("LARECOMP_DUMP_FS");
-        uint64_t h = hmix(1469598103934665603ull, (const void *)(uintptr_t)(p->code[1] + 0x30), 0x200);
+        // (only then: a prepared program's code is a blob of the game files, maybe shorter than 0x230 bytes)
+        uint64_t h = want ? hmix(1469598103934665603ull, (const void *)(uintptr_t)(p->code[1] + 0x30), 0x200) : 0;
         if (want && strtoull(want, NULL, 16) == h) {
             char path[96];
             snprintf(path, sizeof path, "cache/fs_%016llx.glsl", (unsigned long long)h);
@@ -1795,11 +1920,27 @@ static void translate_program(void *arg) {
     p->vs_uses_vid = strstr(p->vi->msl, "gl_VertexIndex") != NULL;
     save_glsl(p->vi->msl, p->code[0], "vs");
     save_glsl(p->fi->msl, p->code[1], "fs");
+#ifdef __ANDROID__
+    if (p->prep) { prep_job(compile_program, p); return; }
+#endif
     run_job(compile_program, p);
 }
 
 #define PROG_TAB 4096
 static struct { uint64_t key; Prog *prog; } prog_tab[PROG_TAB];
+
+#ifdef __ANDROID__
+// A program by what it is made of: its shaders' code hashes, the keys and the translator's switches (shader_prep.h)
+static uint64_t prog_content_key(uint64_t vh, uint64_t fh, const ShaderKey *vkey, const ShaderKey *fkey, uint64_t xh) {
+    uint64_t h = 0xcbf29ce484222325ull;
+    const uint64_t c[3] = {vh, fh, xh};
+    h = hmix(h, c, sizeof c);
+    h = hmix(h, vkey, sizeof *vkey);
+    h = hmix(h, fkey->rt_kind, 8);
+    uint8_t nd = fkey->no_ds_write;
+    return hmix(h, &nd, 1);
+}
+#endif
 
 static Prog *get_program(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey) {
     if (!(np->stage_mask & 1) || !(np->stage_mask & 2)) return NULL;
@@ -1815,6 +1956,21 @@ static Prog *get_program(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey) {
     uint32_t slot = (uint32_t)(h ^ (h >> 31)) & (PROG_TAB - 1);
     while (prog_tab[slot].key && prog_tab[slot].key != h) slot = (slot + 1) & (PROG_TAB - 1);
     if (prog_tab[slot].key) return prog_tab[slot].prog;
+#ifdef __ANDROID__
+    {   // prepared before the game (the same code, keys and translator switches)
+        uint64_t vh = shader_stage_hash(&np->stages[0]), fh = shader_stage_hash(&np->stages[1]);
+        if (vh && fh) {
+            uint64_t ck = prog_content_key(vh, fh, vkey, fkey, xcfg_hash(xcfg(gcopy_mode, gmem_bda != 0)));
+            Prog *pp = prep_progs_n ? PREP_GET(prep_progs, ck) : NULL;
+            if (pp) {
+                prog_tab[slot].key = h;
+                prog_tab[slot].prog = pp;
+                return pp;
+            }
+            shader_first_visit("program", vh, fh, ck);
+        }
+    }
+#endif
     Prog *p = calloc(1, sizeof *p);
     prog_tab[slot].key = h;
     prog_tab[slot].prog = p;
@@ -2035,6 +2191,70 @@ static uint64_t hmix(uint64_t h, const void *p, size_t n) {
 
 static VkPrimitiveTopology topo_class_base(uint8_t c) {
     return c == 0 ? VK_PRIMITIVE_TOPOLOGY_POINT_LIST : c == 1 ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+}
+
+// What a pipeline is built from, besides its program and the pass's attachment formats: the draw's state (draw_) or,
+// on Android, a variant record (renderer_prepare) - one function, so a prepared pipeline's key is the draw's
+typedef struct {
+    const uint32_t *attrib; int nattrib;
+    const uint32_t (*stream)[2]; int nstream;
+    const uint32_t *rt_fmt;         // color target texture formats (0: none)
+    uint32_t channel_mask;
+    uint8_t blend_on;               // color state blend enables
+    const uint8_t (*blend)[8];
+    uint8_t a2c, topo_class, poly_fill;
+} PipeIn;
+
+static void pipe_key_fill(PipeKey *k, Prog *pr, const PipeIn *in, const VkFormat color[8], uint32_t ncolor, VkFormat depth,
+                          VkFormat stencil, uint32_t samples) {
+    memset(k, 0, sizeof *k);
+    k->prog = pr;
+    k->ncolor = ncolor;
+#ifdef __ANDROID__
+    // (only the pass's own slots: begin_pass leaves the ones past them as the last pass with more targets set them, so
+    // a depth-only pass's key carried the previous pass's color formats - LASRecomp beta_5 3921201)
+    for (uint32_t i = 0; i < ncolor && i < 8; i++) k->color[i] = color[i];
+#else
+    memcpy(k->color, color, sizeof k->color);
+#endif
+    k->depth = depth;
+    k->stencil = stencil;
+    k->samples = samples;
+    for (int i = 0; i < 32; i++) {
+        if (!(pr->vi->attr_mask & (1u << i))) continue;
+        k->attr_mask |= 1u << i;
+        uint32_t a = i < in->nattrib ? in->attrib[i] : 0x2E;
+        uint32_t fmt = a & 0xFF, stream = (a >> 8) & 0x1F, off = a >> 13;
+        if (i >= in->nattrib || fmt == 0 || stream >= 16) {  // unbound attribute: (0, 0, 0, 1) from a constant stream
+            k->attr_fmt[i] = VK_FORMAT_R32G32B32A32_SFLOAT;
+            k->attr_bind[i] = ZERO_BINDING;
+            k->used_streams |= 1u << ZERO_BINDING;
+            continue;
+        }
+        k->attr_fmt[i] = vertex_format_supported(vertex_format(fmt));
+        k->attr_off[i] = off;
+        k->attr_bind[i] = stream;
+        k->used_streams |= 1u << stream;
+    }
+    for (int s = 0; s < 16; s++) {
+        if (!(k->used_streams & (1u << s))) continue;
+        k->stride[s] = s < in->nstream ? in->stream[s][0] : 0;
+        k->divisor[s] = s < in->nstream && k->stride[s] ? in->stream[s][1] : 0;
+        if (k->divisor[s] > 1 && !g_vk.divisor) k->divisor[s] = 1;
+    }
+    for (uint32_t i = 0; i < k->ncolor && i < 8; i++) {
+        if (!in->rt_fmt[i] || k->color[i] == VK_FORMAT_UNDEFINED) continue;
+        // Targets the fragment shader doesn't output keep their contents on Metal, but are undefined in Vulkan
+        // (NVIDIA writes black): mask them. Foliage depth pre-passes left black silhouettes (user 2026-10-08).
+        k->write_mask[i] = ((pr->fi->out_mask >> (i * 4)) & 0xF) ? (in->channel_mask >> (i * 4)) & 0xF : 0;
+        if (((in->blend_on >> i) & 1) && !rt_kind(in->rt_fmt[i])) {
+            k->blend_on |= (uint8_t)(1u << i);
+            memcpy(k->blend[i], in->blend[i], 8);
+        }
+    }
+    k->a2c = in->a2c;
+    k->topo_class = in->topo_class;
+    k->poly_fill = in->poly_fill;
 }
 
 static void build_pipeline(void *arg) {
@@ -3717,6 +3937,13 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
 
 // ================================================================== compute
 typedef struct { Prog p; ShaderInfo *si; VkPipeline pipe; uint32_t local[3]; uint8_t *code; uint64_t addr, cmax; size_t const_bytes; bool copy_mode; } CsProg;
+#ifdef __ANDROID__
+// (prepared compute programs: the same content key as a program's, of its one shader and its local size)
+static uint64_t cs_content_key(uint64_t ch, const uint32_t local[3], uint64_t xh) {
+    const uint64_t c[2] = {ch, xh};
+    return hmix(hmix(0xcbf29ce484222325ull, c, sizeof c), local, 12);
+}
+#endif
 
 static void build_compute(void *arg) {
     CsProg *cp = arg;
@@ -3749,19 +3976,8 @@ static void translate_compute(void *arg) {
     maxwell_gmem_base = HEAP_BASE;
     maxwell_gmem_size = HEAP_MAX;
 #ifdef __ANDROID__
-    maxwell_no_int64 = !g_vk.shader_int64 || g_settings.shader_int32 || getenv("LARECOMP_VK_INT32") != NULL;
-    maxwell_gmem_map_all = cp->copy_mode;
-    maxwell_gmem_bda = gmem_bda != 0;
-    maxwell_gmem_miss_log = cp->copy_mode && !getenv("LARECOMP_NO_GMISS");
-    if (getenv("LARECOMP_GMISS_STAGES"))  // (a test: which stages log misses - 1 vertex, 2 fragment, 32 compute)
-        maxwell_gmem_miss_stages = (unsigned)strtoul(getenv("LARECOMP_GMISS_STAGES"), NULL, 0);
-    maxwell_brx_window = !getenv("LARECOMP_BRX_ALL_LABELS");
-    maxwell_static_stacks = !getenv("LARECOMP_DYN_STACKS");
-    maxwell_structured = structure_on();
-    maxwell_no_switch = qcom_no_switch();
-    maxwell_no_local_struct = qcom_no_switch() && !getenv("LARECOMP_QCOM_LOCAL");
-    maxwell_native_half = !getenv("LARECOMP_BITWISE_HALF");
-    maxwell_fast_minmax = !getenv("LARECOMP_SAFE_MATH");
+    XCfg xc = xcfg(cp->copy_mode, cp->p.prep ? cp->p.pbda : gmem_bda != 0);
+    xcfg_apply(&xc);
 #endif
     ShaderKey k = {0};
     k.glsl = 1;
@@ -3775,6 +3991,9 @@ static void translate_compute(void *arg) {
         return;
     }
     save_glsl(cp->si->msl, cp->addr, "cs");
+#ifdef __ANDROID__
+    if (cp->p.prep) { prep_job(build_compute, cp); return; }
+#endif
     run_job(build_compute, cp);
 }
 
@@ -3784,6 +4003,30 @@ static CsProg *compute_program(NvnProgram *np) {
     struct CsEnt *tab = g_cs_tab;
     int n = g_cs_n;
     for (int i = 0; i < n; i++) if (tab[i].addr == ss->code_addr) return tab[i].cp;
+#ifdef __ANDROID__
+    {   // prepared before the game (the same code, local size and translator switches)
+        uint32_t local[3];
+        for (int i = 0; i < 3; i++) {
+            local[i] = ss->control ? *(const uint32_t *)(ss->control + 0x748 + 4 * i) : 1;
+            if (!local[i]) local[i] = 1;
+        }
+        uint64_t ch = shader_stage_hash(ss);
+        if (ch) {
+            uint64_t ck = cs_content_key(ch, local, xcfg_hash(xcfg(gcopy_mode, gmem_bda != 0)));
+            CsProg *pc = prep_cs_n ? PREP_GET(prep_cs, ck) : NULL;
+            if (pc) {
+                if (n < 256) { tab[n].addr = ss->code_addr; tab[n].cp = pc; g_cs_n = n + 1; }
+                return pc;
+            }
+            if (shader_rec_recording()) {
+                ShaderRec rec = {.kind = 'C', .vs = ch};
+                memcpy(rec.local, local, sizeof rec.local);
+                shader_rec_note(&rec);
+            }
+            shader_first_visit("compute", ch, 0, ck);
+        }
+    }
+#endif
     CsProg *cp = calloc(1, sizeof *cp);
     if (n < 256) { tab[n].addr = ss->code_addr; tab[n].cp = cp; g_cs_n = n + 1; }
     cp->addr = ss->code_addr;
@@ -3804,6 +4047,180 @@ static CsProg *compute_program(NvnProgram *np) {
     run_translate(translate_compute, cp);
     return cp;
 }
+
+#ifdef __ANDROID__
+// ================================================================== shader preparation (shader_prep.h)
+// Each record: translated here (the preparing thread, under translate_lock), compiled and built on the worker threads,
+// kept in the prep_* tables for the game. It runs on the start screen, before the game has placed its heap: the
+// translator's switches are those the global memory mode the game will use gives (prep_mode, as vk_heap_place decides
+// it; a wrong guess only means the prepared objects go unused - their content key holds the switches).
+#define PREP_HEAP_SIZE (3220ull << 20)  // (the game's heap: kernel.c SetHeapSize)
+static void prep_mode(bool *copy, bool *bda) {
+    extern bool vk_adreno_8xx(const char *name);
+    bool placed = g_vk.map_placed && !getenv("LARECOMP_VK_NO_PLACED") &&
+                  (g_settings.gpu_heap < 0 ? vk_adreno_8xx(g_vk.props.deviceName) : g_settings.gpu_heap != 0);
+    *copy = !placed && !g_vk.host_import && !getenv("LARECOMP_VK_NO_GCOPY");
+    *bda = placed && g_vk.bda && gmem_bda_wanted(PREP_HEAP_SIZE);
+}
+
+#ifndef SHADER_TRANSLATOR_ID
+#define SHADER_TRANSLATOR_ID "dev"
+#endif
+void renderer_prepare_tag(char *out, size_t n) {
+    bool copy, bda;
+    prep_mode(&copy, &bda);
+    VkPhysicalDeviceDriverProperties d = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+    VkPhysicalDeviceProperties2 p = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &d};
+    vkGetPhysicalDeviceProperties2(g_vk.phys, &p);
+    snprintf(out, n, "translator %s | %s | %s %s %#x | memory %s | xcfg %016llx", SHADER_TRANSLATOR_ID,
+             p.properties.deviceName, d.driverName, d.driverInfo, p.properties.driverVersion,
+             copy ? "copy" : bda ? "placed, pointer" : "placed", (unsigned long long)xcfg_hash(xcfg(copy, bda)));
+}
+
+static _Atomic int prep_pipe_dups;  // records whose pipeline another record already made
+bool renderer_prepare_begin(void) { return g_vk.dev != VK_NULL_HANDLE; }
+int renderer_prepare_pending(void) { return prep_pending; }
+int renderer_prepare_queued(void) { return prep_queued; }
+void renderer_prepare_end(void) {
+    extern void vk_pipeline_cache_save(void);
+    vk_pipeline_cache_save();  // (otherwise only kept now and then, and at exit)
+    pthread_mutex_lock(&prep_lock);
+    size_t n = prep_pipes_n, np = prep_progs_n, nc = prep_cs_n;
+    pthread_mutex_unlock(&prep_lock);
+    LOG("[vk] prepared %zu programs, %zu pipelines (%d records shared one), %zu compute\n", np, n,
+        atomic_load(&prep_pipe_dups), nc);
+}
+
+typedef struct { Pipe *pp; ShaderRec r; } PrepPipe;
+static void prep_pipeline(void *arg) {
+    PrepPipe *a = arg;
+    Prog *pr = a->pp->k.prog;
+    // its program's compile was queued before (the queue is first in, first out): wait for it to finish
+    while (atomic_load(&pr->state) == 0) { struct timespec ts = {0, 1000000}; nanosleep(&ts, NULL); }
+    if (atomic_load(&pr->state) != 1) { free(a->pp); free(a); return; }
+    const ShaderRec *r = &a->r;
+    // the pass's attachment formats as begin_pass makes them for these targets (vulkan/textures.c texture_create)
+    extern VkFormat vk_target_format(uint32_t f, VkImageAspectFlags *aspect);
+    VkFormat color[8] = {0}, depth = VK_FORMAT_UNDEFINED, stencil = VK_FORMAT_UNDEFINED;
+    for (uint32_t i = 0; i < r->ncolor && i < 8; i++) {
+        if (!r->color[i]) continue;
+        VkFormat b = vk_target_format(r->color[i], NULL);
+        color[i] = r->cview[i] && vk_format(r->color[i]) == b ? vk_format(r->cview[i]) : b;
+    }
+    if (r->depth && renderer_format_is_depth(r->depth)) {
+        VkImageAspectFlags asp;
+        VkFormat b = vk_target_format(r->depth, &asp);
+        if (asp & VK_IMAGE_ASPECT_DEPTH_BIT) depth = b;
+        if (asp & VK_IMAGE_ASPECT_STENCIL_BIT) stencil = b;
+    }
+    const PipeIn in = {r->attrib, r->nattrib, (const uint32_t (*)[2])r->stream, r->nstream, r->color, r->channel_mask,
+                       r->blend_on, (const uint8_t (*)[8])r->blend, r->a2c, r->topo, r->poly_fill};
+    pipe_key_fill(&a->pp->k, pr, &in, color, r->ncolor, depth, stencil, r->samples ? r->samples : 1);
+    uint64_t ph = hash_words(0xcbf29ce484222325ull, &a->pp->k, sizeof a->pp->k);
+    if (!ph) ph = 1;
+    // Another record makes the same pipeline: built once. Claimed before the build, so records on other worker threads
+    // at the same time see it too (the game skips a draw whose prepared pipeline is still building, as its own).
+    pthread_mutex_lock(&prep_lock);
+    bool dup = prep_get(prep_pipes, prep_pipes_cap, ph) != NULL;
+    if (!dup) prep_put(&prep_pipes, &prep_pipes_cap, &prep_pipes_n, ph, a->pp);
+    pthread_mutex_unlock(&prep_lock);
+    if (dup) { atomic_fetch_add(&prep_pipe_dups, 1); free(a->pp); free(a); return; }
+    build_pipeline(a->pp);
+    free(a);
+}
+
+bool renderer_prepare(const ShaderRec *r, const ShaderBlob *vsb, const ShaderBlob *fsb) {
+    bool copy, bda;
+    prep_mode(&copy, &bda);
+    uint64_t xh = xcfg_hash(xcfg(copy, bda));
+    if (r->kind == 'C') {
+        uint64_t ck = cs_content_key(r->vs, r->local, xh);
+        if (PREP_GET(prep_cs, ck)) return true;
+        CsProg *cp = calloc(1, sizeof *cp);
+        cp->p.prep = true, cp->p.pbda = bda, cp->copy_mode = copy;
+        cp->addr = 0;
+        cp->cmax = vsb->const_offset ? vsb->const_offset : 0x10000;
+        cp->const_bytes = vsb->const_size > 4096 ? 4096 : vsb->const_size;  // (as compute_program)
+        cp->code = malloc(cp->cmax + cp->const_bytes);  // (the blob has its constants and zero padding after them)
+        if (!cp->code || cp->cmax + cp->const_bytes > (uint64_t)vsb->size + 0x100) { free(cp->code); free(cp); return false; }
+        memcpy(cp->code, vsb->code, cp->cmax + cp->const_bytes);
+        memcpy(cp->local, r->local, sizeof cp->local);
+        PREP_PUT(prep_cs, ck, cp);
+        translate_compute(cp);  // (here: frees the code copy, queues the build)
+        return atomic_load(&cp->p.state) != 2;
+    }
+    // the keys the draw path makes for this state (draw_)
+    ShaderKey vkey = {0}, fkey = {0};
+    vkey.glsl = fkey.glsl = 1;
+    vkey.flip_y = fkey.flip_y = (r->flags & SR_FLIP_Y) != 0;
+    vkey.depth_minus_one = (r->flags & SR_DEPTH_MINUS_ONE) != 0;
+    vkey.flip_x = fkey.flip_x = (r->flags & SR_FLIP_X) != 0;
+    // (copy mode, as draw_ makes it: no depth / stencil writes - always so without a depth target)
+    fkey.no_ds_write = xcfg(copy, bda).miss_log && ((r->flags & SR_NO_DS_WRITE) || !r->depth);
+    for (int i = 0; i < r->nattrib; i++) vkey.attr_kind[i] = (uint8_t)attr_kind(r->attrib[i] & 0xFF);
+    for (int i = 0; i < r->ncolor && i < 8; i++) if (r->color[i]) fkey.rt_kind[i] = (uint8_t)rt_kind(r->color[i]);
+    uint64_t ck = prog_content_key(r->vs, r->fs, &vkey, &fkey, xh);
+    Prog *p = PREP_GET(prep_progs, ck);
+    if (!p) {
+        p = calloc(1, sizeof *p);
+        p->code[0] = (uintptr_t)vsb->code;
+        p->code[1] = (uintptr_t)fsb->code;
+        p->cmax[0] = vsb->const_offset ? vsb->const_offset : 0x10000;
+        p->cmax[1] = fsb->const_offset ? fsb->const_offset : 0x10000;
+        p->const_bytes[0] = vsb->const_offset ? vsb->const_size : 0;
+        p->const_bytes[1] = fsb->const_offset ? fsb->const_size : 0;
+        p->vkey = vkey;
+        p->fkey = fkey;
+        p->prep = true, p->pcopy = copy, p->pbda = bda;
+        p->prep_vh = r->vs, p->prep_fh = r->fs;
+        translate_program(p);  // (here, while the blobs exist: the compile goes on to the workers)
+        p->code[0] = p->code[1] = 0;
+        PREP_PUT(prep_progs, ck, p);  // (failed ones too: the game then skips them as it would its own)
+    }
+    if (atomic_load(&p->state) == 2) return false;
+    PrepPipe *a = calloc(1, sizeof *a);
+    a->pp = calloc(1, sizeof *a->pp);
+    a->pp->k.prog = p;
+    a->r = *r;
+    prep_job(prep_pipeline, a);
+    return true;
+}
+
+// The draw's state as a variant record (shader_prep.h; the same lines upstream's desktop runs record)
+static void rec_from_state(ShaderRec *r, bool flip_x, bool no_ds_write, uint32_t mode) {
+    memset(r, 0, sizeof *r);
+    r->kind = 'G';
+    r->vs = shader_stage_hash(&st.program->stages[0]);
+    r->fs = shader_stage_hash(&st.program->stages[1]);
+    r->flags = (nvn_window_origin() == 0 ? SR_FLIP_Y : 0) | (nvn_depth_mode() == 0 ? SR_DEPTH_MINUS_ONE : 0) | (flip_x ? SR_FLIP_X : 0);
+    if (no_ds_write && st.rt.depth) r->flags |= SR_NO_DS_WRITE;  // (without a depth target the record implies it)
+    r->nattrib = (uint8_t)(st.nattrib < 16 ? st.nattrib : 16);
+    memcpy(r->attrib, st.attrib, sizeof r->attrib[0] * r->nattrib);
+    r->nstream = (uint8_t)(st.nstream < 16 ? st.nstream : 16);
+    memcpy(r->stream, st.stream, sizeof r->stream[0] * r->nstream);
+    r->ncolor = (uint8_t)(st.rt.ncolor < 8 ? st.rt.ncolor : 8);
+    r->samples = 1;
+    for (int i = 0; i < r->ncolor; i++) {
+        NvnTexture *t = st.rt.color[i];
+        if (!t) continue;
+        r->color[i] = t->format;
+        if (st.rt.has_cview[i] && (st.rt.cview[i].setmask & 4)) r->cview[i] = st.rt.cview[i].format;
+        if (t->samples > 1) r->samples = t->samples;
+        r->channel_mask |= st.channel_mask & (0xFu << (i * 4));
+        if (((st.color_state[0] >> i) & 1) && !rt_kind(t->format)) {
+            r->blend_on |= (uint8_t)(1u << i);
+            memcpy(r->blend[i], st.blend[i], 8);
+        }
+    }
+    if (st.rt.depth) {
+        r->depth = st.rt.depth->format;
+        if (!r->ncolor && st.rt.depth->samples > 1) r->samples = st.rt.depth->samples;
+    }
+    r->a2c = st.ms[0xC] != 0;
+    r->topo = shader_topo_class(mode);
+    r->poly_fill = st.poly[2] != 1;
+}
+#endif
 
 static void dispatch_compute(uint32_t gx, uint32_t gy, uint32_t gz) {
     snap_reason = "compute"; snapshots_invalidate(NULL);
@@ -4024,49 +4441,12 @@ static void draw_(CmdRec *r, bool indexed) {
                last_pipeline->k.prog == pr && last_pipeline->k.topo_class == cls;
     Pipe *pp = hit ? last_pipeline : NULL;
     if (!hit || verify) {
+        uint32_t rt_fmt[8] = {0};
+        for (int i = 0; i < st.rt.ncolor && i < 8; i++) rt_fmt[i] = st.rt.color[i] ? st.rt.color[i]->format : 0;
+        const PipeIn in = {st.attrib, st.nattrib, (const uint32_t (*)[2])st.stream, st.nstream, rt_fmt, st.channel_mask,
+                           st.color_state[0], (const uint8_t (*)[8])st.blend, st.ms[0xC] != 0, cls, st.poly[2] != 1};
         PipeKey k;
-        memset(&k, 0, sizeof k);
-        k.prog = pr;
-        k.ncolor = pass_ncolor;
-        memcpy(k.color, pass_color, sizeof k.color);
-        k.depth = pass_depth;
-        k.stencil = pass_stencil;
-        k.samples = pass_samples;
-        for (int i = 0; i < 32; i++) {
-            if (!(pr->vi->attr_mask & (1u << i))) continue;
-            k.attr_mask |= 1u << i;
-            uint32_t a = i < st.nattrib ? st.attrib[i] : 0x2E;
-            uint32_t fmt = a & 0xFF, stream = (a >> 8) & 0x1F, off = a >> 13;
-            if (i >= st.nattrib || fmt == 0 || stream >= 16) {  // unbound attribute: (0, 0, 0, 1) from a constant stream
-                k.attr_fmt[i] = VK_FORMAT_R32G32B32A32_SFLOAT;
-                k.attr_bind[i] = ZERO_BINDING;
-                k.used_streams |= 1u << ZERO_BINDING;
-                continue;
-            }
-            k.attr_fmt[i] = vertex_format_supported(vertex_format(fmt));
-            k.attr_off[i] = off;
-            k.attr_bind[i] = stream;
-            k.used_streams |= 1u << stream;
-        }
-        for (int s = 0; s < 16; s++) {
-            if (!(k.used_streams & (1u << s))) continue;
-            k.stride[s] = s < st.nstream ? st.stream[s][0] : 0;
-            k.divisor[s] = s < st.nstream && k.stride[s] ? st.stream[s][1] : 0;
-            if (k.divisor[s] > 1 && !g_vk.divisor) k.divisor[s] = 1;
-        }
-        for (uint32_t i = 0; i < k.ncolor && i < 8; i++) {
-            if (!st.rt.color[i] || k.color[i] == VK_FORMAT_UNDEFINED) continue;
-            // Targets the fragment shader doesn't output keep their contents on Metal, but are undefined in Vulkan
-            // (NVIDIA writes black): mask them. Foliage depth pre-passes left black silhouettes (user 2026-10-08).
-            k.write_mask[i] = ((pr->fi->out_mask >> (i * 4)) & 0xF) ? (st.channel_mask >> (i * 4)) & 0xF : 0;
-            if (((st.color_state[0] >> i) & 1) && !rt_kind(st.rt.color[i]->format)) {
-                k.blend_on |= (uint8_t)(1u << i);
-                memcpy(k.blend[i], st.blend[i], 8);
-            }
-        }
-        k.a2c = st.ms[0xC] != 0;
-        k.topo_class = cls;
-        k.poly_fill = st.poly[2] != 1;
+        pipe_key_fill(&k, pr, &in, pass_color, pass_ncolor, pass_depth, pass_stencil, pass_samples);
 #ifdef __ANDROID__
         // (consecutive draws mostly share their pipeline: a compare instead of the serial hash of the ~700-byte key)
         static PipeKey last_k;
@@ -4085,6 +4465,22 @@ static void draw_(CmdRec *r, bool indexed) {
         uint32_t pslot = (uint32_t)(ph ^ (ph >> 29)) & (PIPE_TAB - 1);
         while (pipe_tab[pslot].key && pipe_tab[pslot].key != ph) pslot = (pslot + 1) & (PIPE_TAB - 1);
         pp = pipe_tab[pslot].pipe;
+#ifdef __ANDROID__
+        if (!pp) {
+            pp = prep_pipes_n ? PREP_GET(prep_pipes, ph) : NULL;  // prepared before the game
+            if (pp && memcmp(&pp->k, &k, sizeof k)) pp = NULL;
+            if (pp) pipe_tab[pslot].key = ph, pipe_tab[pslot].pipe = pp;
+            else {
+                if (shader_rec_recording()) {  // (the player's own list, LARECOMP_RECORD_KEYS)
+                    ShaderRec rec;
+                    rec_from_state(&rec, vkey.flip_x, fkey.no_ds_write, mode);
+                    shader_rec_note(&rec);
+                }
+                shader_first_visit("pipeline", shader_stage_hash(&st.program->stages[0]),
+                                   shader_stage_hash(&st.program->stages[1]), ph);
+            }
+        }
+#endif
         if (!pp) {
             pp = calloc(1, sizeof *pp);
             pp->k = k;

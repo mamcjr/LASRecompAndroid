@@ -17,6 +17,27 @@ endif()
 include(${R}/android/gamelib_id.cmake)  # (GAMELIB_ID: the same as lasgame.so's, android/gamelib)
 message(STATUS "GAMELIB_ID ${GAMELIB_ID}")
 
+# Shader preparation (runtime/nvn/shader_prep.c): the variant list as a C string, and the shader translator's id - part
+# of the tag that says whether the shader caches are cold (a changed translator, its GLSL rewrites or pipeline keys
+# prepare again)
+file(STRINGS ${R}/runtime/nvn/shader_variants.txt _variants)
+set(_inc "")
+foreach(l IN LISTS _variants)
+    string(APPEND _inc "\"${l}\\n\"\n")
+endforeach()
+string(APPEND _inc "\"\"\n")
+file(WRITE ${CMAKE_BINARY_DIR}/inc/shader_variants.inc "${_inc}")
+set(_tr "")
+foreach(f runtime/nvn/shader_variants.txt runtime/nvn/maxwell/translate.c runtime/nvn/maxwell/shader.h
+          runtime/nvn/vulkan/exec.c runtime/nvn/vulkan/shaders.c)
+    file(SHA256 ${R}/${f} _h)
+    string(APPEND _tr ${_h})
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${R}/${f})
+endforeach()
+string(SHA256 _tr "${_tr}")
+string(SUBSTRING ${_tr} 0 12 SHADER_TRANSLATOR_ID)
+message(STATUS "SHADER_TRANSLATOR_ID ${SHADER_TRANSLATOR_ID}")
+
 add_subdirectory(${R}/third_party/libadrenotools ${CMAKE_BINARY_DIR}/adrenotools)
 
 add_library(SDL3 SHARED IMPORTED)
@@ -50,9 +71,12 @@ add_library(main SHARED ${RT_SRC} ${R}/runtime/platform/android.c ${VK_SRC} ${UI
 set_source_files_properties(${UI_SRC} PROPERTIES LANGUAGE CXX COMPILE_OPTIONS "-xc++")
 set_source_files_properties(${R}/runtime/gamelib.c PROPERTIES COMPILE_DEFINITIONS "GAMELIB_ID=\"${GAMELIB_ID}\"")
 set_source_files_properties(${R}/runtime/gamebuild.c PROPERTIES COMPILE_DEFINITIONS "GAMELIB_ID=\"${GAMELIB_ID}\"")
+set_source_files_properties(${R}/runtime/nvn/vulkan/exec.c PROPERTIES
+                            COMPILE_DEFINITIONS "SHADER_TRANSLATOR_ID=\"${SHADER_TRANSLATOR_ID}\"")
 
 target_include_directories(main PRIVATE ${R}/runtime ${R}/runtime/nvn ${IMGUI} ${IMGUI}/backends ${DEPS}/include
-                           ${DEPS}/volk ${LAS_GEN_DIR} ${R}/third_party/smaa/Textures ${R}/android/common)
+                           ${DEPS}/volk ${LAS_GEN_DIR} ${R}/third_party/smaa/Textures ${R}/android/common
+                           ${CMAKE_BINARY_DIR}/inc)
 target_compile_definitions(main PRIVATE
     VK_NO_PROTOTYPES VK_USE_PLATFORM_ANDROID_KHR IMGUI_IMPL_VULKAN_USE_VOLK   # Vulkan from the loaded driver (volk)
     VMA_STATIC_VULKAN_FUNCTIONS=0 VMA_DYNAMIC_VULKAN_FUNCTIONS=1)

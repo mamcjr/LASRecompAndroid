@@ -49,6 +49,13 @@ static uint8_t *read_file(const char *path, size_t *len) {
     return p;
 }
 
+#ifdef __ANDROID__
+// (runtime/nvn/shader_prep.c: the main module's own shaders, in its data segments)
+size_t rt_lz4_decompress(const uint8_t *src, size_t srclen, uint8_t *dst, size_t dstlen) {
+    return lz4_decompress(src, srclen, dst, dstlen);
+}
+#endif
+
 static void load_nso(Module *m, const char *path, uint64_t base) {
     size_t len;
     uint8_t *raw = read_file(path, &len);

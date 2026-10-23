@@ -36,7 +36,15 @@ NVN(nvnDeviceBuilderSetFlags) { G(uint32_t, A(0), 0) = (uint32_t)A(1); }
 NVN(nvnDeviceBuilderGetFlags) { RET(G(uint32_t, A(0), 0)); }
 NVN(nvnDeviceInitialize) {
     static bool once;
-    if (!once) { once = true; backend_init(); }
+    if (!once) {
+        once = true;
+        backend_init();
+#ifdef __ANDROID__
+        extern const char *g_romfs_dir;
+        extern void shader_prep_boot(const char *romfs);
+        shader_prep_boot(g_romfs_dir);  // (LARECOMP_SHADER_PREP=1 / 2, tests: what the start screen does)
+#endif
+    }
     LOG("[nvn] device initialized\n");
     RET(1);
 }
