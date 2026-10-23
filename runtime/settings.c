@@ -35,6 +35,8 @@ Settings g_settings = {
     .touch_scale = 1.0f,
     .touch_opacity = 1.0f,
     .overlay_pos = {-1, -1},
+    .gpu_heap = -1,
+    .turnip_lrz = -1,
 #else
     .show_fps = false,
 #endif
@@ -150,6 +152,10 @@ void settings_load(void) {
         else if (!strcmp(key, "overlay")) g_settings.overlay_style = !strcmp(val, "compact");
         else if (!strcmp(key, "overlay_pos")) sscanf(val, "%f,%f", &g_settings.overlay_pos[0], &g_settings.overlay_pos[1]);
         else if (!strcmp(key, "mods_off")) snprintf(g_settings.mods_off, sizeof g_settings.mods_off, "%s", val);
+        else if (!strcmp(key, "gpu_heap")) g_settings.gpu_heap = !strcmp(val, "auto") ? -1 : atoi(val) != 0;
+        else if (!strcmp(key, "turnip_lrz")) g_settings.turnip_lrz = !strcmp(val, "auto") ? -1 : atoi(val) != 0;
+        else if (!strcmp(key, "log_file")) g_settings.log_file = atoi(val) != 0;
+        else if (!strcmp(key, "gpu_model")) snprintf(g_settings.gpu_model, sizeof g_settings.gpu_model, "%s", val);
         else if (!strcmp(key, "touch_scale")) g_settings.touch_scale = (float)atof(val);
         else if (!strcmp(key, "touch_opacity")) g_settings.touch_opacity = (float)atof(val);
         else if (!strcmp(key, "touch_layout")) {  // x,y per control (a share of the screen; negative: default)
@@ -229,6 +235,9 @@ void settings_save(void) {
     fprintf(f, "overlay = %s\n", g_settings.overlay_style == 1 ? "compact" : "full");
     fprintf(f, "overlay_pos = %.4f,%.4f\n", g_settings.overlay_pos[0], g_settings.overlay_pos[1]);
     fprintf(f, "mods_off = %s\n", g_settings.mods_off);
+    static const char *const tri[] = {"auto", "0", "1"};  // (-1 / 0 / 1)
+    fprintf(f, "gpu_heap = %s\nturnip_lrz = %s\nlog_file = %d\ngpu_model = %s\n", tri[g_settings.gpu_heap < 0 ? 0 : g_settings.gpu_heap ? 2 : 1],
+            tri[g_settings.turnip_lrz < 0 ? 0 : g_settings.turnip_lrz ? 2 : 1], g_settings.log_file, g_settings.gpu_model);
     fprintf(f, "touch_scale = %.2f\ntouch_opacity = %.2f\ntouch_layout = ", g_settings.touch_scale, g_settings.touch_opacity);
     for (int i = 0; i < TOUCH_NCTL; i++)
         fprintf(f, "%s%.4f,%.4f", i ? "," : "", g_settings.touch_pos[i][0], g_settings.touch_pos[i][1]);

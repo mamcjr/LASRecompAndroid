@@ -42,6 +42,13 @@ typedef struct {
     int overlay_style;    // Show FPS's overlay (ui/perf_overlay.mm): 0 full, 1 compact (one line)
     float overlay_pos[2]; // its top left, a share of the screen, dragged there with a finger (negative: the corner)
     char mods_off[512];   // the game mods turned off in the menu (runtime/mods.c), their folder names separated by '|'
+    // Driver compatibility (the start screen's Saves & files tab, ui/launcher.mm), for GPUs where a Turnip path draws
+    // wrong: read when the game starts (gpu_heap) or when the app starts (turnip_lrz, log_file). -1 Automatic: on for
+    // the Adreno 8xx GPUs these paths were made on, off elsewhere (vulkan/device.c vk_adreno_8xx); 1 on, 0 off.
+    int gpu_heap;         // Turnip: the game's memory mapped as GPU memory (vulkan/exec.c vk_heap_place); off: CPU copies
+    int turnip_lrz;       // Turnip's low-resolution Z; off: TU_DEBUG=nolrz before the driver loads (vulkan/device.c)
+    bool log_file;        // the log in a file as well (platform/android.c), to send with a report
+    char gpu_model[64];   // the GPU of the last start ("Adreno (TM) 830v1"): turnip_lrz's Automatic, before the driver
 #define TOUCH_NCTL 12
     float touch_pos[TOUCH_NCTL][2];  // each on-screen control's place, a share of the screen (negative: default)
     float touch_scale, touch_opacity;

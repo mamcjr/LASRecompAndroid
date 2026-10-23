@@ -2549,6 +2549,13 @@ bool vk_heap_place(uint64_t size) {
     vk_wait_ready();
     if (gmem_buf) return true;
     if (!g_vk.map_placed || getenv("LARECOMP_VK_NO_PLACED")) return false;
+    extern bool vk_adreno_8xx(const char *name);
+    if (g_settings.gpu_heap < 0 ? !vk_adreno_8xx(g_vk.props.deviceName) : !g_settings.gpu_heap) {
+        // (Saves & files > Driver compatibility: Automatic leaves it to the Adreno 8xx it was made on)
+        LOG("[vk] guest heap as GPU memory: off (%s) - shader global memory through CPU copies\n",
+            g_settings.gpu_heap < 0 ? "automatic: not an Adreno 8xx" : "settings");
+        return false;
+    }
     uint64_t align = g_vk.placed_align > 65536 ? g_vk.placed_align : 65536;
     size = (size + align - 1) & ~(align - 1);
     if ((HEAP_BASE & (align - 1)) || size > HEAP_MAX) {
@@ -2596,8 +2603,9 @@ bool vk_heap_place(uint64_t size) {
     gmem_mem = mem;
     gmem_size = size;
     gcopy_mode = false;
-    LOG("[vk] guest heap %llu MB is GPU memory (placed at %llx, memory type %d)\n", (unsigned long long)(size >> 20),
-        (unsigned long long)HEAP_BASE, type);
+    LOG("[vk] guest heap %llu MB is GPU memory (placed at %llx, memory type %d, flags 0x%x, storage range %llu MB)\n",
+        (unsigned long long)(size >> 20), (unsigned long long)HEAP_BASE, type, (unsigned)mp.memoryTypes[type].propertyFlags,
+        (unsigned long long)(g_vk.props.limits.maxStorageBufferRange >> 20));
     return true;
 }
 #endif

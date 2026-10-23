@@ -9,6 +9,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <jni.h>
 #include <pthread.h>
 #include <sched.h>
 #include <signal.h>
@@ -24,11 +25,106 @@
 #include <unistd.h>
 #include <unwind.h>
 
+#include "../paths.h"
 #include "../platform.h"
 #include "../rt.h"
 #include "../../android/common/guest_window.h"
 
 uint64_t g_guest_lo;  // the window's start (rt.h GUEST_LO), set by plat_reserve_guest before main()
+
+// ---- the log in a file as well (Saves & files > Driver compatibility, to send with a report): lasrecomp-log.txt in the
+// folder the player picked (LASRecompActivity.openLog, the run before's kept beside it), else <data root>/lasrecomp.log
+// (Android lets only adb read there). The first lines (before the setting is read, or a later switch on) wait in a
+// buffer, so the file starts with the driver's and the GPU's lines.
+static pthread_mutex_t g_logf_lock = PTHREAD_MUTEX_INITIALIZER;
+static FILE *g_logf;
+static bool g_logf_in_folder;               // g_logf is in the picked folder (else the data root)
+static bool g_folder_started, g_root_started;  // this run's file was made there (a later switch on appends)
+static char g_early[64 << 10];
+static size_t g_early_n;
+
+static void log_file_line(const char *line) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    struct tm tm;
+    localtime_r(&ts.tv_sec, &tm);
+    char stamp[24];
+    int sn = snprintf(stamp, sizeof stamp, "%02d:%02d:%02d.%03ld ", tm.tm_hour, tm.tm_min, tm.tm_sec, ts.tv_nsec / 1000000);
+    size_t ln = strlen(line);
+    pthread_mutex_lock(&g_logf_lock);
+    if (g_logf) {
+        fprintf(g_logf, "%s%s\n", stamp, line);
+        fflush(g_logf);
+    } else if (!g_folder_started && !g_root_started && g_early_n + (size_t)sn + ln + 1 <= sizeof g_early) {
+        memcpy(g_early + g_early_n, stamp, (size_t)sn);
+        memcpy(g_early + g_early_n + sn, line, ln);
+        g_early_n += (size_t)sn + ln;
+        g_early[g_early_n++] = '\n';
+    }
+    pthread_mutex_unlock(&g_logf_lock);
+}
+
+static int picked_folder_log(bool first) {  // LASRecompActivity.openLog: a descriptor, -1 without a usable folder
+    JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
+    jobject act = (jobject)SDL_GetAndroidActivity();
+    if (!env || !act) return -1;
+    int fd = -1;
+    jclass c = (*env)->GetObjectClass(env, act);
+    jmethodID m = (*env)->GetStaticMethodID(env, c, "openLog", "(Z)I");
+    if (m) fd = (*env)->CallStaticIntMethod(env, c, m, (jboolean)first);
+    if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionClear(env); fd = -1; }
+    (*env)->DeleteLocalRef(env, c);
+    (*env)->DeleteLocalRef(env, act);
+    return fd;
+}
+
+// This run's log so far into a new file: the data root's file when there is one (the folder was picked later), else
+// the lines kept from the start
+static void log_file_begin(FILE *f, const char *root_file) {
+    FILE *src = g_root_started ? fopen(root_file, "r") : NULL;
+    if (src) {
+        char b[16384];
+        for (size_t n; (n = fread(b, 1, sizeof b, src)) > 0;) fwrite(b, 1, n, f);
+        fclose(src);
+    } else {
+        fwrite(g_early, 1, g_early_n, f);
+    }
+    fflush(f);
+}
+
+void android_log_file(bool on) {
+    char root[1100], root_prev[1100];
+    snprintf(root, sizeof root, "%s/lasrecomp.log", rt_data_root());
+    snprintf(root_prev, sizeof root_prev, "%s/lasrecomp-previous.log", rt_data_root());
+    pthread_mutex_lock(&g_logf_lock);
+    if (!on) {
+        if (g_logf) fclose(g_logf);
+        g_logf = NULL;
+    } else if (!g_logf || !g_logf_in_folder) {  // (a folder picked while the data root's file is open: it moves)
+        if (g_logf) fflush(g_logf);
+        int fd = picked_folder_log(!g_folder_started);
+        FILE *f = fd >= 0 ? fdopen(fd, "a") : NULL;
+        if (fd >= 0 && !f) close(fd);
+        if (f) {
+            if (!g_folder_started) log_file_begin(f, root);
+            if (g_logf) fclose(g_logf);
+            g_logf = f;
+            g_logf_in_folder = g_folder_started = true;
+        } else if (!g_logf) {
+            if (!g_root_started) rename(root, root_prev);  // (a crash's log survives the next start)
+            g_logf = fopen(root, g_root_started ? "a" : "w");
+            if (g_logf && !g_root_started) log_file_begin(g_logf, root);
+            g_root_started |= g_logf != NULL;
+            g_logf_in_folder = false;
+        }
+    }
+    pthread_mutex_unlock(&g_logf_lock);
+}
+
+static void log_line(const char *line) {
+    __android_log_write(ANDROID_LOG_INFO, "LASRecomp", line);
+    log_file_line(line);
+}
 
 // ---- logcat: the runtime logs with fprintf(stderr), as on the desktop; a thread forwards the lines
 static void *log_pump(void *arg) {
@@ -42,14 +138,14 @@ static void *log_pump(void *arg) {
         char *start = buf, *nl;
         while ((nl = memchr(start, '\n', (size_t)(buf + n - start)))) {
             *nl = 0;
-            __android_log_write(ANDROID_LOG_INFO, "LASRecomp", start);
+            log_line(start);
             start = nl + 1;
         }
         n = (size_t)(buf + n - start);
         memmove(buf, start, n);
         if (n == sizeof buf - 1) {  // (a line longer than the buffer: in pieces)
             buf[n] = 0;
-            __android_log_write(ANDROID_LOG_INFO, "LASRecomp", buf);
+            log_line(buf);
             n = 0;
         }
     }

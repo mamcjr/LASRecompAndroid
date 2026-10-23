@@ -93,9 +93,11 @@ public class LASRecompActivity extends SDLActivity {
     private static native void nativeDriverPicked(String name);
     private static native void nativeSaveTransferDone(String message);
     private static native void nativeModImportDone(String message);
+    private static native void nativeLogFolderPicked(String name);
 
     private static final int REQ_GAME = 0x4c41, REQ_DRIVER = 0x4c42;
     private static final int REQ_SAVE_FOLDER = 0x4c43, REQ_SAVE_ZIP = 0x4c44, REQ_SAVE_EXPORT = 0x4c45, REQ_MOD = 0x4c46;
+    private static final int REQ_LOG = 0x4c47;
     private File saveTarget;
     private boolean exportPrevious;
     private static LASRecompActivity self;
@@ -345,6 +347,75 @@ public class LASRecompActivity extends SDLActivity {
         }
     }
 
+    // ---- the log file (Saves & files > Driver compatibility, runtime/platform/android.c) goes to a folder the player
+    // picks (Android keeps Android/data/ out of reach of file managers): lasrecomp-log.txt, the run before's kept as
+    // lasrecomp-log-previous.txt, both openable on the phone and sendable with a bug report
+    private static final String LOG_NAME = "lasrecomp-log.txt", LOG_PREVIOUS = "lasrecomp-log-previous.txt";
+
+    public static void pickLogFolder() {
+        self.runOnUiThread(() -> {
+            try {
+                self.startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQ_LOG);
+            } catch (Exception e) {
+                Log.e(TAG, "log folder picker", e);
+                nativeLogFolderPicked("");
+            }
+        });
+    }
+
+    private static Uri logTree() {  // the picked folder while the app may still write there (and it's still there)
+        String s = self.getSharedPreferences("lasrecomp", MODE_PRIVATE).getString("logTree", null);
+        if (s == null) return null;
+        Uri tree = Uri.parse(s);
+        boolean allowed = false;
+        for (android.content.UriPermission p : self.getContentResolver().getPersistedUriPermissions())
+            allowed |= p.getUri().equals(tree) && p.isWritePermission();
+        if (!allowed) return null;
+        Uri dir = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
+        try (Cursor c = self.getContentResolver().query(dir, new String[] {DocumentsContract.Document.COLUMN_DOCUMENT_ID},
+                                                        null, null, null)) {
+            return c != null && c.moveToFirst() ? tree : null;
+        } catch (Exception e) {  // (the folder was deleted)
+            return null;
+        }
+    }
+
+    // The folder's name for the settings page ("Download/LASRecomp"); "" with none
+    public static String logFolderName() {
+        Uri tree = logTree();
+        if (tree == null) return "";
+        String id = DocumentsContract.getTreeDocumentId(tree);  // e.g. "primary:Download/LASRecomp"
+        int colon = id.indexOf(':');
+        String path = colon >= 0 ? id.substring(colon + 1) : id;
+        return path.isEmpty() ? "/" : path;
+    }
+
+    // A file descriptor to write the log to (native code owns it), -1 without a usable folder. first: the run's first
+    // open - the last run's log becomes the previous one and a new file starts; otherwise this run's is appended to.
+    public static int openLog(boolean first) {
+        Uri tree = logTree();
+        if (tree == null) return -1;
+        try {
+            ContentResolver cr = self.getContentResolver();
+            String treeId = DocumentsContract.getTreeDocumentId(tree);
+            List<Doc> kids = self.children(tree, treeId);
+            Doc cur = named(kids, LOG_NAME), prev = named(kids, LOG_PREVIOUS);
+            if (first && cur != null) {
+                if (prev != null) DocumentsContract.deleteDocument(cr, DocumentsContract.buildDocumentUriUsingTree(tree, prev.id));
+                DocumentsContract.renameDocument(cr, DocumentsContract.buildDocumentUriUsingTree(tree, cur.id), LOG_PREVIOUS);
+                cur = null;
+            }
+            Uri file = cur != null ? DocumentsContract.buildDocumentUriUsingTree(tree, cur.id)
+                : DocumentsContract.createDocument(cr, DocumentsContract.buildDocumentUriUsingTree(tree, treeId), "text/plain", LOG_NAME);
+            if (file == null) return -1;
+            android.os.ParcelFileDescriptor pfd = cr.openFileDescriptor(file, first ? "wt" : "wa");
+            return pfd == null ? -1 : pfd.detachFd();
+        } catch (Exception e) {
+            Log.w(TAG, "log file in the picked folder", e);
+            return -1;
+        }
+    }
+
     // ---- game mods (the menu's Mods page, runtime/ui/mods_tab.mm; runtime/mods.c): a mod's folder - the one with
     // romfs/ in it, or a few levels above it - copied into mods/<its name>/: romfs/ and the notes (.txt) beside it.
     // Answers nativeModImportDone "1|<name>" imported, "0|<reason>" failed, "2|" cancelled.
@@ -491,6 +562,20 @@ public class LASRecompActivity extends SDLActivity {
             Uri tree = result == Activity.RESULT_OK && data != null ? data.getData() : null;
             if (tree == null) nativeModImportDone("2|");
             else new Thread(() -> importMod(tree), "mod-import").start();
+            return;
+        }
+        if (req == REQ_LOG) {
+            Uri tree = result == Activity.RESULT_OK && data != null ? data.getData() : null;
+            if (tree != null) {
+                try {
+                    getContentResolver().takePersistableUriPermission(tree,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                    getSharedPreferences("lasrecomp", MODE_PRIVATE).edit().putString("logTree", tree.toString()).apply();
+                } catch (Exception e) {
+                    Log.e(TAG, "log folder permission", e);
+                }
+            }
+            nativeLogFolderPicked(logFolderName());  // ("": cancelled, or no write access)
             return;
         }
         super.onActivityResult(req, result, data);

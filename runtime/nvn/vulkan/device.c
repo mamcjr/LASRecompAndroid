@@ -425,6 +425,17 @@ static void create_device(void) {
         h13.maintenance4, have.features.shaderInt64, h12.shaderInt8, h12.storageBuffer8BitAccess,
         h12.uniformAndStorageBuffer8BitAccess, have.features.textureCompressionBC, have.features.textureCompressionASTC_LDR,
         g_vk.props.limits.timestampComputeAndGraphics);
+    {   // (for driver compatibility reports: how far a storage buffer reaches and the memory types, vulkan/exec.c)
+        VkPhysicalDeviceMemoryProperties mp;
+        vkGetPhysicalDeviceMemoryProperties(g_vk.phys, &mp);
+        char types[256] = "";
+        size_t n = 0;
+        for (uint32_t i = 0; i < mp.memoryTypeCount && n < sizeof types - 16; i++)
+            n += (size_t)snprintf(types + n, sizeof types - n, " %u:0x%x", i, (unsigned)mp.memoryTypes[i].propertyFlags);
+        LOG("[vk-cap] storage range %llu MB, storage offset alignment %llu, memory types%s\n",
+            (unsigned long long)(g_vk.props.limits.maxStorageBufferRange >> 20),
+            (unsigned long long)g_vk.props.limits.minStorageBufferOffsetAlignment, types);
+    }
     const char *missing = vk_missing_backend_feature(&h11, &h12, &h13);
     if (missing) FATAL("Vulkan driver on %s lacks a feature required by this renderer: %s.\n"
                        "Driver: %s. Include this message, phone model and app version in your bug report.\n",
@@ -1267,6 +1278,22 @@ static void quick_exit_handler(void) {
 #endif
 }
 
+#ifdef __ANDROID__
+// Driver compatibility's Automatic (settings.h gpu_heap / turnip_lrz): the fastest paths on the Adreno 8xx GPUs they
+// were made on, the compatible ones elsewhere (an Adreno 750 drew text and colors wrong with them). name: Vulkan's
+// "Adreno (TM) 830v1" or the kernel's "Adreno830v2".
+bool vk_adreno_8xx(const char *name) {
+    const char *a = name ? strstr(name, "Adreno") : NULL;
+    if (!a) return false;
+    while (*a && (*a < '0' || *a > '9')) a++;
+    int n = atoi(a);
+    return n >= 800 && n < 900;
+}
+static bool g_lrz_at_start = true;
+bool vk_lrz_at_start(void) { return g_lrz_at_start; }  // (the start screen: a change needs a restart)
+const char *vk_gpu_name(void) { return g_vk.props.deviceName; }
+#endif
+
 void ui_window_init(void) {
     if (window) return;
     atexit(quick_exit_handler);
@@ -1275,6 +1302,32 @@ void ui_window_init(void) {
     SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");  // (the back button opens the menu: ui/touch_controls.mm)
 #endif
     settings_load();
+#ifdef __ANDROID__
+    {   // Driver compatibility (the start screen's Saves & files tab): applied before the driver loads
+        extern void android_log_file(bool on);
+        android_log_file(g_settings.log_file);
+        // Turnip reads TU_DEBUG once, when it starts: low-resolution Z off (it can drop draws on some Adreno GPUs).
+        // Automatic needs the GPU before Vulkan names it: the kernel's (the GPU driver reads it from the app too), else
+        // the last start's; unknown: on.
+        int lrz = g_settings.turnip_lrz;
+        char model[64] = "";
+        if (lrz < 0) {
+            FILE *f = fopen("/sys/class/kgsl/kgsl-3d0/gpu_model", "r");
+            if (f) {
+                if (!fgets(model, sizeof model, f)) model[0] = 0;
+                fclose(f);
+                model[strcspn(model, "\r\n")] = 0;
+            }
+            if (!model[0]) snprintf(model, sizeof model, "%s", g_settings.gpu_model);
+            lrz = !model[0] || vk_adreno_8xx(model);
+        }
+        g_lrz_at_start = lrz != 0;
+        if (!lrz && !getenv("TU_DEBUG")) setenv("TU_DEBUG", "nolrz", 1);
+        LOG("[vk] Turnip LRZ %s (%s%s)%s%s\n", lrz ? "on" : "off", g_settings.turnip_lrz < 0 ? "automatic: " : "settings",
+            g_settings.turnip_lrz < 0 ? (model[0] ? model : "GPU unknown") : "", getenv("TU_DEBUG") ? ", TU_DEBUG=" : "",
+            getenv("TU_DEBUG") ? getenv("TU_DEBUG") : "");
+    }
+#endif
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) FATAL("SDL_Init: %s\n", SDL_GetError());
     int win_w = 1280, win_h = 720;
     if (getenv("LARECOMP_WINDOW")) sscanf(getenv("LARECOMP_WINDOW"), "%dx%d", &win_w, &win_h);
@@ -1311,6 +1364,12 @@ void ui_window_init(void) {
 #endif
     pick_device();
     create_device();
+#ifdef __ANDROID__
+    if (strcmp(g_settings.gpu_model, g_vk.props.deviceName)) {  // (for turnip_lrz's Automatic at the next start)
+        snprintf(g_settings.gpu_model, sizeof g_settings.gpu_model, "%s", g_vk.props.deviceName);
+        settings_save();
+    }
+#endif
     create_swapchain();
     vk_exec_init();
     vk_shaders_init();

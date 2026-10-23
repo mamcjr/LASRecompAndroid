@@ -446,6 +446,44 @@ static void android_call(const char *method) {  // a static method of the activi
     env->DeleteLocalRef(act);
 }
 
+// The log file (Driver compatibility; runtime/platform/android.c): written to a folder the player picks
+// (LASRecompActivity pickLogFolder / openLog), where a file manager can open it - Android/data/ is out of its reach
+extern "C" void android_log_file(bool on);
+extern "C" bool vk_adreno_8xx(const char *name);  // (Driver compatibility's Automatic: runtime/nvn/vulkan/device.c)
+extern "C" bool vk_lrz_at_start(void);
+extern "C" const char *vk_gpu_name(void);
+static std::string g_log_folder;  // its name ("Download/LASRecomp"), "" with none
+static bool g_log_folder_read;
+
+static void log_folder_read() {  // (LASRecompActivity.logFolderName, once: then from each pick)
+    JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
+    jobject act = (jobject)SDL_GetAndroidActivity();
+    if (!env || !act) return;
+    jclass c = env->GetObjectClass(act);
+    jmethodID m = env->GetStaticMethodID(c, "logFolderName", "()Ljava/lang/String;");
+    jstring s = m ? (jstring)env->CallStaticObjectMethod(c, m) : NULL;
+    if (env->ExceptionCheck()) { env->ExceptionClear(); s = NULL; }
+    if (s) {
+        const char *t = env->GetStringUTFChars(s, NULL);
+        pthread_mutex_lock(&g_lock);
+        g_log_folder = t ? t : "";
+        pthread_mutex_unlock(&g_lock);
+        if (t) env->ReleaseStringUTFChars(s, t);
+        env->DeleteLocalRef(s);
+    }
+    env->DeleteLocalRef(c);
+    env->DeleteLocalRef(act);
+}
+
+extern "C" JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeLogFolderPicked(JNIEnv *env, jclass, jstring name) {
+    const char *t = env->GetStringUTFChars(name, NULL);
+    pthread_mutex_lock(&g_lock);
+    if (t && *t) g_log_folder = t;  // ("": cancelled - the folder before stays)
+    pthread_mutex_unlock(&g_lock);
+    if (t) env->ReleaseStringUTFChars(name, t);
+    if (g_settings.log_file) android_log_file(true);  // (the file moves to the folder, with this run's lines so far)
+}
+
 extern "C" JNIEXPORT jboolean JNICALL Java_com_lasrecomp_LASRecompActivity_nativeBuildIdOk(JNIEnv *env, jclass, jbyteArray head) {
     if (env->GetArrayLength(head) < 0x48) return JNI_FALSE;
     jbyte b[8];
@@ -1119,6 +1157,78 @@ static void prelaunch_tab(float sc) {
                 if (ImGui::Button(tr("Restart now"))) android_call("restartApp");
             }
         }
+    }
+    ImGui::Spacing();
+    ImGui::Spacing();
+    heading("Driver compatibility");
+    {   // (runtime/settings.h gpu_heap / turnip_lrz / log_file: for GPUs where a Turnip path draws wrong)
+        bool changed = false;
+        const bool a8 = vk_adreno_8xx(vk_gpu_name());  // (Automatic: on for Adreno 8xx only)
+        auto tri = [&](const char *id, int *v) {  // Automatic / On / Off: -1 / 1 / 0
+            bool ch = false;
+            ImGui::PushID(id);
+            ch |= ImGui::RadioButton(tr(a8 ? "Automatic (on for this GPU)" : "Automatic (off for this GPU)"), v, -1);
+            ImGui::SameLine();
+            ch |= ImGui::RadioButton(tr("On"), v, 1);
+            ImGui::SameLine();
+            ch |= ImGui::RadioButton(tr("Off"), v, 0);
+            ImGui::PopID();
+            return ch;
+        };
+        ImGui::PushTextWrapPos(0);
+        ImGui::TextDisabled("%s", tr("For GPUs where the game draws wrong with Turnip (missing text, odd colors). Automatic "
+                                     "suits most phones: the fastest paths on Adreno 8xx GPUs, the safer ones on the "
+                                     "others."));
+        ImGui::Text(tr("This GPU: %s"), vk_gpu_name());
+        ImGui::Spacing();
+        ImGui::Text("%s", tr("Game memory on the GPU (Turnip)"));
+        changed |= tri("heap", &g_settings.gpu_heap);
+        ImGui::TextDisabled("%s", tr("On: the game's memory is mapped straight into the GPU's, the fastest way. Off: what each "
+                                     "frame uses is copied instead, which costs CPU time but draws right where the fast way "
+                                     "doesn't. Automatic: on for Adreno 8xx GPUs, off for the others. Applies when the game "
+                                     "starts."));
+        ImGui::Spacing();
+        ImGui::Text("%s", tr("Turnip low-resolution Z (LRZ)"));
+        changed |= tri("lrz", &g_settings.turnip_lrz);
+        ImGui::TextDisabled("%s", tr("Turnip's early depth test, a little faster. Off can fix missing or broken drawing on "
+                                     "some Adreno GPUs. Automatic: on for Adreno 8xx GPUs, off for the others. Applies when "
+                                     "LAS Recomp restarts."));
+        bool lrz_now = g_settings.turnip_lrz < 0 ? a8 : g_settings.turnip_lrz != 0;
+        if (lrz_now != vk_lrz_at_start()) {  // (Turnip reads it once, when the app starts)
+            ImGui::Text("%s", tr("Restart LAS Recomp to apply it."));
+            ImGui::SameLine();
+            ImGui::PushID("lrz");  // (the driver's own Restart now may be showing too)
+            if (ImGui::Button(tr("Restart now"))) {
+                settings_save();
+                android_call("restartApp");
+            }
+            ImGui::PopID();
+        }
+        if (!g_log_folder_read) {
+            g_log_folder_read = true;
+            log_folder_read();
+        }
+        pthread_mutex_lock(&g_lock);
+        std::string folder = g_log_folder;
+        pthread_mutex_unlock(&g_lock);
+        ImGui::Spacing();
+        if (ImGui::Checkbox(tr("Save a log file"), &g_settings.log_file)) {
+            changed = true;
+            if (g_settings.log_file && folder.empty()) android_call("pickLogFolder");  // (then nativeLogFolderPicked)
+            else android_log_file(g_settings.log_file);
+        }
+        ImGui::TextDisabled("%s", tr("Writes what the app reports (GPU, driver, errors) to lasrecomp-log.txt in a folder you "
+                                     "choose (create one, e.g. Download/LASRecomp), to open on the phone and send with a "
+                                     "bug report. Turn it on and play until the problem shows; after a crash, the run "
+                                     "before is kept as lasrecomp-log-previous.txt."));
+        if (folder.empty()) ImGui::TextDisabled("%s", tr("No folder chosen: the log stays in the app's own folder, which "
+                                                         "Android only lets a computer (adb) read."));
+        else ImGui::Text(tr("Log folder: %s"), folder.c_str());
+        ImGui::PushID("logdir");
+        if (ImGui::Button(tr(folder.empty() ? "Choose folder" : "Change folder"))) android_call("pickLogFolder");
+        ImGui::PopID();
+        ImGui::PopTextWrapPos();
+        if (changed) settings_save();
     }
     ImGui::Spacing();
     ImGui::Spacing();
