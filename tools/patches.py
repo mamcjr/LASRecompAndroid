@@ -685,3 +685,27 @@ def _prompt_pos(gen, a):
 
 
 PATCHES[PROMPT_POS_SITE] = _prompt_pos
+
+
+# A PhysX shape change on an actor (main+0x1408db0, RigidCore::onShapeChange - the geometry / pose / filter / flags /
+# offsets a shape setter just changed, flags at [x19]) and its sibling main+0x1408d60 look the actor's simulation
+# object for that shape up with main+0x14090a0 (RigidSim::getSimForShape). PhysX hands back the address 1 when the
+# shape has none ("should never happen": asserted only in its own debug builds) and the update then reads through it -
+# Hot Head (Turtle Rock) crashed reading 0x11 when the Magic Rod's fire hit him (LASRecomp issue #314, beta_5). Right
+# after the lookup, a shape the simulation doesn't hold skips the update to the function's own return (both are branch
+# targets there already); runtime/hle/physx.c logs the first few.
+SHAPE_SIM_SITES = {0x7001408de0: (0xaa0003f4, 20, 0x7001408e0c), 0x7001408d80: (0xaa0003e1, 1, 0x7001408d98)}
+
+
+def _shape_sim(gen, a):
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    want, rd, skip = SHAPE_SIM_SITES[a]
+    assert w == want, hex(w)  # mov x20, x0 / mov x1, x0
+    flags = 'LD32(c->x[19])' if rd == 20 else '0u'
+    return ('{ extern void rt_physx_no_sim(uint64_t, uint32_t, uint64_t, uint64_t); if (c->x[0] == 1) { '
+            f'rt_physx_no_sim(c->x[1], {flags}, c->x[29], c->sp); goto L_{skip:x}; }} c->x[{rd}] = c->x[0]; }}'
+            f'  /* {a:#x}: mov x{rd}, x0 (PhysX shape change: no update without its simulation object, #314) */')
+
+
+for _a in SHAPE_SIM_SITES:
+    PATCHES[_a] = _shape_sim
