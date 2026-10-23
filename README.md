@@ -23,6 +23,17 @@ For the PC versions (Windows, macOS, Linux), features and the randomizer, see th
 > copy of the extracted game files of *Link's Awakening* **v1.0.0**. Instructions on how to obtain them will not be
 > provided.
 
+## New in 0.4.1
+
+Driver compatibility options for GPUs where the game draws wrong with Turnip, and a log file to send with a bug report.
+
+- **Driver compatibility** (start screen: Settings > Saves & files), two options on **Automatic** by default: the fastest paths on Adreno 8xx GPUs, where they were made and tested, the safer ones on the others. Each can also be forced on or off.
+  - **Game memory on the GPU (Turnip):** the game's memory mapped straight into the GPU's, or copied each frame (CPU time, but it draws right where the fast way doesn't).
+  - **Turnip low-resolution Z (LRZ):** off sets `TU_DEBUG=nolrz` before the driver loads, as [LASRecomp-Android-Plus](https://github.com/Nycolazs/LASRecomp-Android-Plus) does. Applies after a restart.
+- **Save a log file:** `lasrecomp-log.txt` in a folder you pick with the Android folder picker (file managers can't reach the app's own folder); after a crash, the run before stays as `lasrecomp-log-previous.txt`. The log now also lists the GPU's storage buffer range and memory types.
+
+Validation: on the POCO F7 Ultra (Adreno 830, Turnip), Automatic keeps both fast paths (60 fps in the village, as in 0.4.0); with both off, the village draws right through the copies (30 fps steady; 48–60 at 60 fps). Log folder picked, written and rotated on the phone. Not tested yet on an Adreno that isn't 8xx, the case Automatic is for ([issue #3](https://github.com/mamcjr/LASRecompAndroid/issues/3), an Adreno 750).
+
 ## New in 0.4.0
 
 Frame generation (30 → 60 and 60 → 120), game mods, menus in Portuguese and a new upscaler.

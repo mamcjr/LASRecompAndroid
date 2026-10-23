@@ -23,6 +23,17 @@ Para as versões de PC (Windows, macOS, Linux), os recursos e o randomizer, veja
 > obtida legalmente, dos arquivos extraídos de *Link's Awakening* **v1.0.0**. Não serão dadas instruções de como
 > obtê-los.
 
+## Novidades da 0.4.1
+
+Opções de compatibilidade do driver para GPUs em que o jogo desenha errado com o Turnip, e um arquivo de log para enviar com um relato de bug.
+
+- **Compatibilidade do driver** (tela inicial: Configurações > Saves e arquivos), duas opções no **Automático** por padrão: os caminhos mais rápidos nas GPUs Adreno 8xx, onde foram feitos e testados, e os mais seguros nas outras. Cada uma também pode ser forçada a ligar ou desligar.
+  - **Memória do jogo na GPU (Turnip):** a memória do jogo mapeada direto na da GPU, ou copiada a cada quadro (custa CPU, mas desenha certo onde o jeito rápido falha).
+  - **Z de baixa resolução do Turnip (LRZ):** desligado, define `TU_DEBUG=nolrz` antes de o driver carregar, como faz o [LASRecomp-Android-Plus](https://github.com/Nycolazs/LASRecomp-Android-Plus). Vale depois de reiniciar.
+- **Salvar arquivo de log:** `lasrecomp-log.txt` numa pasta escolhida pelo seletor do Android (gerenciadores de arquivos não alcançam a pasta do próprio app); depois de um travamento, a execução anterior fica no `lasrecomp-log-previous.txt`. O log também passou a mostrar o alcance dos storage buffers e os tipos de memória da GPU.
+
+Validação: no POCO F7 Ultra (Adreno 830, Turnip), o Automático mantém os dois caminhos rápidos (60 fps na vila, como na 0.4.0); com os dois desligados, a vila desenha certo pelas cópias (30 fps estáveis; 48–60 a 60 fps). Pasta do log escolhida, gravada e rotacionada no celular. Ainda não testado numa Adreno que não seja 8xx, o caso para o qual o Automático existe ([issue #3](https://github.com/mamcjr/LASRecompAndroid/issues/3), uma Adreno 750).
+
 ## Novidades da 0.4.0
 
 Geração de quadros (30 → 60 e 60 → 120), mods do jogo, menus em português e um novo upscaler.
