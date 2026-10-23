@@ -352,8 +352,12 @@ static void pick_depth(void) {
 }
 
 // exec.c draw_, right after the scene's composite into the presented picture (outside any pass)
+static _Atomic bool g_paused;  // (fg_frame_wanted: in-between frames paused - the GPU full)
 void fg_scene_composited(VkCommandBuffer cb, TexBackend *rt) {
-    if (!fg_enabled() || !rt || !rt->image || rt->samples != 1) return;
+    // (paused: no copy either - its full barriers mid-frame cost the driver it paused for: Qualcomm's on the POCO F7
+    // Ultra, 8% of real frames late paused against 2.9% with frame generation off; the first frame after a pause goes
+    // without an in-between one)
+    if (!fg_enabled() || !rt || !rt->image || rt->samples != 1 || g_paused) return;
     if (fg_sceneq()) {
         uint32_t hw = (rt->width + 1) / 2, hh = (rt->height + 1) / 2, qw = (rt->width + 3) / 4, qh = (rt->height + 3) / 4;
         VkImageUsageFlags u = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
@@ -427,21 +431,43 @@ bool fg_frame_wanted(uint64_t frame, TexBackend *fin) {
     } else {
         g_have_vp = g_have_prev = false;
     }
-    // only while the game holds its 30: real frames late (the GPU full) get no in-between ones - their GPU time goes
-    // back to the game until it has room again (a period average under 34.5 ms for 1 s). The average moves slowly
-    // (~1 s): a single late frame (a 50 ms one now and then in Madam MeowMeow's house) paused it for seconds before
-    static double last, avg = 33.3, room_since = -1;
-    static bool paused;
+    // Only while the game holds its 30 on this GPU: real frames late (the GPU full) get no in-between ones - their GPU
+    // time goes back to the game. With FIFO a real frame takes two refreshes (33.3 ms) or, late, three (50 ms), so late
+    // frames are counted rather than averaged: 6 of the last 60 (2 s) pause it. Then it tries again after a wait that
+    // doubles at each try that doesn't hold 20 s (5 s .. 80 s), back to 5 s once one has. (An average with a 34.5 /
+    // 36.5 ms band before: Qualcomm's driver on the POCO F7 Ultra ran at 34-37 ms with in-between frames and paused and
+    // resumed every second or two - half the frames generated, flickering between 30 and 60.)
+    // (Late frames without in-between ones too - the same driver walking through the village: 6-12% - count as the
+    // base: only what in-between frames add beyond it pauses them. Measured while paused, a slow moving average.)
+    // (Not counted for 1.5 s after a change - in-between frames starting or pausing, the game going to its 30: going
+    // from one to two pictures a frame queues them for a moment, and those few late frames alone paused every try.)
+    static double last, paused_at, trial_at, wait_ms = 5000, base, grace_until;
+    static uint8_t late[60];
+    static int idx, nlate;
+    static bool paused, counting;
     double now = SDL_GetTicksNS() / 1e6;
-    if (last > 0 && now - last < 200) avg += (now - last - avg) * 0.05;
-    last = now;
-    if (!paused && avg > 36.5) paused = true, room_since = -1;
-    else if (paused && avg < 34.5) {
-        if (room_since < 0) room_since = now;
-        else if (now - room_since > 1000) paused = false;
-    } else if (paused) {
-        room_since = -1;
+    bool countable = have && g_present_interval == 2 && !menu_is_open();
+    if (countable != counting) counting = countable, grace_until = now + 1500;
+    if (countable && now >= grace_until && last > 0 && now - last < 200) {
+        uint8_t l = now - last > 41.7;  // (more than two and a half refreshes: a third one)
+        nlate += l - late[idx], late[idx] = l, idx = (idx + 1) % 60;
+        if (paused) base += (l - base) * 0.01;  // (~100 frames)
     }
+    last = now;
+    if (!paused && nlate >= 6 + (int)(base * 60 + 0.5)) {
+        if (trial_at > 0) wait_ms = fmin(wait_ms * 2, 80000);  // (the last try didn't hold)
+        paused = true, paused_at = now, trial_at = 0;
+        LOG("[framegen] paused: %d of the last 60 real frames late (base %.0f%%: the GPU full); next try in %.0f s\n", nlate,
+            base * 100, wait_ms / 1000);
+        memset(late, 0, sizeof late), nlate = 0, grace_until = now + 1500;
+    } else if (paused && now - paused_at >= wait_ms) {
+        paused = false, trial_at = now;
+        memset(late, 0, sizeof late), nlate = 0, grace_until = now + 1500;
+        LOG("[framegen] trying again\n");
+    } else if (!paused && trial_at > 0 && now - trial_at >= 20000) {
+        trial_at = 0, wait_ms = 5000;  // (it held)
+    }
+    g_paused = paused;
     bool ok = have && g_have_prev && g_scene_ok && g_depth && g_depth->backend && g_present_interval == 2 && !menu_is_open() && !paused;
     static int logwhy = -1;  // LARECOMP_LOG_FRAMEGEN=1: why frames went without an in-between one, every 2 s
     if (logwhy < 0) logwhy = getenv("LARECOMP_LOG_FRAMEGEN") != NULL;
@@ -453,8 +479,8 @@ bool fg_frame_wanted(uint64_t frame, TexBackend *fin) {
         why[3] += g_present_interval != 2, why[4] += menu_is_open(), why[5] += paused;
         if (now - at > 2000) {
             if (why[0] + why[1] + why[2] + why[3] + why[5])
-                LOG("[framegen] of %d frames without: camera %d, scene %d, depth %d, interval %d, menu %d, paused %d (avg %.1f ms)\n", n,
-                    why[0], why[1], why[2], why[3], why[4], why[5], avg);
+                LOG("[framegen] of %d frames without: camera %d, scene %d, depth %d, interval %d, menu %d, paused %d (late %d of 60)\n", n,
+                    why[0], why[1], why[2], why[3], why[4], why[5], nlate);
             n = 0, memset(why, 0, sizeof why), at = now;
         }
     }
