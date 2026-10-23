@@ -834,7 +834,7 @@ public class LASRecompActivity extends SDLActivity {
         File f = files[0];
         File dir = new File(getFilesDir(), "drivers/" + f.getName().replaceAll("\\.(so|zip)$", ""));
         File stamp = new File(dir, ".source");
-        String id = f.length() + ":" + f.lastModified();
+        String id = "2:" + f.length() + ":" + f.lastModified();  // (2: meta.json unpacked too - findLib)
         File lib = findLib(dir);
         if (lib != null && stamp.exists() && id.equals(readSmall(stamp))) return lib;
         deleteTree(dir);
@@ -848,9 +848,10 @@ public class LASRecompActivity extends SDLActivity {
             try (ZipInputStream z = new ZipInputStream(new FileInputStream(f))) {
                 for (ZipEntry e; (e = z.getNextEntry()) != null; ) {
                     String n = new File(e.getName()).getName();
-                    if (!e.isDirectory() && n.endsWith(".so")) lib = copyNoClose(z, new File(dir, n));
+                    if (!e.isDirectory() && (n.endsWith(".so") || n.equals("meta.json"))) copyNoClose(z, new File(dir, n));
                 }
             }
+            lib = findLib(dir);
         }
         if (lib != null) {
             try (OutputStream o = new FileOutputStream(stamp)) {
@@ -861,9 +862,26 @@ public class LASRecompActivity extends SDLActivity {
         return lib;
     }
 
+    // The driver in a package: meta.json's libraryName (adrenotools packages), else the library named like a Vulkan
+    // driver (vulkan.*.so, libvulkan_*.so), else the first. A package can carry helper libraries beside it (v863.1:
+    // vulkan.ad0863.so and adrenoutils_extra.so) - picking by the order the files came in loaded a helper (issue #3).
     private static File findLib(File dir) {
+        File meta = new File(dir, "meta.json");
+        if (meta.isFile()) {
+            try {
+                String name = new org.json.JSONObject(readSmall(meta)).optString("libraryName", "");
+                File lib = new File(dir, new File(name).getName());
+                if (!name.isEmpty() && lib.isFile()) return lib;
+            } catch (Exception e) {
+                Log.w(TAG, "driver package meta.json: " + e);
+            }
+        }
         File[] libs = dir.listFiles((d, n) -> n.endsWith(".so"));
-        return libs != null && libs.length > 0 ? libs[0] : null;
+        if (libs == null || libs.length == 0) return null;
+        Arrays.sort(libs);
+        for (File lib : libs)
+            if (lib.getName().startsWith("vulkan.") || lib.getName().startsWith("libvulkan")) return lib;
+        return libs[0];
     }
 
     private static String readSmall(File f) throws IOException {
