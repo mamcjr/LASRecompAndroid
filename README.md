@@ -30,7 +30,7 @@ Frame generation (30 → 60 and 60 → 120), game mods, menus in Portuguese and 
 - **Frame generation** (Video > Frame generation, off by default): in-between frames made from the picture, the scene's depth and the camera's movement, adapted from [LASRecomp-Android-Plus](https://github.com/Nycolazs/LASRecomp-Android-Plus). The game's 30 fps become 60 and, with the 120 Hz option, its 60 become 120 (the game keeps its own 60 Hz clock). The HUD stays put and Link doesn't shake; when the GPU can't keep up it pauses by itself and tries again later. On the POCO F7 Ultra with Turnip, at 60 → 120 in the village, it cost ~0.4 ms of GPU per real frame and stayed on the whole time. With Qualcomm's stock driver, use 30 fps.
 - **120 Hz option** (under frame generation, off by default): on, it asks for the display's fastest mode and the game's 60 fps become 120; off, it asks for 60 Hz. Where the phone's own settings fix the display at 120 Hz, the in-between frames follow the display.
 - **Objects' own movement** (experimental): characters that move on their own move in the in-between frames too.
-- **Mods** (Settings > Mods): folders with a `romfs` folder inside, as for Eden and Ryujinx, each turned on or off; a mod's folder can be imported with the Android folder picker. Tested with the [Triforce Heroes](https://triforce-heroes.com.br) team's Brazilian Portuguese translation, which doesn't come with the app.
+- **Mods** (Settings > Mods): folders with a `romfs` folder inside, as for Eden and Ryujinx, each turned on or off; a mod's folder can be imported with the Android folder picker. No mods come with the app.
 - **Menus in Portuguese** on a phone set to Portuguese: settings, the start screen, the save editor and messages.
 - **Snapdragon Game Super Resolution 1 upscaler** (Qualcomm): a single pass, lighter than FSR 1.
 - **Performance overlay:** the frame rate with frame generation (FPS+FG), a compact one-line style (FPS, FPS+FG, RAM, battery temperature), and it can be dragged anywhere on the screen.
@@ -42,7 +42,7 @@ Frame generation (30 → 60 and 60 → 120), game mods, menus in Portuguese and 
 - **Dynamic resolution at a fixed 30 fps** aims at 30's budget, not 60's.
 - Menu and on-screen controls themed after Link's Awakening. No randomizer on Android.
 
-Validation: on the POCO F7 Ultra, frame generation 30 → 60, 60 → 120 and 30 → 120 with Turnip and with the stock driver; mods (the translation applied, turned off, imported with the picker); translated menus; the menu with simulated controller presses; the overlay dragged; SGSR 1; setting the game up from scratch from the picked folder (about 7 min 40 s: `romfs.bin` in about 45 s, then the compile), after which the game ran with the translation mod into the village. Not tested on a phone yet: Vulkan 1.1 drivers (Mali) and the Adreno 750.
+Validation: on the POCO F7 Ultra, frame generation 30 → 60, 60 → 120 and 30 → 120 with Turnip and with the stock driver; mods (applied, turned off, imported with the picker); translated menus; the menu with simulated controller presses; the overlay dragged; SGSR 1; setting the game up from scratch from the picked folder (about 7 min 40 s: `romfs.bin` in about 45 s, then the compile), after which the game ran with a mod on into the village. Not tested on a phone yet: Vulkan 1.1 drivers (Mali) and the Adreno 750.
 
 ## New in 0.3.9
 
@@ -332,11 +332,8 @@ For development, the game code can still be built on the PC and pushed: `bash an
   [`third_party/sgsr/LICENSE`](third_party/sgsr/LICENSE)): the Snapdragon GSR 1 upscaler option
   (`runtime/nvn/vulkan/shaders.c`).
 - Game mods (Settings > Mods, `runtime/mods.c`): folders with a `romfs` folder inside, as for Eden or Ryujinx, each
-  turned on or off in the menu; none are included. For the game's text in Brazilian Portuguese, the fan translation
-  by the [Triforce Heroes](https://triforce-heroes.com.br) team (translated by Ewerton and Jacilene, reviewed by David,
-  Ricardo and Nelson): download it from their site, extract it, and import its folder with Settings > Mods > Import a
-  mod folder (or copy it into `Android/data/com.lasrecomp.android/files/mods/`). It replaces the US English text:
-  keep Language on Auto or English.
+  turned on or off in the menu; none are included. Import a mod's folder with Settings > Mods > Import a mod folder
+  (or copy it into `Android/data/com.lasrecomp.android/files/mods/`).
 - The Android robot on the start screen is reproduced or modified from work created and shared by Google and used
   according to terms described in the [Creative Commons 3.0 Attribution License](https://creativecommons.org/licenses/by/3.0/).
 - [DejaVu fonts](https://dejavu-fonts.github.io) (Bitstream Vera license): stand-in for the Switch's system font.

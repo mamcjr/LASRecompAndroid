@@ -30,7 +30,7 @@ Geração de quadros (30 → 60 e 60 → 120), mods do jogo, menus em português
 - **Geração de quadros** (Vídeo > Geração de quadros, desligada por padrão): quadros intermediários feitos a partir da imagem, da profundidade da cena e do movimento da câmera, adaptados do [LASRecomp-Android-Plus](https://github.com/Nycolazs/LASRecomp-Android-Plus). Os 30 fps do jogo viram 60 e, com a opção 120 Hz, os 60 viram 120 (o jogo continua no próprio relógio de 60 Hz). O HUD fica no lugar e o Link não treme; quando a GPU não dá conta, a geração pausa sozinha e tenta de novo depois. No POCO F7 Ultra com Turnip, a 60 → 120 na vila, custou ~0,4 ms de GPU por quadro real e ficou ligada o tempo todo. Com o driver padrão da Qualcomm, prefira 30 fps.
 - **Opção 120 Hz** (abaixo da geração, desligada por padrão): ligada, pede o modo mais rápido da tela e os 60 fps viram 120; desligada, pede 60 Hz. Quando o próprio celular fixa a tela em 120 Hz nas configurações, os intermediários acompanham a tela.
 - **Movimento dos objetos** (experimental): personagens que se movem sozinhos também andam nos quadros intermediários.
-- **Mods** (Configurações > Mods): pastas com `romfs` dentro, como no Eden e no Ryujinx, cada uma ligada ou desligada; a pasta pode ser importada pelo seletor do Android. Testado com a tradução para português do Brasil da equipe [Triforce Heroes](https://triforce-heroes.com.br), que não vem com o app.
+- **Mods** (Configurações > Mods): pastas com `romfs` dentro, como no Eden e no Ryujinx, cada uma ligada ou desligada; a pasta pode ser importada pelo seletor do Android. Nenhum mod vem com o app.
 - **Menus em português** quando o celular está em português: configurações, tela inicial, editor de save e mensagens.
 - **Upscaler Snapdragon Game Super Resolution 1** (Qualcomm): uma passada só, mais leve que o FSR 1.
 - **Overlay de desempenho:** FPS com a geração (FPS+FG), estilo resumido em uma linha (FPS, FPS+FG, RAM, temperatura da bateria) e arrastável para qualquer lugar da tela.
@@ -42,7 +42,7 @@ Geração de quadros (30 → 60 e 60 → 120), mods do jogo, menus em português
 - **Resolução Dinâmica com 30 fps fixos** mira o orçamento de 30, não o de 60.
 - Visual do menu e dos controles na tela no estilo do Link's Awakening. Sem randomizer no Android.
 
-Validação: no POCO F7 Ultra, geração de quadros 30 → 60, 60 → 120 e 30 → 120 com Turnip e com o driver padrão; mods (tradução aplicada, desligar, importar pelo seletor); menus traduzidos; menu com controle simulado; overlay arrastado; SGSR 1; a configuração do jogo do zero a partir da pasta escolhida (~7 min 40 s: o `romfs.bin` em ~45 s, depois a compilação), e o jogo rodou com o mod de tradução até a vila. Ainda não testados num celular: drivers Vulkan 1.1 (Mali) e a Adreno 750.
+Validação: no POCO F7 Ultra, geração de quadros 30 → 60, 60 → 120 e 30 → 120 com Turnip e com o driver padrão; mods (aplicar, desligar, importar pelo seletor); menus traduzidos; menu com controle simulado; overlay arrastado; SGSR 1; a configuração do jogo do zero a partir da pasta escolhida (~7 min 40 s: o `romfs.bin` em ~45 s, depois a compilação), e o jogo rodou com um mod ligado até a vila. Ainda não testados num celular: drivers Vulkan 1.1 (Mali) e a Adreno 750.
 
 ## Novidades da 0.3.9
 
@@ -339,11 +339,8 @@ depois `bash android/push_game.sh <pasta com exefs/ e romfs/>`.
   [`third_party/sgsr/LICENSE`](third_party/sgsr/LICENSE)): a opção de upscaler Snapdragon GSR 1
   (`runtime/nvn/vulkan/shaders.c`).
 - Mods do jogo (Configurações > Mods, `runtime/mods.c`): pastas com uma pasta `romfs` dentro, como no Eden ou no
-  Ryujinx, cada uma ligada ou desligada no menu; nenhum vem com o app. Para o texto do jogo em português do Brasil, a
-  tradução feita por fãs da equipe [Triforce Heroes](https://triforce-heroes.com.br) (tradução de Ewerton e Jacilene,
-  revisão de David, Ricardo e Nelson): baixe-a no site deles, extraia e importe a pasta dela em Configurações > Mods >
-  Importar pasta de mod (ou copie-a para `Android/data/com.lasrecomp.android/files/mods/`). Ela substitui o texto em
-  inglês americano: deixe o Idioma em Auto ou Inglês.
+  Ryujinx, cada uma ligada ou desligada no menu; nenhum vem com o app. Importe a pasta de um mod em Configurações >
+  Mods > Importar pasta de mod (ou copie-a para `Android/data/com.lasrecomp.android/files/mods/`).
 - O robô do Android na tela inicial é reproduzido ou modificado a partir de trabalho criado e compartilhado pelo
   Google e usado de acordo com os termos da [Licença Creative Commons Atribuição 3.0](https://creativecommons.org/licenses/by/3.0/).
 - [Fontes DejaVu](https://dejavu-fonts.github.io) (licença Bitstream Vera): substituta da fonte de sistema do Switch.
