@@ -683,6 +683,7 @@ static std::vector<std::string> other_versions(void) {
     std::sort(out.begin(), out.end());
     return out;
 }
+static bool is_base_release(const std::string &r) { return r == "1.0.0"; }  // (kept: no Remove for it)
 static bool remove_version_dir(const std::string &r) {  // (a release put aside, its game code too)
     if (!release_ok(r)) return false;
     std::string lib = lib_path(r);
@@ -1420,6 +1421,7 @@ static void prelaunch_tab(float sc) {
         ImGui::BeginDisabled(busy_now);
         if (ImGui::Button(tr("Add another version"))) android_call("pickGameFolder");
         for (const std::string &o : others) {
+            if (is_base_release(o)) continue;
             char label[48];
             bool asking = confirm_rm == o;
             snprintf(label, sizeof label, tr(asking ? "Yes, remove v%s" : "Remove v%s"), o.c_str());
@@ -2099,6 +2101,7 @@ extern "C" void launcher_run(const char *root) {
                             android_call("pickGameFolder");
                         first_row();
                         for (const std::string &o : others) {
+                            if (is_base_release(o)) continue;
                             char label[48];
                             bool asking = confirm_rm == o;
                             snprintf(label, sizeof label, tr(asking ? "Yes, remove v%s" : "Remove v%s"), o.c_str());
