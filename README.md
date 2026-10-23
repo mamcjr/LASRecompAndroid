@@ -307,6 +307,15 @@ For development, the game code can still be built on the PC and pushed: `bash an
 - [Dear ImGui](https://github.com/ocornut/imgui) (MIT): the overlay menu and the start screen.
 - [SMAA](https://github.com/iryoku/smaa) and [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR)
   (MIT): the anti-aliasing and upscaler options, built into the renderer.
+- [Snapdragon Game Super Resolution 1](https://github.com/SnapdragonStudios/snapdragon-gsr) by Qualcomm (BSD 3-Clause,
+  [`third_party/sgsr/LICENSE`](third_party/sgsr/LICENSE)): the Snapdragon GSR 1 upscaler option
+  (`runtime/nvn/vulkan/shaders.c`).
+- Game mods (Settings > Mods, `runtime/mods.c`): folders with a `romfs` folder inside, as for Eden or Ryujinx, each
+  turned on or off in the menu; none are included. For the game's text in Brazilian Portuguese, the fan translation
+  by the [Triforce Heroes](https://triforce-heroes.com.br) team (translated by Ewerton and Jacilene, reviewed by David,
+  Ricardo and Nelson): download it from their site, extract it, and import its folder with Settings > Mods > Import a
+  mod folder (or copy it into `Android/data/com.lasrecomp.android/files/mods/`). It replaces the US English text:
+  keep Language on Auto or English.
 - The Android robot on the start screen is reproduced or modified from work created and shared by Google and used
   according to terms described in the [Creative Commons 3.0 Attribution License](https://creativecommons.org/licenses/by/3.0/).
 - [DejaVu fonts](https://dejavu-fonts.github.io) (Bitstream Vera license): stand-in for the Switch's system font.

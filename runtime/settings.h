@@ -5,7 +5,8 @@
 enum { ASPECT_UNLOCKED = 0, ASPECT_ORIGINAL = 1 };
 enum { RES_MATCH = 0, /* 1..8 = 1x..8x */ RES_DYNAMIC = 9, RES_Q75 = 10, RES_Q25 = 11, RES_Q50 = 12 };
 // (11 was 67% of the display: larecomp.ini "67%" now loads as RES_Q75)
-enum { UPSCALE_BILINEAR = 0, UPSCALE_METALFX = 1 /* macOS */, UPSCALE_FSR1 = 2 /* Windows: AMD FSR 1 */ };
+enum { UPSCALE_BILINEAR = 0, UPSCALE_METALFX = 1 /* macOS */, UPSCALE_FSR1 = 2 /* Windows: AMD FSR 1 */,
+       UPSCALE_SGSR1 = 3 /* Android: Qualcomm Snapdragon Game Super Resolution 1 */ };
 #ifdef __APPLE__
 #define UPSCALE_SHARP UPSCALE_METALFX  // each OS's non-bilinear upscaler (the default)
 #else
@@ -36,6 +37,8 @@ typedef struct {
     int fps_mode;         // 0: the game's own choice (30 / 60, the frame pacer), 1: 30 fps, 2: 60 fps
     bool shader_int32;    // shader address math in 32-bit words even where the driver offers 64-bit (vulkan/exec.c)
     bool frame_gen;       // 60 on the screen from the game's 30: an in-between frame by reprojection (vulkan/framegen.c)
+    int overlay_style;    // Show FPS's overlay (ui/perf_overlay.mm): 0 full, 1 compact (one line)
+    char mods_off[512];   // the game mods turned off in the menu (runtime/mods.c), their folder names separated by '|'
 #define TOUCH_NCTL 12
     float touch_pos[TOUCH_NCTL][2];  // each on-screen control's place, a share of the screen (negative: default)
     float touch_scale, touch_opacity;
@@ -80,3 +83,5 @@ void settings_save(void);
 const char *settings_language(void);
 // That code's name for the menu ("Spanish")
 const char *settings_language_name(void);
+// Android: the phone's language is Portuguese (the menus' own text: ui/i18n.mm). LARECOMP_HOST_LANG=pt|en (tests)
+bool settings_host_portuguese(void);

@@ -8,6 +8,7 @@
 #include "imgui.h"
 #include "imgui_internal.h"  // (SetKeyOwner, NavCursorVisible)
 
+#include "i18n.h"
 #include "option_rows.h"
 #include "osk.h"
 
@@ -55,11 +56,11 @@ void ui_touch_scroll() {
 static void touch_begin(const char *label, const char *desc, bool heading = true) {
     ImGui::PushID(label);
     ImGui::PushTextWrapPos(0);
-    if (heading) ImGui::TextUnformatted(label);
+    if (heading) ImGui::TextUnformatted(tr(label));
     ImGui::PopTextWrapPos();
     if (desc && *desc) {
         ImGui::PushTextWrapPos(0);
-        ImGui::TextDisabled("%s", desc);
+        ImGui::TextDisabled("%s", tr(desc));
         ImGui::PopTextWrapPos();
     }
     ImGui::BeginDisabled(g_next_disabled);
@@ -95,8 +96,7 @@ void opt_begin(const char *id, float scale) {
 }
 
 void opt_section(const char *title) {
-    std::string t = title;
-    for (char &c : t) c = (char)toupper((unsigned char)c);
+    std::string t = ui_upper(tr(title));
     if (ImGui::GetCursorPosY() > ImGui::GetStyle().WindowPadding.y + 1) ImGui::Dummy(ImVec2(0, 10 * g_scale));
 #ifdef __ANDROID__
     ImGui::TextColored(ImGui::GetStyleColorVec4(ImGuiCol_NavCursor), "%s", t.c_str());
@@ -151,9 +151,7 @@ static int row(const char *label, const std::string &value, bool changed, const 
     dl->AddRect(p, ImVec2(p.x + w, p.y + h), hov || foc ? (off ? IM_COL32(236, 194, 84, 120) : kGold)
                                                         : IM_COL32(255, 255, 255, off ? 18 : 38), r, 0,
                 hov || foc ? 2.0f : 1.0f);
-    std::string t = label;
-    if (upper)
-        for (char &c : t) c = (char)toupper((unsigned char)c);
+    std::string t = upper ? ui_upper(tr(label)) : tr(label);
     float ty = p.y + (h - fs) * 0.5f;
     ImU32 label_col = off ? IM_COL32(110, 110, 102, 255) : IM_COL32(240, 236, 224, 255);  // (greyed out: clearly dim)
     dl->AddText(ImVec2(p.x + pad, ty), label_col, t.c_str());
@@ -183,7 +181,7 @@ static int row(const char *label, const std::string &value, bool changed, const 
 bool opt_toggle(const char *label, bool *v, bool def, const char *desc) {
 #ifdef __ANDROID__
     touch_begin(label, desc);
-    bool changed = ImGui::Checkbox(*v ? "Enabled" : "Disabled", v);
+    bool changed = ImGui::Checkbox(tr(*v ? "Enabled" : "Disabled"), v);
     touch_end(); return changed;
 #endif
     if (!row(label, *v ? "On" : "Off", *v != def, desc)) return false;  // (any step flips it)
@@ -196,10 +194,10 @@ bool opt_choice(const char *label, int *v, const char *const *names, int n, int 
 #ifdef __ANDROID__
     touch_begin(label, desc);
     bool changed = false;
-    if (ImGui::BeginCombo("##value", names[cur])) {
+    if (ImGui::BeginCombo("##value", tr(names[cur]))) {
         ui_touch_scroll();
         for (int i = 0; i < n; i++) {
-            if (ImGui::Selectable(names[i], i == cur, 0, ImVec2(0, ImGui::GetFontSize() * 2.1f))) { changed = *v != i; *v = i; }
+            if (ImGui::Selectable(tr(names[i]), i == cur, 0, ImVec2(0, ImGui::GetFontSize() * 2.1f))) { changed = *v != i; *v = i; }
             if (i == cur) ImGui::SetItemDefaultFocus();
         }
         ImGui::EndCombo();
@@ -259,7 +257,7 @@ bool opt_int(const char *label, int *v, int lo, int hi, int step, int def, const
 bool opt_button(const char *label, const char *desc) {
 #ifdef __ANDROID__
     touch_begin(label, desc, false);
-    bool clicked = ImGui::Button(label, ImVec2(-1, 0));
+    bool clicked = ImGui::Button(tr(label), ImVec2(-1, 0));
     touch_end(); return clicked;
 #else
     return row(label, "", false, desc) == 2;
@@ -269,7 +267,7 @@ bool opt_button(const char *label, const char *desc) {
 bool opt_radio(const char *label, bool selected, const char *desc) {
 #ifdef __ANDROID__
     touch_begin(label, desc);
-    bool touch_chosen = ImGui::RadioButton(selected ? "Selected" : "Select", selected);
+    bool touch_chosen = ImGui::RadioButton(tr(selected ? "Selected" : "Select"), selected);
     touch_end(); return touch_chosen && !selected;
 #endif
     bool off = g_next_disabled;
@@ -287,7 +285,7 @@ bool opt_action(const char *label, const char *value, const char *desc, bool upp
 #ifdef __ANDROID__
     bool has_value = value && *value;
     touch_begin(label, desc, has_value);
-    bool clicked = ImGui::Button(has_value ? value : label, ImVec2(-1, 0));
+    bool clicked = ImGui::Button(has_value ? value : tr(label), ImVec2(-1, 0));
     touch_end(); return clicked;
 #else
     return row(label, value ? value : "", false, desc, upper) == 2;

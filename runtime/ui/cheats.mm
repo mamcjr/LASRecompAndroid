@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "i18n.h"
 #include "imgui.h"
 #include "option_rows.h"
 
@@ -58,7 +59,7 @@ extern "C" void cheats_frame(void) {
 
 extern "C" void cheats_draw(float scale) {
     if (!game_in_play()) {
-        ImGui::TextDisabled("Load a save file and get into the game to use cheats.");
+        ImGui::TextDisabled("%s", tr("Load a save file and get into the game to use cheats."));
         return;
     }
     opt_begin("##cheats", scale);

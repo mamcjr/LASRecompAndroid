@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "imgui.h"
+#include "i18n.h"
 #include "option_rows.h"
 #include "settings_theme.h"
 #include "imgui_internal.h"  // (NavCursorVisible)
@@ -35,6 +36,9 @@ void rando_tab_draw(float scale);
 bool warp_tab_draw(float scale);  // warp_tab.mm: true when a warp started
 extern "C" void cheats_draw(float scale);  // cheats.mm
 extern "C" void difficulty_draw(float scale);  // difficulty.mm
+#ifdef __ANDROID__
+void mods_tab_draw(float scale);  // mods_tab.mm
+#endif
 void controls_bindings_draw(float scale);  // controls_ui.mm
 #include "../input_bind.h"
 #include "../paths.h"
@@ -405,7 +409,7 @@ static void drain_events(ImGuiIO &io) {
 // Section header in the big font.
 static void header(const char *t) {
     ImGui::PushFont(g_font_big);
-    ImGui::TextColored(settings_title_color(), "%s", t);
+    ImGui::TextColored(settings_title_color(), "%s", tr(t));
     ImGui::PopFont();
     ImGui::Separator();
     ImGui::Spacing();
@@ -413,7 +417,7 @@ static void header(const char *t) {
 
 static void hint(const char *t) {
     ImGui::PushTextWrapPos(0);
-    ImGui::TextDisabled("%s", t);
+    ImGui::TextDisabled("%s", tr(t));
     ImGui::PopTextWrapPos();
 }
 
@@ -422,13 +426,13 @@ static void hint(const char *t) {
 static bool choice(const char *label, int *value, const char *const *names, int n, float reserve = 0) {
     ImGui::PushID(label);
     ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted(label);
+    ImGui::TextUnformatted(tr(label));
     ImGui::SameLine(ImGui::GetContentRegionAvail().x * 0.45f);
     bool changed = false;
     ImGui::SetNextItemWidth(reserve > 0 ? -reserve : -1);
-    if (ImGui::BeginCombo("##c", names[*value])) {
+    if (ImGui::BeginCombo("##c", tr(names[*value]))) {
         for (int i = 0; i < n; i++) {
-            if (ImGui::Selectable(names[i], i == *value)) { *value = i; changed = true; }
+            if (ImGui::Selectable(tr(names[i]), i == *value)) { *value = i; changed = true; }
             if (i == *value) ImGui::SetItemDefaultFocus();
         }
         ImGui::EndCombo();
@@ -474,6 +478,14 @@ static void tab_display(void) {
 #endif
     opt_toggle("Show FPS", &g_settings.show_fps, false, "Shows the frame rate in the top right corner.");
 #ifdef __ANDROID__
+    {
+        static const char *styles[] = {"Full", "Compact"};
+        if (!g_settings.show_fps) opt_disable_next();
+        opt_choice("Overlay style", &g_settings.overlay_style, styles, 2, 0,
+                   "Full: frame rate and frame times, CPU, GPU, memory, temperatures and power. Compact: one line - "
+                   "FPS, FPS+FG (with frame generation's in-between frames: about twice FPS while it generates), the "
+                   "app's RAM and the battery temperature.");
+    }
     opt_toggle("Touch controls", &g_settings.touch_controls, false,
                "On-screen buttons and stick while no controller is connected. The back button opens this menu.");
     {
@@ -515,13 +527,13 @@ static void tab_display(void) {
         for (int i = 0; i < NRES; i++) if (res_mode[i] == g_settings.res_mode) ri = i;
         float sx, sy;
         renderer_get_scale(&sx, &sy);
-        char d[400];
-        int n = snprintf(d, sizeof d, "How sharp the 3D image is. Match display: your screen's own resolution. Dynamic: "
+        char d[700];
+        int n = snprintf(d, sizeof d, tr("How sharp the 3D image is. Match display: your screen's own resolution. Dynamic: "
                                       "as sharp as your GPU keeps at full speed. 1x-4x: the Switch's 1080p times that. "
                                       "75%% / 50%% / 25%%: a share of the display, for slower machines.\n\nRendering at "
-                                      "%.0f x %.0f.", 1920.0 * sx, 1080.0 * sy);
+                                      "%.0f x %.0f."), 1920.0 * sx, 1080.0 * sy);
         if (g_settings.res_mode == RES_DYNAMIC)
-            snprintf(d + n, sizeof d - n, " Dynamic: %.0f%% of the display right now.", output_scale_dynamic_factor() * 100);
+            snprintf(d + n, sizeof d - n, tr(" Dynamic: %.0f%% of the display right now."), output_scale_dynamic_factor() * 100);
         if (opt_choice("Internal resolution", &ri, res, NRES, RES_DEFAULT_AT, d, false)) g_settings.res_mode = res_mode[ri];
     }
     {   // each OS's own upscaler next to bilinear (UPSCALE_SHARP: MetalFX on macOS, AMD FSR 1 on Windows)
@@ -534,14 +546,27 @@ static void tab_display(void) {
         const char *ud = "How the image is scaled up to the window when it renders at a lower resolution. AMD FSR 1: "
                          "edge-aware upscaling and sharpening, sharper. Bilinear: plain and soft.";
 #endif
+#ifdef __ANDROID__  // (+ Qualcomm's Snapdragon GSR 1: one pass, made for phones - exec.c post_process)
+        static const char *ups_a[] = {"Bilinear", "AMD FSR 1", "Snapdragon GSR 1"};
+        static const int ups_mode[] = {UPSCALE_BILINEAR, UPSCALE_FSR1, UPSCALE_SGSR1};
+        ud = "How the image is scaled up to the window when it renders at a lower resolution. AMD FSR 1: edge-aware "
+             "upscaling and sharpening, sharper. Snapdragon GSR 1: Qualcomm's upscaler made for phones, in a single pass "
+             "- sharp edges, lighter on the GPU. Bilinear: plain and soft.";
+        int ui = g_settings.upscaler == UPSCALE_SGSR1 ? 2 : g_settings.upscaler == UPSCALE_BILINEAR ? 0 : 1;
+#else
         int ui = g_settings.upscaler == UPSCALE_BILINEAR ? 0 : 1;
-        char udm[512];
+#endif
+        char udm[1024];
         if (g_settings.res_mode == RES_MATCH) {  // (renders at the window's size: nothing to scale up)
-            snprintf(udm, sizeof udm, "%s\n\nNot used at Match display: the game already renders at your display's resolution.", ud);
+            snprintf(udm, sizeof udm, tr("%s\n\nNot used at Match display: the game already renders at your display's resolution."), tr(ud));
             ud = udm;
             opt_disable_next();
         }
+#ifdef __ANDROID__
+        if (opt_choice("Upscaler", &ui, ups_a, 3, 1, ud)) g_settings.upscaler = ups_mode[ui];
+#else
         if (opt_choice("Upscaler", &ui, ups, 2, 1, ud)) g_settings.upscaler = ui ? UPSCALE_SHARP : UPSCALE_BILINEAR;
+#endif
     }
     static const char *aa[] = {"Off", "SMAA"};
     opt_choice("Anti-aliasing", &g_settings.antialias, aa, 2, AA_OFF,
@@ -608,10 +633,10 @@ static void tab_quit(float scale, bool in_game) {
     static int ask;  // 0: the two choices; 1: start screen?; 2: desktop?
     if (ask && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
         ask = 0;
-    const char *lost = in_game ? "\n\nProgress since your last save is lost." : "";
-    char d1[200], d2[200];
-    snprintf(d1, sizeof d1, "Leaves the game and goes back to the LAS Recomp start screen.%s", lost);
-    snprintf(d2, sizeof d2, "Closes LAS Recomp.%s", lost);
+    const char *lost = in_game ? tr("\n\nProgress since your last save is lost.") : "";
+    char d1[300], d2[300];
+    snprintf(d1, sizeof d1, tr("Leaves the game and goes back to the LAS Recomp start screen.%s"), lost);
+    snprintf(d2, sizeof d2, tr("Closes LAS Recomp.%s"), lost);
 #ifdef __ANDROID__
     const char *quit_app = "Close app", *quit_app_yes = "Close app";
     const char *quit_start = "Return to start", *quit_start_yes = "Return to start";
@@ -653,7 +678,7 @@ static void tab_about(void) {
     {
         static const char *const fam[] = {"Nintendo", "Xbox", "PlayStation"};
         char autol[64];
-        snprintf(autol, sizeof autol, "Auto (%s)", fam[input_pad_family() % 3]);
+        snprintf(autol, sizeof autol, tr("Auto (%s)"), fam[input_pad_family() % 3]);
         const char *names[] = {autol, "Nintendo", "Xbox", "PlayStation"};
         choice("Button icons", &g_settings.prompts, names, 4);
     }
@@ -662,7 +687,7 @@ static void tab_about(void) {
     {
         // what the game is told the console's language is: its text follows this (runtime/settings.c)
         char autol[64];
-        snprintf(autol, sizeof autol, "Auto (%s)", settings_language_name());
+        snprintf(autol, sizeof autol, tr("Auto (%s)"), tr(settings_language_name()));
         const char *names[N_LANGUAGES];
         names[0] = autol;
         for (int i = 1; i < N_LANGUAGES; i++) names[i] = g_language_names[i];
@@ -676,9 +701,9 @@ static void tab_about(void) {
     ImGui::Spacing();
     header("Menu");
 #ifdef __ANDROID__
-    ImGui::TextUnformatted("Open / close this menu:  the menu button on the screen, the back button, or the controller's "
-                           "Home / Xbox / PlayStation button, or Back + Start");
-    ImGui::TextUnformatted("Switch tabs:  L / R        Back:  B");
+    ImGui::TextUnformatted(tr("Open / close this menu:  the menu button on the screen, the back button, or the controller's "
+                              "Home / Xbox / PlayStation button, or Back + Start"));
+    ImGui::TextUnformatted(tr("Switch tabs:  L / R        Back:  B"));
 #else
     ImGui::TextUnformatted("Open / close this menu:  F1, Esc, the controller's Home / Xbox / PlayStation button, or Back + Start");
     ImGui::TextUnformatted("Switch tabs:  L / R  (Q / E)        Back:  B  (Esc)");
@@ -721,7 +746,7 @@ static void keyboard_draw_touch(ImGuiIO &io, float scale, bool appearing) {
                                     ImGuiWindowFlags_AlwaysAutoResize);
     ImFont *big = g_menu_font_big ? g_menu_font_big : g_font_big, *small = g_menu_font ? g_menu_font : g_font;
     ImGui::PushFont(big);
-    ImGui::TextColored(ImVec4(0.93f, 0.76f, 0.33f, 1), "Enter your name");
+    ImGui::TextColored(ImVec4(0.93f, 0.76f, 0.33f, 1), "%s", tr("Enter your name"));
     if (appearing) ImGui::SetKeyboardFocusHere();
     ImGui::SetNextItemWidth(-1);
     ImGui::InputText("##name", g_kbd_text, (size_t)(g_kbd_max * 4 + 1 < (int)sizeof g_kbd_text ? g_kbd_max * 4 + 1 : sizeof g_kbd_text),
@@ -733,9 +758,9 @@ static void keyboard_draw_touch(ImGuiIO &io, float scale, bool appearing) {
     float y = ImGui::GetCursorPosY(), x0 = ImGui::GetCursorPosX(), xr = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x;
     ImGui::PushFont(big);
     ImGui::SetCursorPos(ImVec2(xr - 2 * bw - sp, y));
-    if (ImGui::Button("Cancel", ImVec2(bw, bh))) g_kbd = 3;
+    if (ImGui::Button(tr("Cancel"), ImVec2(bw, bh))) g_kbd = 3;
     ImGui::SetCursorPos(ImVec2(xr - bw, y));
-    if (ImGui::Button("OK", ImVec2(bw, bh))) g_kbd = 2;
+    if (ImGui::Button(tr("OK"), ImVec2(bw, bh))) g_kbd = 2;
     ImGui::PopFont();
     ImGui::PushFont(small);
     ImGui::SetCursorPos(ImVec2(x0, y + (bh - ImGui::GetTextLineHeight()) * 0.5f));
@@ -816,7 +841,7 @@ static void settings_page(int id, float scale, bool in_game, void (*prelaunch)(f
     case 1: tab_audio(); break;
     case 2:
         if (game_in_play()) save_editor_draw(scale);
-        else ImGui::TextDisabled("Load a save file and get into the game to edit it.");
+        else ImGui::TextDisabled("%s", tr("Load a save file and get into the game to edit it."));
         break;
 #ifndef __ANDROID__  // (no randomizer on Android: rando_tab.mm isn't built there)
     case 3: rando_tab_draw(scale); break;
@@ -827,6 +852,9 @@ static void settings_page(int id, float scale, bool in_game, void (*prelaunch)(f
     case 7: tab_cosmetics(); break;
     case 8: tab_about(); break;
     case 9: tab_quit(scale, in_game); break;
+#ifdef __ANDROID__
+    case 10: mods_tab_draw(scale); break;
+#endif
     }
 }
 
@@ -838,13 +866,17 @@ extern "C" bool menu_settings_back_requested() { bool back = g_touch_settings_ba
 static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     // (id: the page; -1 = Prelaunch)
     struct Tab { const char *name; int id; bool on; };
-    Tab tabs[11];
+    Tab tabs[12];
     int ntabs = 0;
     if (prelaunch) tabs[ntabs++] = {"Prelaunch", -1, true};
     static const char *names[] = {"Video", "Audio", "Save Editor", "Randomizer", "Warp", "Cheats", "Gameplay",
-                                  "Cosmetics", "Controls", "Quit"};
+                                  "Cosmetics", "Controls", "Quit", "Mods"};
+#ifdef __ANDROID__  // (+ Mods: runtime/mods.c, ui/mods_tab.mm)
+    static const int order[] = {8, 0, 1, 10, 6, 7, 3, 5, 4, 2, 9};
+#else
     static const int order[] = {8, 0, 1, 6, 7, 3, 5, 4, 2, 9};  // Controls, Video, Audio, Gameplay, Cosmetics, Randomizer,
                                                                 // Cheats, Warp, Save Editor, Quit (ids stay: test hooks)
+#endif
     for (int i : order) {  // (Quit: in game only - the start screen has its own QUIT, and an eleventh tab cut names short)
 #ifdef __ANDROID__
         if (i == 3) continue;  // (no randomizer: its seed generator is a desktop program)
@@ -877,24 +909,24 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     ui_touch_scroll();
     static bool more;
     static int last_touch_tab = -99;
-    for (int i = 0; i < ntabs; i++) if (last_touch_tab != g_tab && tabs[i].id == g_tab && tabs[i].id > 1 && tabs[i].id != 8) more = true;
+    for (int i = 0; i < ntabs; i++) if (last_touch_tab != g_tab && tabs[i].id == g_tab && tabs[i].id > 1 && tabs[i].id != 8 && tabs[i].id != 10) more = true;
     last_touch_tab = g_tab;
-    const int primary[] = {0, 1, 8, -1};
+    const int primary[] = {0, 1, 8, 10, -1};
     auto category = [&](int id) {
         for (int i = 0; i < ntabs; i++) if (tabs[i].id == id) {
             const Tab &t = tabs[i];
             ImGui::BeginDisabled(!t.on);
-            const char *name = id == -1 ? "Saves & files" : t.name;
+            const char *name = tr(id == -1 ? "Saves & files" : t.name);
             if (g_focus_tab == id || (g_focus_tab == -100 && id == g_tab)) { ImGui::SetKeyboardFocusHere(); g_focus_tab = -99; }
             if (ImGui::Selectable(name, g_tab == id, 0, ImVec2(0, 64 * scale))) g_tab = id;
             ImGui::EndDisabled();
         }
     };
     for (int id : primary) category(id);
-    if (ImGui::Selectable(more ? "Less options" : "More options", false, 0, ImVec2(0, 64 * scale))) more = !more;
+    if (ImGui::Selectable(tr(more ? "Less options" : "More options"), false, 0, ImVec2(0, 64 * scale))) more = !more;
     if (more) for (int i = 0; i < ntabs; i++) {
         int id = tabs[i].id;
-        if (id != -1 && id != 0 && id != 1 && id != 8) category(id);
+        if (id != -1 && id != 0 && id != 1 && id != 8 && id != 10) category(id);
     }
     ImGui::EndChild();
     ImGui::SameLine();
@@ -904,7 +936,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     settings_page(g_tab, scale, in_game, prelaunch);
     ImGui::PopID();
     ImGui::EndChild();
-    if (ImGui::Button(prelaunch ? "Back to start" : "Back to game", ImVec2(-1, 64 * scale))) {
+    if (ImGui::Button(tr(prelaunch ? "Back to start" : "Back to game"), ImVec2(-1, 64 * scale))) {
         if (prelaunch) g_touch_settings_back = true;
         else set_open(false);
     }
@@ -1130,7 +1162,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         // header as on the start screen's Settings: the title, and a close X in the corner (B / Esc too). ("Title
         // screen" - rt_request_reboot(RT_REBOOT_TITLE) - is to find a new home; user 2026-10-11.)
         ImGui::PushFont(g_font_big);
-        ImGui::TextColored(settings_title_color(), "Settings");
+        ImGui::TextColored(settings_title_color(), "%s", tr("Settings"));
         ImGui::PopFont();
         {
             float bx = 44 * scale;

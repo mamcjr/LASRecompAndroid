@@ -4797,8 +4797,10 @@ static VkImageView post_process(VkCommandBuffer cb, TexBackend *b, double ow_d, 
     uint32_t ow = (uint32_t)lround(ow_d), oh = (uint32_t)lround(oh_d);
     if (ow > 16384) ow = 16384;
     if (oh > 16384) oh = 16384;
-    bool fsr = g_settings.upscaler == UPSCALE_FSR1 && (ow > b->width + 1 || oh > b->height + 1);  // (an upscale only)
-    if (!smaa && !fsr) return v;
+    bool up = ow > b->width + 1 || oh > b->height + 1;  // (an upscale only)
+    bool fsr = g_settings.upscaler == UPSCALE_FSR1 && up;
+    bool sgsr = g_settings.upscaler == UPSCALE_SGSR1 && up;  // (Android: Snapdragon GSR 1, one pass)
+    if (!smaa && !fsr && !sgsr) return v;
     extern void vk_frame_suspend(void);
     extern void vk_frame_resume(void);
     vk_frame_suspend();
@@ -4826,14 +4828,23 @@ static VkImageView post_process(VkCommandBuffer cb, TexBackend *b, double ow_d, 
         post_pass(cb, "rcas.frag", ri_, 1, r, pr, false);
         v = post_view(r);
     }
+    if (sgsr) {
+        float iw = (float)b->width, ih = (float)b->height;
+        TexBackend *e = post_image(3, ow, oh);
+        float ps[8] = {1.0f / iw, 1.0f / ih, iw, ih, (float)ow, (float)oh};
+        VkImageView si[3] = {v};
+        post_pass(cb, "sgsr1.frag", si, 1, e, ps, false);
+        v = post_view(e);
+    }
     vk_full_barrier(cb);
     vk_frame_resume();
     {
         static uint32_t piw, pih, pow_, poh;
-        static int psm = -1, pfs = -1;
-        if (b->width != piw || b->height != pih || ow != pow_ || oh != poh || smaa != psm || fsr != pfs)
-            LOG("[post] %ux%u%s%s -> %ux%u\n", b->width, b->height, smaa ? " smaa" : "", fsr ? " fsr1" : "", ow, oh);
-        piw = b->width; pih = b->height; pow_ = ow; poh = oh; psm = smaa; pfs = fsr;
+        static int psm = -1, pfs = -1, psg = -1;
+        if (b->width != piw || b->height != pih || ow != pow_ || oh != poh || smaa != psm || fsr != pfs || sgsr != psg)
+            LOG("[post] %ux%u%s%s%s -> %ux%u\n", b->width, b->height, smaa ? " smaa" : "", fsr ? " fsr1" : "",
+                sgsr ? " sgsr1" : "", ow, oh);
+        piw = b->width; pih = b->height; pow_ = ow; poh = oh; psm = smaa; pfs = fsr; psg = sgsr;
     }
     return v;
 }

@@ -6,6 +6,10 @@
 
 #include "hle.h"
 #include "input_bind.h"
+#ifdef __ANDROID__
+#include <SDL3/SDL_locale.h>
+#include <SDL3/SDL_stdinc.h>
+#endif
 
 #define SETTINGS_FILE settings_file()
 
@@ -48,6 +52,25 @@ const char *const g_language_codes[N_LANGUAGES] = {"auto", "ja", "en-US", "es", 
 const char *const g_language_names[N_LANGUAGES] = {"Auto", "Japanese", "English", "Spanish", "French", "German",
                                                    "Italian", "Dutch", "Russian", "Korean", "Chinese (Simplified)",
                                                    "Chinese (Traditional)"};
+
+bool settings_host_portuguese(void) {
+#ifdef __ANDROID__
+    static int pt = -1;
+    if (pt < 0) {
+        const char *e = getenv("LARECOMP_HOST_LANG");
+        if (e && *e) pt = !strncmp(e, "pt", 2);
+        else {  // (the phone's first preferred language, through SDL)
+            int n = 0;
+            SDL_Locale **l = SDL_GetPreferredLocales(&n);
+            pt = l && n > 0 && l[0]->language && !strcmp(l[0]->language, "pt");
+            SDL_free(l);
+        }
+    }
+    return pt;
+#else
+    return false;
+#endif
+}
 
 // LANG_AUTO: the host's own language (LANG=es_ES.UTF-8 -> es), en-US when it is none of the game's. Linux only:
 // macOS / Windows apps get no locale variables from the system, so Auto is English there (pick one in settings).
@@ -97,7 +120,7 @@ void settings_load(void) {
     while (fgets(line, sizeof line, f)) {
         char key[64];
 #ifdef __ANDROID__
-        char val[512];
+        char val[512] = "";  // (an empty value - mods_off = - leaves it untouched)
         if (sscanf(line, " %63[^= ] = %511[^\n]", key, val) < 1) continue;
 #else
         char val[128];
@@ -121,6 +144,8 @@ void settings_load(void) {
         else if (!strcmp(key, "frame_rate")) g_settings.fps_mode = !strcmp(val, "30") ? 1 : !strcmp(val, "60") ? 2 : 0;
         else if (!strcmp(key, "shader_int32")) g_settings.shader_int32 = atoi(val) != 0;
         else if (!strcmp(key, "frame_gen")) g_settings.frame_gen = atoi(val) != 0;
+        else if (!strcmp(key, "overlay")) g_settings.overlay_style = !strcmp(val, "compact");
+        else if (!strcmp(key, "mods_off")) snprintf(g_settings.mods_off, sizeof g_settings.mods_off, "%s", val);
         else if (!strcmp(key, "touch_scale")) g_settings.touch_scale = (float)atof(val);
         else if (!strcmp(key, "touch_opacity")) g_settings.touch_opacity = (float)atof(val);
         else if (!strcmp(key, "touch_layout")) {  // x,y per control (a share of the screen; negative: default)
@@ -137,6 +162,9 @@ void settings_load(void) {
                                   !strcmp(val, "50%") ? RES_Q50 : !strcmp(val, "25%") ? RES_Q25 :
                                   (n >= 1 && n <= 4) ? n : n > 4 ? 4 : RES_MATCH;  // (5x-8x were removed)
         }
+#ifdef __ANDROID__
+        else if (!strcmp(key, "upscaler") && !strcmp(val, "sgsr1")) g_settings.upscaler = UPSCALE_SGSR1;
+#endif
         else if (!strcmp(key, "upscaler")) g_settings.upscaler = !strcmp(val, "bilinear") ? UPSCALE_BILINEAR : UPSCALE_SHARP;  // (metalfx / fsr1: this OS's)
         else if (!strcmp(key, "antialias")) g_settings.antialias = !strcmp(val, "off") ? AA_OFF : AA_SMAA;  // ("fxaa": SMAA now)
         else if (!strcmp(key, "inv_keys")) g_settings.inv_keys = atoi(val) != 0;
@@ -192,12 +220,15 @@ void settings_save(void) {
     fprintf(f, "frame_rate = %s\n", g_settings.fps_mode == 1 ? "30" : g_settings.fps_mode == 2 ? "60" : "auto");
     fprintf(f, "shader_int32 = %d\n", g_settings.shader_int32);
     fprintf(f, "frame_gen = %d\n", g_settings.frame_gen);
+    fprintf(f, "overlay = %s\n", g_settings.overlay_style == 1 ? "compact" : "full");
+    fprintf(f, "mods_off = %s\n", g_settings.mods_off);
     fprintf(f, "touch_scale = %.2f\ntouch_opacity = %.2f\ntouch_layout = ", g_settings.touch_scale, g_settings.touch_opacity);
     for (int i = 0; i < TOUCH_NCTL; i++)
         fprintf(f, "%s%.4f,%.4f", i ? "," : "", g_settings.touch_pos[i][0], g_settings.touch_pos[i][1]);
     fprintf(f, "\n");
 #endif
-    fprintf(f, "upscaler = %s\n", g_settings.upscaler == UPSCALE_METALFX ? "metalfx" : g_settings.upscaler == UPSCALE_FSR1 ? "fsr1" : "bilinear");
+    fprintf(f, "upscaler = %s\n", g_settings.upscaler == UPSCALE_METALFX ? "metalfx" : g_settings.upscaler == UPSCALE_FSR1 ? "fsr1"
+                                  : g_settings.upscaler == UPSCALE_SGSR1 ? "sgsr1" : "bilinear");
     fprintf(f, "antialias = %s\n", g_settings.antialias == AA_SMAA ? "smaa" : "off");
     if (g_settings.res_mode == RES_DYNAMIC) fprintf(f, "resolution = dynamic\n");
     else if (g_settings.res_mode == RES_Q75) fprintf(f, "resolution = 75%%\n");

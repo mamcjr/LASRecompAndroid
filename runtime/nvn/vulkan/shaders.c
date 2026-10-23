@@ -431,6 +431,71 @@ static const char *builtin_src(const char *name, int *stage) {
                "  o = vec4((lobe * (b + d + f + h) + e) / (4.0 * lobe + 1.0), 1.0);\n"
                "}\n";
     }
+    // Qualcomm Snapdragon Game Super Resolution 1 (BSD-3-Clause, third_party/sgsr/LICENSE; SnapdragonStudios/
+    // snapdragon-gsr sgsr/v1/include/glsl/sgsr1_shader_mobile.frag at d926f074, RGBA mode: green as luma, no edge
+    // direction): a single-pass edge-adaptive upscale, Lanczos-2-like weights over 12 taps where the green channel has
+    // an edge, the bilinear sample elsewhere. a = (1 / input size, input size) - its ViewportInfo; b.xy = output size.
+    // Its four textureGather()s are fetched as texels instead (the same 2x2 footprints): a gather-based shader hard-reset
+    // a phone in LASRecomp-Android-Plus's frame generation.
+    if (!strcmp(name, "sgsr1.frag")) {
+        *stage = STAGE_FRAGMENT;
+        return "#version 450\n"
+               "layout(set = 0, binding = 0) uniform sampler2D t;\n"
+               "layout(push_constant) uniform P { vec4 a; vec4 b; } pc;\n"
+               "layout(location = 0) out vec4 o;\n"
+               "float fastLanczos2(float x) { float wA = x - 4.0; float wB = x * wA - wA; wA *= wA; return wB * wA; }\n"
+               "vec2 weightY(float dx, float dy, float c, float std) {\n"
+               "  float x = (dx * dx + dy * dy) * 0.55 + clamp(abs(c) * std, 0.0, 1.0);\n"
+               "  float w = fastLanczos2(x);\n"
+               "  return vec2(w, w * c);\n"
+               "}\n"
+               "float G(ivec2 p) { return texelFetch(t, clamp(p, ivec2(0), ivec2(pc.a.zw) - 1), 0).g; }\n"
+               // textureGather(t, p / size, 1) at the texel corner p: the four texels around it, in gather order
+               "vec4 gatherG(ivec2 p) { return vec4(G(p + ivec2(-1, 0)), G(p), G(p + ivec2(0, -1)), G(p + ivec2(-1, -1))); }\n"
+               "void main() {\n"
+               "  vec2 uv = gl_FragCoord.xy / pc.b.xy;\n"
+               "  vec4 color = vec4(textureLod(t, uv, 0.0).rgb, 0.0);\n"
+               "  vec2 imgCoord = uv * pc.a.zw + vec2(-0.5, 0.5);\n"
+               "  vec2 imgCoordPixel = floor(imgCoord);\n"
+               "  ivec2 coord = ivec2(imgCoordPixel);\n"
+               "  vec2 pl = imgCoord - imgCoordPixel;\n"
+               "  vec4 left = gatherG(coord);\n"
+               "  float edgeVote = abs(left.z - left.y) + abs(color.y - left.y) + abs(color.y - left.z);\n"
+               "  if (edgeVote > 8.0 / 255.0) {\n"
+               "    coord.x += 1;\n"
+               "    vec4 right = gatherG(coord + ivec2(1, 0));\n"
+               "    vec4 upDown;\n"
+               "    upDown.xy = gatherG(coord + ivec2(0, -1)).wz;\n"
+               "    upDown.zw = gatherG(coord + ivec2(0, 1)).yx;\n"
+               "    float mean = (left.y + left.z + right.x + right.w) * 0.25;\n"
+               "    left -= mean; right -= mean; upDown -= mean;\n"
+               "    color.w = color.y - mean;\n"
+               "    float sum = abs(left.x) + abs(left.y) + abs(left.z) + abs(left.w) + abs(right.x) + abs(right.y) +\n"
+               "                abs(right.z) + abs(right.w) + abs(upDown.x) + abs(upDown.y) + abs(upDown.z) + abs(upDown.w);\n"
+               "    float sumMean = 1.014185e+01 / sum;\n"
+               "    float std = sumMean * sumMean;\n"
+               "    vec2 aWY = weightY(pl.x, pl.y + 1.0, upDown.x, std);\n"
+               "    aWY += weightY(pl.x - 1.0, pl.y + 1.0, upDown.y, std);\n"
+               "    aWY += weightY(pl.x - 1.0, pl.y - 2.0, upDown.z, std);\n"
+               "    aWY += weightY(pl.x, pl.y - 2.0, upDown.w, std);\n"
+               "    aWY += weightY(pl.x + 1.0, pl.y - 1.0, left.x, std);\n"
+               "    aWY += weightY(pl.x, pl.y - 1.0, left.y, std);\n"
+               "    aWY += weightY(pl.x, pl.y, left.z, std);\n"
+               "    aWY += weightY(pl.x + 1.0, pl.y, left.w, std);\n"
+               "    aWY += weightY(pl.x - 1.0, pl.y - 1.0, right.x, std);\n"
+               "    aWY += weightY(pl.x - 2.0, pl.y - 1.0, right.y, std);\n"
+               "    aWY += weightY(pl.x - 2.0, pl.y, right.z, std);\n"
+               "    aWY += weightY(pl.x - 1.0, pl.y, right.w, std);\n"
+               "    float finalY = aWY.y / aWY.x;\n"
+               "    float maxY = max(max(left.y, left.z), max(right.x, right.w));\n"
+               "    float minY = min(min(left.y, left.z), min(right.x, right.w));\n"
+               "    float deltaY = clamp(2.0 * finalY, minY, maxY) - color.w;\n"  // (EdgeSharpness 2.0)
+               "    deltaY = clamp(deltaY, -23.0 / 255.0, 23.0 / 255.0);\n"  // (smooth high contrast input)
+               "    color.rgb = clamp(color.rgb + deltaY, 0.0, 1.0);\n"
+               "  }\n"
+               "  o = vec4(color.rgb, 1.0);\n"
+               "}\n";
+    }
     if (!strcmp(name, "clear.vert")) {
         *stage = STAGE_VERTEX;
         return "#version 450\n"

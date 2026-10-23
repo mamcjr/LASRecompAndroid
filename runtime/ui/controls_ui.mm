@@ -5,6 +5,7 @@
 #include <SDL3/SDL.h>
 #include <stdio.h>
 
+#include "i18n.h"
 #include "imgui.h"
 #include "settings_theme.h"
 
@@ -16,7 +17,7 @@ extern "C" {
 static void cell(int dev, int slot, int fam, int cap_dev, int cap_slot, int ms_left) {
     char lbl[96];
     bool waiting = cap_dev == dev && cap_slot == slot;
-    if (waiting) snprintf(lbl, sizeof lbl, "Press %s...  %d##%d_%d", dev == BIND_DEV_PAD ? "a button" : "a key",
+    if (waiting) snprintf(lbl, sizeof lbl, tr("Press %s...  %d##%d_%d"), tr(dev == BIND_DEV_PAD ? "a button" : "a key"),
                           (ms_left + 999) / 1000, dev, slot);
     else snprintf(lbl, sizeof lbl, "%s##%d_%d", dev == BIND_DEV_PAD ? bind_pad_label(g_bind_pad[slot], fam) :
                                                  bind_key_label(g_bind_key[slot]), dev, slot);
@@ -50,30 +51,30 @@ extern "C" void touch_layout_reset(void);
 
 // No controller: the on-screen controls' layout instead of bindings (Android has no keyboard to bind, as a rule)
 static void touch_layout_draw(void) {
-    ImGui::TextUnformatted("No controller connected: the on-screen controls");
+    ImGui::TextUnformatted(tr("No controller connected: the on-screen controls"));
     ImGui::PushTextWrapPos(0);
-    ImGui::TextDisabled("Move the buttons and the stick where your thumbs like them. Connect a controller to remap its "
-                        "buttons instead.");
+    ImGui::TextDisabled("%s", tr("Move the buttons and the stick where your thumbs like them. Connect a controller to remap "
+                                 "its buttons instead."));
     ImGui::PopTextWrapPos();
     ImGui::Spacing();
     bool can = touch_edit_available();
     ImGui::BeginDisabled(!can);
-    if (ImGui::Button("Edit touch layout", ImVec2(-1, 0))) touch_edit_begin();
+    if (ImGui::Button(tr("Edit touch layout"), ImVec2(-1, 0))) touch_edit_begin();
     ImGui::EndDisabled();
     bool def = true;
     for (int i = 0; i < TOUCH_NCTL; i++) def &= g_settings.touch_pos[i][0] < 0;
     ImGui::BeginDisabled(def);
-    if (ImGui::Button("Reset layout to defaults", ImVec2(-1, 0))) touch_layout_reset();
+    if (ImGui::Button(tr("Reset layout to defaults"), ImVec2(-1, 0))) touch_layout_reset();
     ImGui::EndDisabled();
-    if (!can) ImGui::TextDisabled(g_settings.touch_controls ? "Get into the game to edit the layout."
-                                                            : "Turn on Touch controls (Video tab) to edit the layout.");
+    if (!can) ImGui::TextDisabled("%s", tr(g_settings.touch_controls ? "Get into the game to edit the layout."
+                                                                     : "Turn on Touch controls (Video tab) to edit the layout."));
     ImGui::Spacing();
     float sz = g_settings.touch_scale * 100, op = g_settings.touch_opacity * 100;
-    ImGui::TextUnformatted("Button size");
+    ImGui::TextUnformatted(tr("Button size"));
     ImGui::SetNextItemWidth(-1);
     if (ImGui::SliderFloat("##Size", &sz, 60, 160, "%.0f%%")) g_settings.touch_scale = sz / 100;
     if (ImGui::IsItemDeactivatedAfterEdit()) settings_save();
-    ImGui::TextUnformatted("Opacity");
+    ImGui::TextUnformatted(tr("Opacity"));
     ImGui::SetNextItemWidth(-1);
     if (ImGui::SliderFloat("##Opacity", &op, 20, 100, "%.0f%%")) g_settings.touch_opacity = op / 100;
     if (ImGui::IsItemDeactivatedAfterEdit()) settings_save();
@@ -94,15 +95,15 @@ extern "C" void controls_bindings_draw(float scale) {
     SDL_JoystickID *ids = SDL_GetGamepads(&n);
     const char *pad_name = ids && n > 0 ? SDL_GetGamepadNameForID(ids[0]) : NULL;
     char line[200];
-    if (n > 0) snprintf(line, sizeof line, "Controller: %s  (%s button names)", pad_name ? pad_name : "connected", fam_name[fam % 3]);
-    else snprintf(line, sizeof line, "No controller connected  (%s button names shown)", fam_name[fam % 3]);
+    if (n > 0) snprintf(line, sizeof line, tr("Controller: %s  (%s button names)"), pad_name ? pad_name : tr("connected"), fam_name[fam % 3]);
+    else snprintf(line, sizeof line, tr("No controller connected  (%s button names shown)"), fam_name[fam % 3]);
     SDL_free(ids);
     ImGui::TextUnformatted(line);
     ImGui::PushTextWrapPos(0);
-    ImGui::TextDisabled(keys ? "Select a binding, then press the new button or key. Esc (or 5 seconds) cancels. A button "
+    ImGui::TextDisabled("%s", tr(keys ? "Select a binding, then press the new button or key. Esc (or 5 seconds) cancels. A button "
                                "that's already in use swaps with the old one."
                              : "Select a binding, then press the new button. 5 seconds without a press cancel. A button "
-                               "that's already in use swaps with the old one.");
+                               "that's already in use swaps with the old one."));
     ImGui::PopTextWrapPos();
 
     int cd, cs, ms;
@@ -116,20 +117,20 @@ extern "C" void controls_bindings_draw(float scale) {
     if (serial != seen_serial) {
         seen_serial = serial;
         const char *now = rslot < 0 ? "" : rdev == BIND_DEV_PAD ? bind_pad_label(g_bind_pad[rslot], fam) : bind_key_label(g_bind_key[rslot]);
-        if (kind == 5) snprintf(msg, sizeof msg, "%s bindings reset to the defaults.", rdev == BIND_DEV_PAD ? "Controller" : "Keyboard");
-        else if (kind == 1) snprintf(msg, sizeof msg, "%s is now %s.", bind_input_name(rslot), now);
+        if (kind == 5) snprintf(msg, sizeof msg, tr("%s bindings reset to the defaults."), tr(rdev == BIND_DEV_PAD ? "Controller" : "Keyboard"));
+        else if (kind == 1) snprintf(msg, sizeof msg, tr("%s is now %s."), bind_input_name(rslot), now);
         else if (kind == 2)
-            snprintf(msg, sizeof msg, "%s is now %s; %s moved to %s (swapped).", bind_input_name(rslot), now,
+            snprintf(msg, sizeof msg, tr("%s is now %s; %s moved to %s (swapped)."), bind_input_name(rslot), now,
                      bind_input_name(rother), rdev == BIND_DEV_PAD ? bind_pad_label(g_bind_pad[rother], fam) : bind_key_label(g_bind_key[rother]));
-        else if (kind == 3) snprintf(msg, sizeof msg, "Cancelled: %s unchanged.", bind_input_name(rslot));
-        else if (kind == 4) snprintf(msg, sizeof msg, "Nothing pressed: %s unchanged.", bind_input_name(rslot));
+        else if (kind == 3) snprintf(msg, sizeof msg, tr("Cancelled: %s unchanged."), bind_input_name(rslot));
+        else if (kind == 4) snprintf(msg, sizeof msg, tr("Nothing pressed: %s unchanged."), bind_input_name(rslot));
         if (kind == 1 || kind == 2 || kind == 5) settings_save();
     }
     if (msg[0]) ImGui::TextColored(settings_title_color(), "%s", msg);
 
     if (ImGui::BeginTable("##binds", keys ? 3 : 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX)) {
         ImGui::TableSetupColumn("Switch", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::TableSetupColumn("Controller", ImGuiTableColumnFlags_WidthStretch, 1.3f);
+        ImGui::TableSetupColumn(tr("Controller"), ImGuiTableColumnFlags_WidthStretch, 1.3f);
         if (keys) ImGui::TableSetupColumn("Keyboard", ImGuiTableColumnFlags_WidthStretch, 1.3f);
         ImGui::TableHeadersRow();
         // in the order a player thinks of them: face buttons, shoulders, Plus / Minus, d-pad, sticks
@@ -145,7 +146,7 @@ extern "C" void controls_bindings_draw(float scale) {
             ImGui::TextUnformatted(bind_input_name(slot));
             ImGui::TableNextColumn();
             if (slot < BIND_PAD_COUNT) cell(BIND_DEV_PAD, slot, fam, cd, cs, ms);
-            else ImGui::TextDisabled(slot < BIND_RS_UP ? "Left stick" : "Right stick");
+            else ImGui::TextDisabled("%s", tr(slot < BIND_RS_UP ? "Left stick" : "Right stick"));
             if (!keys) continue;
             ImGui::TableNextColumn();
             cell(BIND_DEV_KEY, slot, fam, cd, cs, ms);
@@ -154,7 +155,7 @@ extern "C" void controls_bindings_draw(float scale) {
     }
     ImGui::Spacing();
     ImGui::BeginDisabled(bind_is_default(BIND_DEV_PAD));
-    if (ImGui::Button("Reset controller to defaults")) { bind_capture_cancel(); bind_reset(BIND_DEV_PAD); }
+    if (ImGui::Button(tr("Reset controller to defaults"))) { bind_capture_cancel(); bind_reset(BIND_DEV_PAD); }
     ImGui::EndDisabled();
     if (keys) {
         ImGui::SameLine();
@@ -164,10 +165,10 @@ extern "C" void controls_bindings_draw(float scale) {
     }
     ImGui::PushTextWrapPos(0);
 #ifdef __ANDROID__
-    ImGui::TextDisabled("Bindings apply to the game only. Menus keep the fixed layout (right face button select, bottom "
+    ImGui::TextDisabled("%s", tr("Bindings apply to the game only. Menus keep the fixed layout (right face button select, bottom "
                         "face button back), and the in-game menu always opens with the back button or the menu button "
                         "on the screen, or the controller's Back + Start held together, or its Home / Guide button - so "
-                        "this page can't be locked out. The game's button icons follow the controller bindings.");
+                        "this page can't be locked out. The game's button icons follow the controller bindings."));
 #else
     ImGui::TextDisabled("Bindings apply to the game only. Menus keep the fixed layout (right face button / Enter "
                         "select, bottom face button / Esc back), and the in-game menu always opens with F1 or Esc, or "

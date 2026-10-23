@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include "../hle.h"
+#include "../mods.h"
 #include "../rando.h"
 #include "../ipc.h"
 
@@ -221,6 +222,9 @@ static void add_new_files(int fd, const uint64_t *h, const uint8_t *dmeta, uint6
 }
 
 static void rom_index(int fd) {
+#ifdef __ANDROID__
+    mods_scan();  // (game mods: runtime/mods.c - their files replace the game's below, after a randomizer seed's)
+#endif
     uint64_t h[10];
     if (pread(fd, h, sizeof h, 0) != (ssize_t)sizeof h) return;
     // header: size, dir hash (off,size), dir meta (off,size), file hash (off,size), file meta (off,size), data off
@@ -253,7 +257,9 @@ static void rom_index(int fd) {
     // (in a copy) to point them at data appended past the end of the image; reads there go to host files.
     for (int i = 0; i < rom_nfiles; i++) {
         char host[1200];
-        if (!rando_romfs_override(rom_files[i].path, host, sizeof host)) continue;
+        if (!rando_romfs_override(rom_files[i].path, host, sizeof host) &&
+            !mods_romfs_override(rom_files[i].path, host, sizeof host))
+            continue;
         struct stat sb;
         if (stat(host, &sb)) continue;
         if (!ov_meta) {
@@ -277,7 +283,11 @@ static void rom_index(int fd) {
         ov_n++;
         ov_end = (ov_end + size + 0xF) & ~0xFull;
     }
+#ifdef __ANDROID__
+    if (ov_n) LOG("[fs] %d romfs files replaced (%s)\n", ov_n, rando_seed_dir() ? "randomizer / mods" : "mods");
+#else
     if (ov_n) LOG("[fs] randomizer: %d romfs files replaced\n", ov_n);
+#endif
     if (ov_meta) { patches[npatches++] = (Patch){ov_meta_off, ov_meta_size, ov_meta}; }
     add_new_files(fd, h, dmeta, dsz, fsz);
     qsort(rom_files, rom_nfiles, sizeof *rom_files, rom_cmp);

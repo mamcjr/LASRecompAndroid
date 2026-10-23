@@ -72,9 +72,10 @@ public class LASRecompActivity extends SDLActivity {
     private native String nativeBuildRomfs(String[] paths, long[] sizes);
     private static native void nativeDriverPicked(String name);
     private static native void nativeSaveTransferDone(String message);
+    private static native void nativeModImportDone(String message);
 
     private static final int REQ_GAME = 0x4c41, REQ_DRIVER = 0x4c42;
-    private static final int REQ_SAVE_FOLDER = 0x4c43, REQ_SAVE_ZIP = 0x4c44, REQ_SAVE_EXPORT = 0x4c45;
+    private static final int REQ_SAVE_FOLDER = 0x4c43, REQ_SAVE_ZIP = 0x4c44, REQ_SAVE_EXPORT = 0x4c45, REQ_MOD = 0x4c46;
     private File saveTarget;
     private boolean exportPrevious;
     private static LASRecompActivity self;
@@ -322,6 +323,87 @@ public class LASRecompActivity extends SDLActivity {
         }
     }
 
+    // ---- game mods (the menu's Mods page, runtime/ui/mods_tab.mm; runtime/mods.c): a mod's folder - the one with
+    // romfs/ in it, or a few levels above it - copied into mods/<its name>/: romfs/ and the notes (.txt) beside it.
+    // Answers nativeModImportDone "1|<name>" imported, "0|<reason>" failed, "2|" cancelled.
+    public static void importMod() {
+        self.runOnUiThread(() -> {
+            try {
+                self.startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQ_MOD);
+            } catch (Exception e) {
+                nativeModImportDone("0|" + e.getMessage());
+            }
+        });
+    }
+
+    // the folder holding romfs/: dir itself or one below it (3 levels at most)
+    private Doc modFolder(Uri tree, Doc dir, int depth) {
+        List<Doc> kids = children(tree, dir.id);
+        Doc r = named(kids, "romfs");
+        if (r != null && r.dir) return dir;
+        if (depth >= 3) return null;
+        for (Doc k : kids) {
+            if (!k.dir) continue;
+            Doc f = modFolder(tree, k, depth + 1);
+            if (f != null) return f;
+        }
+        return null;
+    }
+
+    private void copyDocs(Uri tree, Doc dir, File to) throws IOException {
+        if (!to.isDirectory() && !to.mkdirs()) throw new IOException("Could not create " + to.getName());
+        for (Doc k : children(tree, dir.id)) {
+            if (k.name == null || k.name.contains("/")) continue;
+            if (k.dir) copyDocs(tree, k, new File(to, k.name));
+            else copyDoc(tree, k, new File(to, k.name));
+        }
+    }
+
+    private void copyDoc(Uri tree, Doc d, File to) throws IOException {
+        try (InputStream in = getContentResolver().openInputStream(DocumentsContract.buildDocumentUriUsingTree(tree, d.id))) {
+            if (in == null) throw new IOException("Could not open " + d.name);
+            copy(in, to);
+        }
+    }
+
+    private void importMod(Uri tree) {
+        File stage = null;
+        try {
+            Doc root = new Doc();
+            root.id = DocumentsContract.getTreeDocumentId(tree);
+            root.dir = true;
+            try (Cursor c = getContentResolver().query(DocumentsContract.buildDocumentUriUsingTree(tree, root.id),
+                    new String[] {DocumentsContract.Document.COLUMN_DISPLAY_NAME}, null, null, null)) {
+                if (c != null && c.moveToFirst()) root.name = c.getString(0);
+            }
+            Doc mod = modFolder(tree, root, 0);
+            if (mod == null) {
+                nativeModImportDone("0|No romfs folder in the selected folder.");
+                return;
+            }
+            String name = mod.name == null ? "mod" : mod.name.replaceAll("[^A-Za-z0-9 ._()\\-]", "_").trim();
+            if (name.isEmpty() || name.startsWith(".")) name = "mod";
+            if (name.length() > 80) name = name.substring(0, 80);
+            File mods = new File(getExternalFilesDir(null), "mods");
+            stage = new File(mods, ".import-" + name);
+            deleteTree(stage);
+            Doc romfsDoc = named(children(tree, mod.id), "romfs");
+            copyDocs(tree, romfsDoc, new File(stage, "romfs"));
+            for (Doc k : children(tree, mod.id))  // (its notes: the menu shows one as its description)
+                if (!k.dir && k.name != null && k.name.toLowerCase().endsWith(".txt")) copyDoc(tree, k, new File(stage, k.name));
+            File dst = new File(mods, name);
+            deleteTree(dst);
+            if (!stage.renameTo(dst)) throw new IOException("Could not move the mod into place.");
+            stage = null;
+            nativeModImportDone("1|" + name);
+        } catch (Exception e) {
+            Log.e(TAG, "mod import", e);
+            nativeModImportDone("0|" + e.getMessage());
+        } finally {
+            if (stage != null) deleteTree(stage);
+        }
+    }
+
     // Back to the system's Vulkan driver: the chosen package and its unpacked copy go (from the next start on)
     public static void useSystemDriver() {
         new Thread(() -> {
@@ -381,6 +463,12 @@ public class LASRecompActivity extends SDLActivity {
         if (req == REQ_DRIVER) {
             Uri f = result == Activity.RESULT_OK && data != null ? data.getData() : null;
             if (f != null) new Thread(() -> importDriver(f), "driver").start();
+            return;
+        }
+        if (req == REQ_MOD) {
+            Uri tree = result == Activity.RESULT_OK && data != null ? data.getData() : null;
+            if (tree == null) nativeModImportDone("2|");
+            else new Thread(() -> importMod(tree), "mod-import").start();
             return;
         }
         super.onActivityResult(req, result, data);

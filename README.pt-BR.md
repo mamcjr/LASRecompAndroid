@@ -314,6 +314,15 @@ depois `bash android/push_game.sh <pasta com exefs/ e romfs/>`.
 - [Dear ImGui](https://github.com/ocornut/imgui) (MIT): o menu sobreposto e a tela inicial.
 - [SMAA](https://github.com/iryoku/smaa) e [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR)
   (MIT): as opções de anti-aliasing e de upscaler, embutidas no renderizador.
+- [Snapdragon Game Super Resolution 1](https://github.com/SnapdragonStudios/snapdragon-gsr), da Qualcomm (BSD 3-Clause,
+  [`third_party/sgsr/LICENSE`](third_party/sgsr/LICENSE)): a opção de upscaler Snapdragon GSR 1
+  (`runtime/nvn/vulkan/shaders.c`).
+- Mods do jogo (Configurações > Mods, `runtime/mods.c`): pastas com uma pasta `romfs` dentro, como no Eden ou no
+  Ryujinx, cada uma ligada ou desligada no menu; nenhum vem com o app. Para o texto do jogo em português do Brasil, a
+  tradução feita por fãs da equipe [Triforce Heroes](https://triforce-heroes.com.br) (tradução de Ewerton e Jacilene,
+  revisão de David, Ricardo e Nelson): baixe-a no site deles, extraia e importe a pasta dela em Configurações > Mods >
+  Importar pasta de mod (ou copie-a para `Android/data/com.lasrecomp.android/files/mods/`). Ela substitui o texto em
+  inglês americano: deixe o Idioma em Auto ou Inglês.
 - O robô do Android na tela inicial é reproduzido ou modificado a partir de trabalho criado e compartilhado pelo
   Google e usado de acordo com os termos da [Licença Creative Commons Atribuição 3.0](https://creativecommons.org/licenses/by/3.0/).
 - [Fontes DejaVu](https://dejavu-fonts.github.io) (licença Bitstream Vera): substituta da fonte de sistema do Switch.

@@ -759,6 +759,10 @@ static void link_on_screen(float flags, float uvo[2], float *radius, float *dept
         LOG("[framegen] Link (%.2f %.2f %.2f) at uv %.3f %.3f r %.3f depth %.5f\n", w[0], w[1], w[2], x0, y0, *radius, z);
 }
 
+// In-between frames drawn so far (render thread): ui/perf_overlay.mm's FPS with frame generation
+static uint64_t g_generated;
+uint64_t fg_generated_frames(void) { return g_generated; }
+
 // device.c, inside the in-between frame's rendering into the swapchain image: draws it. fin: the presented picture;
 // rect: where it lies in the window (pixels), crop: the part of it shown; flip_present: lower-left origin
 bool fg_draw(VkCommandBuffer cb, VkFormat fmt, uint32_t ww, uint32_t wh, TexBackend *fin, const float rect[4], const float crop[4],
@@ -821,6 +825,7 @@ bool fg_draw(VkCommandBuffer cb, VkFormat fmt, uint32_t ww, uint32_t wh, TexBack
     vkCmdSetViewport(cb, 0, 1, &vp);
     vkCmdSetScissor(cb, 0, 1, &sc);
     vkCmdDraw(cb, 3, 1, 0, 0);
+    g_generated++;
     return true;
 }
 #else

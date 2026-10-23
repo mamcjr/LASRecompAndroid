@@ -11,8 +11,11 @@
 
 extern "C" {
 #include "platform.h"
+#include "../settings.h"
 uint64_t vk_cum_wait_ns(void);  // vulkan/exec.c
 const char *vk_gpu_desc(void);  // vulkan/device.c
+bool fg_enabled(void);  // vulkan/framegen.c: frame generation on
+uint64_t fg_generated_frames(void);  // its in-between frames so far
 }
 
 #define FT_N 120  // frame times in the graph
@@ -36,20 +39,22 @@ void perf_overlay_draw(ImVec2 display, float scale) {
     last_ns = now;
 
     // the rest twice a second
-    static uint64_t next_ns, t0, wait0;
+    // (fps: the game's own frames - this runs once per real frame; fps_fg: with frame generation's in-between ones)
+    static uint64_t next_ns, t0, wait0, gen0;
     static int frames;
-    static float fps, avg_ms, max_ms, wait_pct;
+    static float fps, fps_fg, avg_ms, max_ms, wait_pct;
     static PlatDeviceStats ds;
     frames++;
     if (now >= next_ns) {
-        uint64_t w = vk_cum_wait_ns();
+        uint64_t w = vk_cum_wait_ns(), gen = fg_generated_frames();
         if (t0) {
             double dt = (now - t0) / 1e9;
             fps = (float)(frames / dt);
+            fps_fg = (float)((frames + (gen - gen0)) / dt);
             wait_pct = (float)((w - wait0) / 1e9 / dt * 100.0);
             if (wait_pct > 100) wait_pct = 100;
         }
-        wait0 = w;
+        wait0 = w, gen0 = gen;
         frames = 0;
         t0 = now;
         next_ns = now + 500000000ull;
@@ -60,8 +65,28 @@ void perf_overlay_draw(ImVec2 display, float scale) {
         plat_device_stats(&ds);
     }
 
+    bool fg = fg_enabled();
     ImGui::SetNextWindowPos(ImVec2(16 * scale, 16 * scale));
     ImGui::SetNextWindowBgAlpha(0.55f);
+    if (g_settings.overlay_style == 1) {  // compact: one line - FPS, FPS with frame generation, the app's RAM, battery
+        ImGui::Begin("##perf", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                                         ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
+        ImGui::SetWindowFontScale(0.62f);
+        ImGui::TextColored(grade(fps, 55, 28), "FPS %.0f", fps);
+        if (fg) {  // (generating: about twice the real rate; paused: the same)
+            ImGui::SameLine();
+            ImGui::TextColored(fps_fg > fps * 1.3f ? ImVec4(0.45f, 0.95f, 0.45f, 1) : ImVec4(0.62f, 0.64f, 0.58f, 1),
+                               "  FPS+FG %.0f", fps_fg);
+        }
+        ImGui::SameLine();
+        ImGui::Text("  RAM %u MB", ds.rss_mb);
+        if (ds.batt_temp_c > 0) {
+            ImGui::SameLine();
+            ImGui::TextColored(grade(100 - ds.batt_temp_c, 60, 55), "  Bat %.0f\xc2\xb0" "C", ds.batt_temp_c);
+        }
+        ImGui::End();
+        return;
+    }
     ImGui::Begin("##perf", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
                                      ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
     ImGui::SetWindowFontScale(0.62f);
@@ -69,6 +94,11 @@ void perf_overlay_draw(ImVec2 display, float scale) {
     ImGui::TextColored(grade(fps, 55, 28), "%.0f FPS", fps);
     ImGui::SameLine();
     ImGui::TextDisabled("%.1f ms", fps > 0 ? 1000.0f / fps : 0.0f);
+    if (fg) {  // (frame generation: the rate on the screen with its in-between frames - the same as FPS while paused)
+        ImGui::SameLine();
+        ImGui::TextColored(fps_fg > fps * 1.3f ? ImVec4(0.45f, 0.95f, 0.45f, 1) : ImVec4(0.62f, 0.64f, 0.58f, 1),
+                           "  FPS+FG %.0f", fps_fg);
+    }
     float graph[FT_N];  // (oldest first)
     for (int i = 0; i < nft; i++) graph[i] = ft[(head - nft + i + FT_N) % FT_N];
     ImGui::PushStyleColor(ImGuiCol_PlotLines, grade(fps, 55, 28));
