@@ -23,6 +23,14 @@ For the PC versions (Windows, macOS, Linux), features and the randomizer, see th
 > copy of the extracted game files of *Link's Awakening* **v1.0.0, v1.0.1 or v1.1.0**. Instructions on how to obtain
 > them will not be provided.
 
+## New in 0.5.3
+
+More drivers below Vulkan 1.3, such as the stock Mali drivers on many Samsung phones.
+
+- **Five more extensions are optional** ([issue #2](https://github.com/mamcjr/LASRecompAndroid/issues/2), Galaxy A15 / Mali-G57): without `synchronization2` the app uses Vulkan 1.0's barriers; without extended dynamic state, the draws' states are baked into their pipelines (more pipelines: more first-time stutter there); demote / terminate aren't needed below Vulkan 1.3.
+
+Validation: on the POCO F7 Ultra with each fallback forced on, the village draws right with Turnip (60 fps) and with the Qualcomm driver as Vulkan 1.1 (30 fps). Not tested yet on a real Mali.
+
 ## New in 0.5.2
 
 Drivers without dynamic rendering, such as the stock Mali drivers on many Samsung phones.

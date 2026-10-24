@@ -23,6 +23,14 @@ Para as versões de PC (Windows, macOS, Linux), os recursos e o randomizer, veja
 > obtida legalmente, dos arquivos extraídos de *Link's Awakening* **v1.0.0, v1.0.1 ou v1.1.0**. Não serão dadas
 > instruções de como obtê-los.
 
+## Novidades da 0.5.3
+
+Mais drivers abaixo do Vulkan 1.3, como os drivers Mali de fábrica de muitos celulares Samsung.
+
+- **Mais cinco extensões ficaram opcionais** ([issue #2](https://github.com/mamcjr/LASRecompAndroid/issues/2), Galaxy A15 / Mali-G57): sem `synchronization2` o app usa as barreiras do Vulkan 1.0; sem o estado dinâmico estendido, os estados dos desenhos ficam embutidos nos pipelines (mais pipelines: mais engasgos na primeira vez nesses drivers); demote / terminate não são necessárias abaixo do Vulkan 1.3.
+
+Validação: no POCO F7 Ultra com cada alternativa forçada, a vila desenha certo com o Turnip (60 fps) e com o driver da Qualcomm como Vulkan 1.1 (30 fps). Ainda não testado numa Mali de verdade.
+
 ## Novidades da 0.5.2
 
 Drivers sem renderização dinâmica, como os drivers Mali de fábrica de muitos celulares Samsung.
