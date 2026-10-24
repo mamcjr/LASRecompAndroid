@@ -23,6 +23,15 @@ For the PC versions (Windows, macOS, Linux), features and the randomizer, see th
 > copy of the extracted game files of *Link's Awakening* **v1.0.0, v1.0.1 or v1.1.0**. Instructions on how to obtain
 > them will not be provided.
 
+## New in 0.5.1
+
+Turnip on the Adreno 610 and other GPUs without 16-bit storage.
+
+- **GPUs without 16-bit storage** ([issue #4](https://github.com/mamcjr/LASRecompAndroid/issues/4), Adreno 610 with Turnip): the app no longer stops at start asking for `storageBuffer16BitAccess`, which no shader uses.
+- **Confirmed on an Adreno 750** ([issue #3](https://github.com/mamcjr/LASRecompAndroid/issues/3)): with Turnip and "Game memory on the GPU (Turnip)" on, text and colors draw right.
+
+Validation: on the POCO F7 Ultra with 16-bit storage forced off, the village draws right with Turnip (60 fps) and the Qualcomm driver (30 fps). Not tested yet on a real Adreno 610.
+
 ## New in 0.5.0
 
 Game versions 1.0.1 and 1.1.0, several versions installed side by side, shader preparation and the fixes from upstream LAS Recomp's next beta.
