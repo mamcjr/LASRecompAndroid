@@ -467,6 +467,11 @@ static void create_device(void) {
         // (docs/ANDROID-PORT.md, Fase 0): the 8-bit features only when the driver has them
         f12.shaderInt8 = h12.shaderInt8;
         f12.uniformAndStorageBuffer8BitAccess = h12.uniformAndStorageBuffer8BitAccess;
+        // nor 16-bit storage: no translated or built-in shader declares it (none of 3592 cached on the Adreno 830),
+        // and the Adreno 610 under Turnip lacks it (issue #4). LARECOMP_VK_NO_STORAGE16=1 (test): as if it lacked it.
+        if (getenv("LARECOMP_VK_NO_STORAGE16") && atoi(getenv("LARECOMP_VK_NO_STORAGE16")))
+            h11.storageBuffer16BitAccess = VK_FALSE, LOG("[vk] 16-bit storage left off (LARECOMP_VK_NO_STORAGE16)\n");
+        f11.storageBuffer16BitAccess = h11.storageBuffer16BitAccess;
         f12.storageBuffer8BitAccess = h12.storageBuffer8BitAccess;
         // device addresses: shaders reach the heap placed in GPU memory through a pointer where a storage buffer's
         // range can't cover it (exec.c vk_heap_place; Turnip on Adreno 7xx: 128 MB). Required from Vulkan 1.3 on.
@@ -502,7 +507,7 @@ static void create_device(void) {
     VkPhysicalDeviceScalarBlockLayoutFeatures e_sbl = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES,
                                                        .scalarBlockLayout = VK_TRUE, .pNext = &e_b8};
     VkPhysicalDevice16BitStorageFeatures e_b16 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES,
-                                                  .storageBuffer16BitAccess = VK_TRUE, .pNext = &e_sbl};
+                                                  .storageBuffer16BitAccess = h11.storageBuffer16BitAccess, .pNext = &e_sbl};
     if (g_vk.api < VK_API_VERSION_1_3) {
         void *head = &e_b16;
         if (g_vk.api >= VK_API_VERSION_1_2) {

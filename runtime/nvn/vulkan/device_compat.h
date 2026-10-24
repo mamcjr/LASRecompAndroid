@@ -43,7 +43,7 @@ static inline VkBool32 vk_backend_border_supported(const VkPhysicalDeviceCustomB
 static inline const char *vk_missing_backend_feature(const VkPhysicalDeviceVulkan11Features *v11,
                                                      const VkPhysicalDeviceVulkan12Features *v12,
                                                      const VkPhysicalDeviceVulkan13Features *v13) {
-    if (!v11->storageBuffer16BitAccess) return "storageBuffer16BitAccess";
+    (void)v11;  // (16-bit storage is optional: no shader declares it, and the Adreno 610 under Turnip lacks it)
     if (!v12->timelineSemaphore) return "timelineSemaphore";
     if (!v12->samplerMirrorClampToEdge) return "samplerMirrorClampToEdge";
     if (!v12->scalarBlockLayout) return "scalarBlockLayout";
