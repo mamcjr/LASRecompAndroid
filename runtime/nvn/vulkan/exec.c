@@ -1473,6 +1473,13 @@ static const VkDynamicState DYN[] = {
     VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE, VK_DYNAMIC_STATE_STENCIL_OP, VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE,
     VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE};
 #define NDYN (sizeof DYN / sizeof DYN[0])
+#define NDYN_CORE 7  // (Vulkan 1.0's, the first ones above)
+// Extended dynamic state in use (vk.h g_vk.eds); without it, the states past NDYN_CORE are baked into each pipeline
+#ifdef __ANDROID__
+#define VK_EDS (g_vk.eds)
+#else
+#define VK_EDS true
+#endif
 
 // Fixed-function state that isn't part of a pipeline is set explicitly on every bind (it persists across pipelines).
 static void dyn_defaults(VkCommandBuffer cb) {
@@ -1532,7 +1539,13 @@ static VkPipeline clear_pipeline(int index, int kind, uint32_t mask, bool depth,
     VkPipelineColorBlendStateCreateInfo cb = {.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
                                               .attachmentCount = pass_ncolor, .pAttachments = cba};
     VkPipelineDynamicStateCreateInfo dy = {.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-                                           .dynamicStateCount = NDYN, .pDynamicStates = DYN};
+                                           .dynamicStateCount = VK_EDS ? NDYN : NDYN_CORE, .pDynamicStates = DYN};
+    if (!VK_EDS) {  // (as clear() sets them)
+        ds.depthTestEnable = ds.depthWriteEnable = depth;
+        ds.depthCompareOp = VK_COMPARE_OP_ALWAYS;
+        ds.stencilTestEnable = stencil;
+        ds.front = ds.back = (VkStencilOpState){VK_STENCIL_OP_KEEP, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_REPLACE, VK_COMPARE_OP_ALWAYS};
+    }
     VkPipelineRenderingCreateInfo rinfo = {.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO, .colorAttachmentCount = pass_ncolor,
                                            .pColorAttachmentFormats = pass_color, .depthAttachmentFormat = pass_depth,
                                            .stencilAttachmentFormat = pass_stencil};
@@ -2158,6 +2171,78 @@ static int rt_kind(uint32_t f) {
     }
 }
 
+// The states the draws set dynamically (extended dynamic state), baked into the pipeline where the driver can't set
+// them (VK_EDS false: Mali's older drivers); all zero otherwise, so the keys stay as they were
+typedef struct {
+    uint8_t on, cull, ff, topo, pre, dt, dw, dop, sten, dbe;
+    uint8_t sop[2][4];  // per face: fail, pass, depth fail, compare
+} PipeFx;
+// The draw's depth / stencil / rasterizer state: set dynamically, or (VK_EDS false) baked into its pipeline (PipeFx)
+typedef struct {
+    bool dt, sten, equal_tol, dbe;
+    VkBool32 dw, pre;
+    VkCompareOp dop;
+    uint32_t sface[2][7];  // per face: fail, pass, depth fail, compare, compare mask, write mask, reference
+    VkCullModeFlags cull;
+    VkFrontFace ff;
+    VkPrimitiveTopology topo;
+    float db[3];  // depth bias: clamp, constant, slope
+} DrawFx;
+
+static void draw_fx(DrawFx *x, bool flip_x, bool flip_y, bool native, VkPrimitiveTopology topo, uint32_t mode) {
+    static int nodt = -1, tol = -1, flipw = -1, off = -1;
+    if (nodt < 0) {
+        nodt = getenv("LARECOMP_NO_DEPTH_TEST") != NULL;
+        // EQUAL against a depth pre-pass written by a different vertex shader (foliage, trees) needs both shaders to land
+        // on identical depths. They do since the translator stopped using unpackHalf2x16 (NVIDIA ran the half math
+        // after it in fp16, differently per shader: black slashes in foliage). LARECOMP_VK_EQUAL_TOL=1 brings back the
+        // old workaround: LESS_OR_EQUAL with a few ulps of bias towards the camera, which also let walls paint over
+        // the plants stuck flat on them (beach) - so it is off.
+        tol = getenv("LARECOMP_VK_EQUAL_TOL") != NULL;
+        flipw = getenv("LARECOMP_VK_FLIP_WINDING") != NULL;  // (invert the front-face mapping: A/B against Metal)
+        off = getenv("LARECOMP_NO_DEPTH_BIAS") != NULL;
+    }
+    x->dt = st.ds[0] && !nodt && pass_depth;
+    x->dw = x->dt && st.ds[1];
+    x->dop = x->dt ? compare_fn(st.ds[2]) : VK_COMPARE_OP_ALWAYS;
+    x->equal_tol = x->dop == VK_COMPARE_OP_EQUAL && tol;
+    if (x->equal_tol) x->dop = VK_COMPARE_OP_LESS_OR_EQUAL;
+    x->sten = st.ds[3] && pass_stencil;
+    memset(x->sface, 0, sizeof x->sface);
+    if (x->sten) {
+        uint32_t ops = st.ds[5] | st.ds[6] << 8 | st.ds[7] << 16;
+        for (int f = 0; f < 2; f++) {
+            uint32_t o = f ? ops >> 12 : ops;
+            uint32_t v[7] = {stencil_op(o & 0xF), stencil_op((o >> 8) & 0xF), stencil_op((o >> 4) & 0xF),
+                             compare_fn(f ? st.ds[4] >> 4 : st.ds[4] & 0xF), st.stencil_vmask[f] & 0xFF, st.stencil_mask[f] & 0xFF,
+                             st.stencil_ref[f]};
+            memcpy(x->sface[f], v, sizeof v);
+        }
+    }
+    uint8_t cull = flip_x ? 0 : st.poly[0];  // (mirror mode's composite: one full-screen quad, either winding)
+    x->cull = cull == 1 ? VK_CULL_MODE_FRONT_BIT : cull == 2 ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
+    bool ccw = st.poly[1] == 1;
+    x->ff = ((ccw != flip_y) != (flipw != 0)) ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
+    x->topo = native ? topo : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    x->pre = st.prim_restart && native && (mode == 3 || mode == 5);
+    float f[3] = {0, 0, 0};
+    bool on = (st.poly[3] & 4) && !off;
+    if (on) memcpy(f, st.poly_offset, sizeof f);
+    if (x->equal_tol) { f[1] -= 8; on = true; }  // (see the EQUAL comment above: a few depth ulps nearer)
+    x->dbe = on;
+    memcpy(x->db, f, sizeof f);
+}
+
+static void pipe_fx(PipeFx *k, const DrawFx *x) {
+    memset(k, 0, sizeof *k);
+    k->on = 1;
+    k->cull = (uint8_t)x->cull, k->ff = (uint8_t)x->ff, k->topo = (uint8_t)x->topo, k->pre = (uint8_t)x->pre;
+    k->dt = x->dt, k->dw = (uint8_t)x->dw, k->dop = (uint8_t)x->dop, k->sten = x->sten, k->dbe = x->dbe;
+    if (x->sten)
+        for (int f = 0; f < 2; f++)
+            for (int i = 0; i < 4; i++) k->sop[f][i] = (uint8_t)x->sface[f][i];
+}
+
 // ================================================================== graphics pipelines
 // Everything a pipeline bakes in, captured by value so it can be built on a worker thread.
 #define ZERO_BINDING 16
@@ -2171,6 +2256,7 @@ typedef struct {
     uint8_t blend[8][8];
     uint8_t blend_on, a2c, topo_class, poly_fill;
     uint32_t write_mask[8];
+    PipeFx fx;
 } PipeKey;
 
 typedef struct { PipeKey k; uint64_t hash; VkPipeline pipe; _Atomic int state; } Pipe;  // state: 0 building, 1 ready, 2 failed
@@ -2308,7 +2394,21 @@ static void build_pipeline(void *arg) {
     VkPipelineColorBlendStateCreateInfo cb = {.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
                                               .attachmentCount = k->ncolor, .pAttachments = cba};
     VkPipelineDynamicStateCreateInfo dy = {.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-                                           .dynamicStateCount = NDYN, .pDynamicStates = DYN};
+                                           .dynamicStateCount = k->fx.on ? NDYN_CORE : NDYN, .pDynamicStates = DYN};
+    if (k->fx.on) {  // (no extended dynamic state: the draw's own, PipeFx)
+        const PipeFx *x = &k->fx;
+        ia.topology = (VkPrimitiveTopology)x->topo;
+        ia.primitiveRestartEnable = x->pre;
+        rs.cullMode = x->cull;
+        rs.frontFace = (VkFrontFace)x->ff;
+        rs.depthBiasEnable = x->dbe;
+        ds.depthTestEnable = x->dt;
+        ds.depthWriteEnable = x->dw;
+        ds.depthCompareOp = (VkCompareOp)x->dop;
+        ds.stencilTestEnable = x->sten;
+        ds.front = (VkStencilOpState){(VkStencilOp)x->sop[0][0], (VkStencilOp)x->sop[0][1], (VkStencilOp)x->sop[0][2], (VkCompareOp)x->sop[0][3]};
+        ds.back = (VkStencilOpState){(VkStencilOp)x->sop[1][0], (VkStencilOp)x->sop[1][1], (VkStencilOp)x->sop[1][2], (VkCompareOp)x->sop[1][3]};
+    }
     VkPipelineRenderingCreateInfo ri = {.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO, .colorAttachmentCount = k->ncolor,
                                         .pColorAttachmentFormats = k->color, .depthAttachmentFormat = k->depth,
                                         .stencilAttachmentFormat = k->stencil};
@@ -4183,6 +4283,7 @@ bool renderer_prepare(const ShaderRec *r, const ShaderBlob *vsb, const ShaderBlo
         PREP_PUT(prep_progs, ck, p);  // (failed ones too: the game then skips them as it would its own)
     }
     if (atomic_load(&p->state) == 2) return false;
+    if (!VK_EDS) return true;  // (pipelines need the draw's states then, PipeFx: only the program is prepared)
     PrepPipe *a = calloc(1, sizeof *a);
     a->pp = calloc(1, sizeof *a->pp);
     a->pp->k.prog = p;
@@ -4434,6 +4535,11 @@ static void draw_(CmdRec *r, bool indexed) {
 
     uint64_t prof_tk_ = prof ? SDL_GetTicksNS() : 0;
     if (prof) prof_pre += prof_tk_ - prof_tp_;
+    DrawFx fx;
+    draw_fx(&fx, vkey.flip_x, vkey.flip_y, native, topo, mode);
+    PipeFx pfx;
+    memset(&pfx, 0, sizeof pfx);
+    if (!VK_EDS) pipe_fx(&pfx, &fx);
     // ---- pipeline
     static Pipe *last_pipeline;
     static int reuse = -1, verify;
@@ -4443,7 +4549,8 @@ static void draw_(CmdRec *r, bool indexed) {
         verify = getenv("LARECOMP_VK_PIPE_VERIFY") != NULL;
     }
     bool hit = reuse && !pipeline_dirty && last_pipeline &&
-               last_pipeline->k.prog == pr && last_pipeline->k.topo_class == cls;
+               last_pipeline->k.prog == pr && last_pipeline->k.topo_class == cls &&
+               (VK_EDS || !memcmp(&last_pipeline->k.fx, &pfx, sizeof pfx));
     Pipe *pp = hit ? last_pipeline : NULL;
     if (!hit || verify) {
         uint32_t rt_fmt[8] = {0};
@@ -4452,6 +4559,7 @@ static void draw_(CmdRec *r, bool indexed) {
                            st.color_state[0], (const uint8_t (*)[8])st.blend, st.ms[0xC] != 0, cls, st.poly[2] != 1};
         PipeKey k;
         pipe_key_fill(&k, pr, &in, pass_color, pass_ncolor, pass_depth, pass_stencil, pass_samples);
+        k.fx = pfx;
 #ifdef __ANDROID__
         // (consecutive draws mostly share their pipeline: a compare instead of the serial hash of the ~700-byte key)
         static PipeKey last_k;
@@ -4507,39 +4615,24 @@ static void draw_(CmdRec *r, bool indexed) {
     uint64_t prof_td_ = prof ? SDL_GetTicksNS() : 0;
     if (prof) prof_key += prof_td_ - prof_tk_;
 
-    // ---- depth / stencil (dynamic)
-    static int nodt = -1;
-    if (nodt < 0) nodt = getenv("LARECOMP_NO_DEPTH_TEST") != NULL;
-    bool dt = st.ds[0] && !nodt && pass_depth;
+    // ---- depth / stencil (dynamic; without extended dynamic state, the calls past NDYN_CORE's do nothing: device.c)
+    bool dt = fx.dt;
     if (ss_need(SS_DT, ss.dt == (VkBool32)dt)) { ss.dt = dt; vkCmdSetDepthTestEnable(cb, dt); }
-    VkBool32 dw = dt && st.ds[1];
+    VkBool32 dw = fx.dw;
     if (ss_need(SS_DW, ss.dw == dw)) { ss.dw = dw; vkCmdSetDepthWriteEnable(cb, dw); }
 #ifdef __ANDROID__  // (frame generation: the scene's depth is the one most draws write, framegen.c)
     if (dw) { extern void fg_note_draw(NvnTexture *depth, uint32_t pass_w, uint32_t pass_h); fg_note_draw(st.rt.depth, pass_w, pass_h); }
 #endif
-    VkCompareOp dop = dt ? compare_fn(st.ds[2]) : VK_COMPARE_OP_ALWAYS;
-    // EQUAL against a depth pre-pass written by a different vertex shader (foliage, trees) needs both shaders to land
-    // on identical depths. They do since the translator stopped using unpackHalf2x16 (NVIDIA ran the half math after
-    // it in fp16, differently per shader: black slashes in foliage). LARECOMP_VK_EQUAL_TOL=1 brings back the old
-    // workaround: LESS_OR_EQUAL with a few ulps of bias towards the camera, which also let walls paint over the
-    // plants stuck flat on them (beach) - so it is off.
-    static int tol = -1;
-    if (tol < 0) tol = getenv("LARECOMP_VK_EQUAL_TOL") != NULL;
-    bool equal_tol = dop == VK_COMPARE_OP_EQUAL && tol;
-    if (equal_tol) dop = VK_COMPARE_OP_LESS_OR_EQUAL;
+    VkCompareOp dop = fx.dop;  // (EQUAL's tolerance: draw_fx)
     if (ss_need(SS_DOP, ss.dop == dop)) { ss.dop = dop; vkCmdSetDepthCompareOp(cb, dop); }
-    bool sten = st.ds[3] && pass_stencil;
+    bool sten = fx.sten;
     if (ss_need(SS_STEN, ss.sten == (VkBool32)sten)) { ss.sten = sten; vkCmdSetStencilTestEnable(cb, sten); }
     if (sten) {
-        uint32_t ops = st.ds[5] | st.ds[6] << 8 | st.ds[7] << 16;
         for (int f = 0; f < 2; f++) {
-            uint32_t o = f ? ops >> 12 : ops;
             VkStencilFaceFlags face = f ? VK_STENCIL_FACE_BACK_BIT : VK_STENCIL_FACE_FRONT_BIT;
-            uint32_t v[7] = {stencil_op(o & 0xF), stencil_op((o >> 8) & 0xF), stencil_op((o >> 4) & 0xF),
-                             compare_fn(f ? st.ds[4] >> 4 : st.ds[4] & 0xF), st.stencil_vmask[f] & 0xFF, st.stencil_mask[f] & 0xFF,
-                             st.stencil_ref[f]};
-            if (!ss_need(f ? SS_SFACE1 : SS_SFACE0, !memcmp(v, ss.sface[f], sizeof v))) continue;
-            memcpy(ss.sface[f], v, sizeof v);
+            const uint32_t *v = fx.sface[f];
+            if (!ss_need(f ? SS_SFACE1 : SS_SFACE0, !memcmp(v, ss.sface[f], sizeof fx.sface[f]))) continue;
+            memcpy(ss.sface[f], v, sizeof fx.sface[f]);
             vkCmdSetStencilOp(cb, face, (VkStencilOp)v[0], (VkStencilOp)v[1], (VkStencilOp)v[2], (VkCompareOp)v[3]);
             vkCmdSetStencilCompareMask(cb, face, v[4]);
             vkCmdSetStencilWriteMask(cb, face, v[5]);
@@ -4549,29 +4642,19 @@ static void draw_(CmdRec *r, bool indexed) {
     if (ss_need(SS_BC, !memcmp(ss.bc, st.blend_color, sizeof ss.bc))) { memcpy(ss.bc, st.blend_color, sizeof ss.bc); vkCmdSetBlendConstants(cb, st.blend_color); }
 
     // ---- rasterizer
-    uint8_t cull = st.poly[0];
-    if (vkey.flip_x) cull = 0;  // (mirror mode's composite: one full-screen quad, either winding)
-    VkCullModeFlags cm = cull == 1 ? VK_CULL_MODE_FRONT_BIT : cull == 2 ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
+    VkCullModeFlags cm = fx.cull;
     if (ss_need(SS_CULL, ss.cull == cm)) { ss.cull = cm; vkCmdSetCullMode(cb, cm); }
-    bool ccw = st.poly[1] == 1;
-    static int flipw = -1;  // LARECOMP_VK_FLIP_WINDING: invert the front-face mapping (A/B against Metal)
-    if (flipw < 0) flipw = getenv("LARECOMP_VK_FLIP_WINDING") != NULL;
-    bool front_ccw = (ccw != vkey.flip_y) != (flipw != 0);
-    VkFrontFace ff = front_ccw ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
+    VkFrontFace ff = fx.ff;
     if (ss_need(SS_FF, ss.ff == ff)) { ss.ff = ff; vkCmdSetFrontFace(cb, ff); }
-    VkPrimitiveTopology tp = native ? topo : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    VkPrimitiveTopology tp = fx.topo;
     if (ss_need(SS_TOPO, ss.topo == tp)) { ss.topo = tp; vkCmdSetPrimitiveTopology(cb, tp); }
-    VkBool32 pre = st.prim_restart && native && (mode == 3 || mode == 5);
+    VkBool32 pre = fx.pre;
     if (ss_need(SS_PRE, ss.pre == pre)) { ss.pre = pre; vkCmdSetPrimitiveRestartEnable(cb, pre); }
     {
-        float f[3] = {0, 0, 0};
-        static int off = -1;
-        if (off < 0) off = getenv("LARECOMP_NO_DEPTH_BIAS") != NULL;
-        bool on = (st.poly[3] & 4) && !off;
-        if (on) memcpy(f, st.poly_offset, sizeof f);
-        if (equal_tol) { f[1] -= 8; on = true; }  // (see the EQUAL comment above: a few depth ulps nearer)
+        bool on = fx.dbe;
+        const float *f = fx.db;
         if (ss_need(SS_DBE, ss.dbe == (VkBool32)on)) { ss.dbe = on; vkCmdSetDepthBiasEnable(cb, on); }
-        if (ss_need(SS_DB, !memcmp(ss.db, f, sizeof f))) { memcpy(ss.db, f, sizeof f); vkCmdSetDepthBias(cb, f[1], f[2], f[0]); }
+        if (ss_need(SS_DB, !memcmp(ss.db, f, sizeof fx.db))) { memcpy(ss.db, f, sizeof fx.db); vkCmdSetDepthBias(cb, f[1], f[2], f[0]); }
     }
 
     // ---- textures first (their scales feed the widescreen decision and the rscale table), then the viewport

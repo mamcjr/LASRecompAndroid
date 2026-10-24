@@ -48,9 +48,7 @@ static inline const char *vk_missing_backend_feature(const VkPhysicalDeviceVulka
     if (!v12->samplerMirrorClampToEdge) return "samplerMirrorClampToEdge";
     if (!v12->scalarBlockLayout) return "scalarBlockLayout";
     // (dynamicRendering optional too: without it, classic render passes - rpcompat.c)
-    if (!v13->synchronization2) return "synchronization2";
-    if (!v13->shaderDemoteToHelperInvocation) return "shaderDemoteToHelperInvocation";
-    if (!v13->shaderTerminateInvocation) return "shaderTerminateInvocation";
+    // (synchronization2, demote and terminate optional too: device.c CG_SYNC2 / CG_DEMOTE / CG_TERM)
     if (!v13->maintenance4) return "maintenance4";
     return 0;
 }
