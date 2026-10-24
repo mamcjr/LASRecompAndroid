@@ -31,6 +31,7 @@ Versões 1.0.1 e 1.1.0 do jogo, várias versões instaladas lado a lado, prepara
 - **Várias versões instaladas:** Configurações > Saves e arquivos > **Adicionar outra versão**; o **JOGAR ‹ versão ›** da tela inicial alterna entre elas. Os saves são compartilhados; cada versão compila o próprio código do jogo uma vez. A versão base 1.0.0 fica enquanto houver outras instaladas.
 - **Preparação de shaders** (do beta 5 original) na tela inicial: menos engasgos na primeira vez que uma área aparece.
 - **Correções do beta 5 original:** saves tudo ou nada, a opção de amiibo do Dampe, um travamento de física e congelamentos, a emenda na iluminação dos interiores com a visão alargada, proporções mais largas, o lago do jogo da pesca.
+- **Turnip nas Adreno 7xx** (alcance de 128 MB por shader, [issue #3](https://github.com/mamcjr/LASRecompAndroid/issues/3)): com "Memória do jogo na GPU (Turnip)" ligada, os shaders alcançam por ponteiro a memória do jogo acima desse alcance, então textos e cores saem certos. O Automático ainda usa as cópias nelas; ligue a opção para testar.
 - Os 30 fps do Automático são 30 estáveis; drivers Vulkan 1.1 / 1.2 leem certo os recursos das extensões; pacotes de driver carregam a biblioteca do `meta.json`; abrir com a tela bloqueada espera em vez de parar.
 
 Depois de atualizar, o código do jogo é compilado de novo uma vez.

@@ -31,6 +31,7 @@ Game versions 1.0.1 and 1.1.0, several versions installed side by side, shader p
 - **Several versions installed:** Settings > Saves & files > **Add another version**; **PLAY ‹ version ›** on the start screen switches between them. Saves are shared; each version builds its own game code once. The base version 1.0.0 stays while others are installed.
 - **Shader preparation** (from upstream beta 5) on the start screen: fewer stutters the first time an area shows up.
 - **Fixes from upstream beta 5:** all-or-nothing saves, Dampe's amiibo option, a physics crash and hangs, the interior lighting seam with a widened view, wider aspect ratios, the fishing game's pond.
+- **Turnip on Adreno 7xx** (128 MB shader memory range, [issue #3](https://github.com/mamcjr/LASRecompAndroid/issues/3)): with "Game memory on the GPU (Turnip)" on, shaders reach the game's memory above that range by pointer, so text and colors draw right. Automatic still uses the copies there; set the option to On to try it.
 - Auto's 30 fps is a steady 30; Vulkan 1.1 / 1.2 drivers read the extensions' features correctly; driver packages load their library from `meta.json`; opening with the screen locked waits instead of stopping.
 
 After updating, the game code is built again once.
