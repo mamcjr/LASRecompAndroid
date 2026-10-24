@@ -12,7 +12,6 @@ features = [
     ('v12', 'timelineSemaphore'),
     ('v12', 'samplerMirrorClampToEdge'),
     ('v12', 'scalarBlockLayout'),
-    ('v13', 'dynamicRendering'),
     ('v13', 'synchronization2'),
     ('v13', 'shaderDemoteToHelperInvocation'),
     ('v13', 'shaderTerminateInvocation'),
@@ -37,8 +36,8 @@ int check(void) {
 '''
 source += '\n'.join(f'    {group}.{field} = VK_TRUE;' for group, field in features)
 source += '''
-    // Optional 8-bit, 16-bit storage (v11: the Adreno 610 under Turnip) and int64 flags are absent: do not reject
-    // this at preflight.
+    // Optional 8-bit, 16-bit storage (v11: the Adreno 610 under Turnip), dynamic rendering (v13: render passes
+    // instead, rpcompat.c) and int64 flags are absent: do not reject this at preflight.
     if (vk_missing_backend_feature(&v11, &v12, &v13)) return 1;
 '''
 for index, (group, field) in enumerate(features, 2):
@@ -85,7 +84,7 @@ const fs = require('fs');
 WebAssembly.instantiate(fs.readFileSync(process.argv[2])).then(({instance}) => {
   const code = instance.exports.check();
   if (code) throw new Error(`Vulkan preflight check ${code} failed`);
-  console.log('20 Vulkan compatibility checks passed (production C)');
+  console.log('19 Vulkan compatibility checks passed (production C)');
 }).catch(e => {console.error(e); process.exit(1);});
 ''')
 subprocess.run(['node', str(out / 'run.cjs'), str(out / 'test.wasm')], check=True)

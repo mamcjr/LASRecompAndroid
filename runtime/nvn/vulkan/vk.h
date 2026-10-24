@@ -44,6 +44,7 @@ typedef struct {
     VkCommandPool pool;        // render thread only
     bool custom_border, divisor, host_import, shader_int64;
 #ifdef __ANDROID__
+    bool dyn_render;              // dynamic rendering in use; without it, classic render passes (rpcompat.c)
     bool map_placed;              // VK_EXT_map_memory_placed: the guest heap mapped as GPU memory (exec.c vk_heap_place)
     uint64_t placed_align;
     bool bda;                     // bufferDeviceAddress on: the placed heap can be reached by pointer (exec.c gmem_bda)
@@ -60,6 +61,33 @@ typedef struct {
     VkImageView sc_views[8];
 } VkG;
 extern VkG g_vk;
+
+// ---- rendering: dynamic rendering, or (Android, drivers without VK_KHR_dynamic_rendering) classic render passes
+// made from the same VkRenderingInfo (rpcompat.c). colors / ds_format: the attachments' view formats
+// (VK_FORMAT_UNDEFINED: an unused slot), as the pipelines get them.
+#ifdef __ANDROID__
+void vk_begin_rendering(VkCommandBuffer cb, const VkRenderingInfo *ri, const VkFormat *colors, VkFormat ds_format,
+                        VkSampleCountFlagBits samples);
+void vk_end_rendering(VkCommandBuffer cb);
+// The render pass a pipeline is made against (VK_NULL_HANDLE with dynamic rendering: VkPipelineRenderingCreateInfo)
+VkRenderPass vk_rp_compat(uint32_t ncolor, const VkFormat *colors, VkFormat depth, VkFormat stencil, VkSampleCountFlagBits samples);
+void vk_rp_forget_view(VkImageView v);  // (a view destroyed: the framebuffers holding it go)
+void vk_rp_collect(uint64_t done_seq);
+#else
+static inline void vk_begin_rendering(VkCommandBuffer cb, const VkRenderingInfo *ri, const VkFormat *colors, VkFormat ds_format,
+                                      VkSampleCountFlagBits samples) {
+    (void)colors, (void)ds_format, (void)samples;
+    vkCmdBeginRendering(cb, ri);
+}
+static inline void vk_end_rendering(VkCommandBuffer cb) { vkCmdEndRendering(cb); }
+static inline VkRenderPass vk_rp_compat(uint32_t ncolor, const VkFormat *colors, VkFormat depth, VkFormat stencil,
+                                        VkSampleCountFlagBits samples) {
+    (void)ncolor, (void)colors, (void)depth, (void)stencil, (void)samples;
+    return VK_NULL_HANDLE;
+}
+static inline void vk_rp_forget_view(VkImageView v) { (void)v; }
+static inline void vk_rp_collect(uint64_t done_seq) { (void)done_seq; }
+#endif
 
 // ---- submissions (exec.c)
 // Work is recorded into the current command buffer; uploads go into a separate one that runs first.

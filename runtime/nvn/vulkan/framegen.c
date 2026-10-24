@@ -629,7 +629,8 @@ static VkPipeline fs_pipeline(VkShaderModule fs, VkFormat fmt, VkPipelineLayout 
     VkGraphicsPipelineCreateInfo pi = {.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pNext = &ri, .stageCount = 2,
                                        .pStages = stages, .pVertexInputState = &vi, .pInputAssemblyState = &ia, .pViewportState = &vs,
                                        .pRasterizationState = &rs, .pMultisampleState = &ms, .pDepthStencilState = &ds,
-                                       .pColorBlendState = &cbs, .pDynamicState = &dy, .layout = layout};
+                                       .pColorBlendState = &cbs, .pDynamicState = &dy, .layout = layout,
+                                       .renderPass = vk_rp_compat(1, &fmt, VK_FORMAT_UNDEFINED, VK_FORMAT_UNDEFINED, VK_SAMPLE_COUNT_1_BIT)};
     VkPipeline p;
     return vkCreateGraphicsPipelines(g_vk.dev, g_vk.pcache, 1, &pi, NULL, &p) == VK_SUCCESS ? p : VK_NULL_HANDLE;
 }
@@ -702,7 +703,7 @@ static bool build_mask(VkCommandBuffer cb) {
                                     .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE, .storeOp = VK_ATTACHMENT_STORE_OP_STORE};
     VkRenderingInfo ri = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, {mw, mh}}, .layerCount = 1,
                           .colorAttachmentCount = 1, .pColorAttachments = &ca};
-    vkCmdBeginRendering(cb, &ri);
+    vk_begin_rendering(cb, &ri, &g_mask.format, VK_FORMAT_UNDEFINED, VK_SAMPLE_COUNT_1_BIT);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g_mpipe);
     static const bool lin[2] = {true, true};
     bind_images(cb, g_mlayout, g_mdsl, 2, v, lin);
@@ -711,7 +712,7 @@ static bool build_mask(VkCommandBuffer cb) {
     vkCmdSetViewport(cb, 0, 1, &vp);
     vkCmdSetScissor(cb, 0, 1, &sc);
     vkCmdDraw(cb, 3, 1, 0, 0);
-    vkCmdEndRendering(cb);
+    vk_end_rendering(cb);
     vk_full_barrier(cb);
     return true;
 }
@@ -726,7 +727,7 @@ static bool run_pass(VkCommandBuffer cb, TexBackend *target, VkPipeline pipe, Vk
                                     .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE, .storeOp = VK_ATTACHMENT_STORE_OP_STORE};
     VkRenderingInfo ri = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, {target->width, target->height}}, .layerCount = 1,
                           .colorAttachmentCount = 1, .pColorAttachments = &ca};
-    vkCmdBeginRendering(cb, &ri);
+    vk_begin_rendering(cb, &ri, &target->format, VK_FORMAT_UNDEFINED, VK_SAMPLE_COUNT_1_BIT);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
     bind_images(cb, layout, dsl, n, v, linear);
     if (pcsize) vkCmdPushConstants(cb, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, pcsize, pc);
@@ -735,7 +736,7 @@ static bool run_pass(VkCommandBuffer cb, TexBackend *target, VkPipeline pipe, Vk
     vkCmdSetViewport(cb, 0, 1, &vp);
     vkCmdSetScissor(cb, 0, 1, &sc);
     vkCmdDraw(cb, 3, 1, 0, 0);
-    vkCmdEndRendering(cb);
+    vk_end_rendering(cb);
     vk_full_barrier(cb);
     return true;
 }

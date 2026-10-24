@@ -47,7 +47,7 @@ static inline const char *vk_missing_backend_feature(const VkPhysicalDeviceVulka
     if (!v12->timelineSemaphore) return "timelineSemaphore";
     if (!v12->samplerMirrorClampToEdge) return "samplerMirrorClampToEdge";
     if (!v12->scalarBlockLayout) return "scalarBlockLayout";
-    if (!v13->dynamicRendering) return "dynamicRendering";
+    // (dynamicRendering optional too: without it, classic render passes - rpcompat.c)
     if (!v13->synchronization2) return "synchronization2";
     if (!v13->shaderDemoteToHelperInvocation) return "shaderDemoteToHelperInvocation";
     if (!v13->shaderTerminateInvocation) return "shaderTerminateInvocation";

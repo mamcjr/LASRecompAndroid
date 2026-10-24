@@ -341,11 +341,12 @@ void vk_collect_dead(void) {
     int k = 0;
     for (int i = 0; i < ndead; i++) {
         if (dead[i].seq > done) { dead[k++] = dead[i]; continue; }
-        if (dead[i].view) vkDestroyImageView(g_vk.dev, dead[i].view, NULL);
+        if (dead[i].view) vk_rp_forget_view(dead[i].view), vkDestroyImageView(g_vk.dev, dead[i].view, NULL);
         else vmaDestroyImage(g_vk.vma, dead[i].img, dead[i].mem);
     }
     ndead = k;
     DEAD_UNLOCK();
+    vk_rp_collect(done);
 }
 
 static void create_image(NvnTexture *t, TexBackend *b) {
