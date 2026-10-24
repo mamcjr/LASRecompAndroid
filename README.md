@@ -23,6 +23,15 @@ For the PC versions (Windows, macOS, Linux), features and the randomizer, see th
 > copy of the extracted game files of *Link's Awakening* **v1.0.0, v1.0.1 or v1.1.0**. Instructions on how to obtain
 > them will not be provided.
 
+## New in 0.5.2
+
+Drivers without dynamic rendering, such as the stock Mali drivers on many Samsung phones.
+
+- **Drivers without `VK_KHR_dynamic_rendering`** ([issue #2](https://github.com/mamcjr/LASRecompAndroid/issues/2), Galaxy A15 / Mali-G57): the app no longer stops at start; it draws with classic render passes instead (from BOTWRecompAndroid, which shares this renderer).
+- The startup message names every missing extension, not only the first.
+
+Validation: on the POCO F7 Ultra with the render passes forced on, the village, frame generation, SMAA and the menus draw right with Turnip (60 fps) and with the Qualcomm driver as Vulkan 1.1 (30 fps). Not tested yet on a real Mali.
+
 ## New in 0.5.1
 
 Turnip on the Adreno 610 and other GPUs without 16-bit storage.

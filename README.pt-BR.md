@@ -23,6 +23,15 @@ Para as versões de PC (Windows, macOS, Linux), os recursos e o randomizer, veja
 > obtida legalmente, dos arquivos extraídos de *Link's Awakening* **v1.0.0, v1.0.1 ou v1.1.0**. Não serão dadas
 > instruções de como obtê-los.
 
+## Novidades da 0.5.2
+
+Drivers sem renderização dinâmica, como os drivers Mali de fábrica de muitos celulares Samsung.
+
+- **Drivers sem `VK_KHR_dynamic_rendering`** ([issue #2](https://github.com/mamcjr/LASRecompAndroid/issues/2), Galaxy A15 / Mali-G57): o app não para mais na abertura; ele desenha com render passes clássicos (do BOTWRecompAndroid, que compartilha este renderizador).
+- A mensagem de abertura lista todas as extensões que faltam, não só a primeira.
+
+Validação: no POCO F7 Ultra com os render passes forçados, a vila, a geração de quadros, o SMAA e os menus desenham certo com o Turnip (60 fps) e com o driver da Qualcomm como Vulkan 1.1 (30 fps). Ainda não testado numa Mali de verdade.
+
 ## Novidades da 0.5.1
 
 Turnip na Adreno 610 e em outras GPUs sem armazenamento de 16 bits.
