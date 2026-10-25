@@ -470,6 +470,16 @@ static void create_device(void) {
 #endif
     if (g_vk.divisor) ext[n_ext++] = VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME;
     g_vk.host_import = has_ext(ep, ne, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);  // guest heap as a GPU buffer (exec.c)
+#ifdef __ANDROID__
+    // Phones: the import pins all of the guest heap. Samsung's Xclipse driver took it and then failed the first
+    // submission (VK_ERROR_UNKNOWN, Galaxy S26, in LASRecomp-Android-Plus), and Mali drivers offer the extension too;
+    // Adreno's own driver doesn't. The CPU copies (exec.c gcopy) run everywhere. LARECOMP_VK_HOST_IMPORT=1: the import
+    // where the driver offers it.
+    if (g_vk.host_import && !env_on("LARECOMP_VK_HOST_IMPORT")) {
+        LOG("[vk-cap] external memory host left out: the heap through CPU copies (LARECOMP_VK_HOST_IMPORT=1: import)\n");
+        g_vk.host_import = false;
+    }
+#endif
     if (g_vk.host_import) ext[n_ext++] = VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
     bool fault = has_ext(ep, ne, VK_EXT_DEVICE_FAULT_EXTENSION_NAME);  // device-lost diagnostics (vk_device_fault_report)
 #ifdef __ANDROID__
