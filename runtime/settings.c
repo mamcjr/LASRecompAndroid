@@ -168,6 +168,9 @@ void settings_load(void) {
 #endif
         else if (!strcmp(key, "resolution")) {
             int n = atoi(val);
+#ifdef __ANDROID__
+            if (!strcmp(val, "1.25x") || !strcmp(val, "1.5x")) { g_settings.res_mode = val[2] == '2' ? RES_X125 : RES_X150; continue; }
+#endif
             g_settings.res_mode = !strcmp(val, "dynamic") ? RES_DYNAMIC : (!strcmp(val, "75%") || !strcmp(val, "67%")) ? RES_Q75 :
                                   !strcmp(val, "50%") ? RES_Q50 : !strcmp(val, "25%") ? RES_Q25 :
                                   (n >= 1 && n <= 4) ? n : n > 4 ? 4 : RES_MATCH;  // (5x-8x were removed)
@@ -250,6 +253,8 @@ void settings_save(void) {
     else if (g_settings.res_mode == RES_Q75) fprintf(f, "resolution = 75%%\n");
     else if (g_settings.res_mode == RES_Q25) fprintf(f, "resolution = 25%%\n");
     else if (g_settings.res_mode == RES_Q50) fprintf(f, "resolution = 50%%\n");
+    else if (g_settings.res_mode == RES_X125) fprintf(f, "resolution = 1.25x\n");
+    else if (g_settings.res_mode == RES_X150) fprintf(f, "resolution = 1.5x\n");
     else if (g_settings.res_mode >= 1 && g_settings.res_mode <= 8) fprintf(f, "resolution = %dx\n", g_settings.res_mode);
     else fprintf(f, "resolution = match\n");
     fprintf(f, "inv_keys = %d\n", g_settings.inv_keys);

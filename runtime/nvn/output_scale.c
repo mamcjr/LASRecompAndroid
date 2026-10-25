@@ -77,6 +77,10 @@ void output_scale(double dw, double dh, bool reshape_allowed, double now, double
     int mode = g_settings.res_mode;
     if (forced > 0) h = forced;
     else if (mode >= 1 && mode <= 8) h = mode;
+    // (Android, from LASRecomp-Android-Plus: the game draws its 3D scene at 720 lines, its HUD at 1080 - on a 1080-line
+    // phone 1.5x is native 1080p, 1.25x 900 lines rebuilt by the upscaler, nearly the same picture for less GPU)
+    else if (mode == RES_X125) h = 1.25;
+    else if (mode == RES_X150) h = 1.5;
     else {
         h = reshape ? dh / 1080.0 : fit;  // Match display
         if (mode == RES_DYNAMIC) { dyn_update(now, gpu_ms); h *= g_dyn; }

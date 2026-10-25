@@ -519,8 +519,8 @@ static void tab_display(void) {
     // (up to 4x: 7680 x 4320, 8K - more only ran out of GPU memory, and sat next to 75% in the list)
     // (Match display in the middle: left from it 75% / 50% / 25%, right Dynamic then 1x-4x; user 2026-10-11)
 #ifdef __ANDROID__  // (3x / 4x: 4K / 8K, beyond a phone)
-    static const char *res[] = {"25%", "50%", "75%", "Match display", "Dynamic", "1x", "2x"};
-    static const int res_mode[] = {RES_Q25, RES_Q50, RES_Q75, RES_MATCH, RES_DYNAMIC, 1, 2};
+    static const char *res[] = {"25%", "50%", "75%", "Match display", "Dynamic", "1x", "1.25x", "1.5x", "2x"};
+    static const int res_mode[] = {RES_Q25, RES_Q50, RES_Q75, RES_MATCH, RES_DYNAMIC, 1, RES_X125, RES_X150, 2};
     enum { RES_DEFAULT_AT = 1 };
 #else
     static const char *res[] = {"25%", "50%", "75%", "Match display", "Dynamic", "1x", "2x", "3x", "4x"};
