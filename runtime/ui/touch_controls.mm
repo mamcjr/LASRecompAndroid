@@ -16,10 +16,13 @@
 #include <string.h>
 
 #include "imgui.h"
+#include "../game_addresses.h"
 
 extern "C" {
 #include "settings.h"
 bool menu_input_captured(void);  // ui/menu.mm
+int game_in_play(void);          // runtime/hle (the game past its title and file select)
+int inventory_items_cursor(void);  // ui/inventory_overlay.mm: -1 unless the pause menu's Items page is up
 void menu_test_open(void);       // ui/menu.mm: opens the in-game menu
 void menu_request_close(void);   // ui/menu.mm
 _Atomic uint64_t g_touch_buttons;  // (runtime/hle/input.c) Switch button bits held on the screen
@@ -74,6 +77,26 @@ static void pos_of(int k, float *x, float *y) {
 static float size_scale(void) { return g_settings.touch_scale > 0.2f ? g_settings.touch_scale : 1.0f; }
 static float stick_radius(void) { return disp_h * 0.13f * size_scale(); }
 
+// Only what the game uses right now (g_settings.touch_context; from LASRecomp-Android-Plus, MIT): in play, B / R / L
+// once Link has the sword / shield / Pegasus Boots (the live save's items word), X / Y while an item is on them (their
+// slots), ZL / ZR only where the player put them. The title, the file select and the Items page show everything (X / Y
+// equip there). Editing shows everything.
+static bool ctl_wanted(int k) {
+    if (editing || !g_settings.touch_context || !game_in_play() || inventory_items_cursor() >= 0) return true;
+    switch (k) {
+    case K_B: case K_R: case K_L: {
+        uint32_t items = *(const uint32_t *)(uintptr_t)(GA(LIVE_SAVE) + 0x5568);
+        return k == K_B ? (items & 1) : k == K_R ? (items & 2) : (items >> 11 & 1);
+    }
+    case K_X: case K_Y: {
+        int slot = *(const uint8_t *)(uintptr_t)(GA(LIVE_SAVE) + (k == K_X ? 0x5563 : 0x5562));
+        return slot > 1 && slot <= 15;  // (0 / 1, the sword's and the shield's, never sit on X / Y: empty reads 0)
+    }
+    case K_ZL: case K_ZR: return g_settings.touch_pos[k][0] >= 0;
+    default: return true;
+    }
+}
+
 static int layout(Ctl *c) {  // in pixels of the window (landscape)
     float u = disp_h / 100.0f, z = size_scale();
     float br = 7.5f * u * z, sw = 15 * u * z, sh = 7 * u * z, sr = 4.5f * u * z;
@@ -83,6 +106,7 @@ static int layout(Ctl *c) {  // in pixels of the window (landscape)
         {K_MINUS, TB_MINUS, "-", 2}, {K_PLUS, TB_PLUS, "+", 2}, {K_MENU, C_MENU, "=", 2}};
     int n = 0;
     for (const auto &t : T) {
+        if (!ctl_wanted(t.k)) continue;
         float x, y;
         pos_of(t.k, &x, &y);
         c[n++] = t.shape == 1 ? (Ctl){x, y, 0, t.bit, t.label, true, sw, sh, t.k}
@@ -112,6 +136,11 @@ static int hit(float x, float y, int *k) {  // the control under (x, y) (*k: its
     *k = K_STICK;
     if (editing) {
         float sx, sy, R = stick_radius();
+        pos_of(K_STICK, &sx, &sy);
+        return (x - sx) * (x - sx) + (y - sy) * (y - sy) <= R * R ? C_STICK : C_NONE;
+    }
+    if (g_settings.touch_stick_fixed) {  // (fixed: its own circle, a little beyond its rim)
+        float sx, sy, R = stick_radius() * 1.6f;
         pos_of(K_STICK, &sx, &sy);
         return (x - sx) * (x - sx) + (y - sy) * (y - sy) <= R * R ? C_STICK : C_NONE;
     }
@@ -240,7 +269,13 @@ extern "C" bool touch_controls_event(const SDL_Event *e) {
         fingers[nfingers] = {e->tfinger.fingerID, ctl, x, y, cx - x, cy - y};
         if (editing && k >= 0 && ctl != C_NONE && ctl < C_DONE) fingers[nfingers].ctl = 200 + k;  // (dragging layout entry k)
         nfingers++;
-        if (!editing && ctl == C_STICK) { stick_on = true; stick_cx = stick_kx = x, stick_cy = stick_ky = y; stick_update(); }
+        if (!editing && ctl == C_STICK) {  // the base comes to the thumb - or stays at its place (Fixed stick)
+            stick_on = true;
+            if (g_settings.touch_stick_fixed) pos_of(K_STICK, &stick_cx, &stick_cy);
+            else stick_cx = x, stick_cy = y;
+            stick_kx = x, stick_ky = y;
+            stick_update();
+        }
         if (ctl == C_MENU && !editing) act = C_MENU;
         if (ctl >= C_DONE && ctl <= C_CANCEL) act = ctl;
     } else if (e->type == SDL_EVENT_FINGER_MOTION && f >= 0) {

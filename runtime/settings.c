@@ -35,6 +35,7 @@ Settings g_settings = {
                   {-1, -1}, {-1, -1}},
     .touch_scale = 1.0f,
     .touch_opacity = 1.0f,
+    .touch_context = true,
     .overlay_pos = {-1, -1},
     .gpu_heap = -1,
     .turnip_lrz = -1,
@@ -159,6 +160,8 @@ void settings_load(void) {
         else if (!strcmp(key, "gpu_model")) snprintf(g_settings.gpu_model, sizeof g_settings.gpu_model, "%s", val);
         else if (!strcmp(key, "touch_scale")) g_settings.touch_scale = (float)atof(val);
         else if (!strcmp(key, "touch_opacity")) g_settings.touch_opacity = (float)atof(val);
+        else if (!strcmp(key, "touch_stick_fixed")) g_settings.touch_stick_fixed = atoi(val) != 0;
+        else if (!strcmp(key, "touch_context")) g_settings.touch_context = atoi(val) != 0;
         else if (!strcmp(key, "touch_layout")) {  // x,y per control (a share of the screen; negative: default)
             char *q = val;
             for (int i = 0; i < TOUCH_NCTL * 2 && *q; i++) {
@@ -254,6 +257,7 @@ void settings_save(void) {
     static const char *const tri[] = {"auto", "0", "1"};  // (-1 / 0 / 1)
     fprintf(f, "gpu_heap = %s\nturnip_lrz = %s\nlog_file = %d\ngpu_model = %s\n", tri[g_settings.gpu_heap < 0 ? 0 : g_settings.gpu_heap ? 2 : 1],
             tri[g_settings.turnip_lrz < 0 ? 0 : g_settings.turnip_lrz ? 2 : 1], g_settings.log_file, g_settings.gpu_model);
+    fprintf(f, "touch_stick_fixed = %d\ntouch_context = %d\n", g_settings.touch_stick_fixed, g_settings.touch_context);
     fprintf(f, "touch_scale = %.2f\ntouch_opacity = %.2f\ntouch_layout = ", g_settings.touch_scale, g_settings.touch_opacity);
     for (int i = 0; i < TOUCH_NCTL; i++)
         fprintf(f, "%s%.4f,%.4f", i ? "," : "", g_settings.touch_pos[i][0], g_settings.touch_pos[i][1]);

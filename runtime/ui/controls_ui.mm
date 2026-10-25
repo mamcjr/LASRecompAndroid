@@ -78,6 +78,19 @@ static void touch_layout_draw(void) {
     ImGui::SetNextItemWidth(-1);
     if (ImGui::SliderFloat("##Opacity", &op, 20, 100, "%.0f%%")) g_settings.touch_opacity = op / 100;
     if (ImGui::IsItemDeactivatedAfterEdit()) settings_save();
+    ImGui::Spacing();
+    // (both from LASRecomp-Android-Plus, MIT)
+    if (ImGui::Checkbox(tr("Fixed stick"), &g_settings.touch_stick_fixed)) settings_save();
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextDisabled("%s", tr("The stick stays where the layout puts it. Off: it starts wherever your thumb lands on the "
+                                 "left of the screen."));
+    ImGui::PopTextWrapPos();
+    if (ImGui::Checkbox(tr("Only the buttons the game uses"), &g_settings.touch_context)) settings_save();
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextDisabled("%s", tr("B, R and L show once Link has the sword, the shield and the Pegasus Boots, X and Y once "
+                                 "an item is on them, and ZL / ZR (the game doesn't use them) only if you moved them. The "
+                                 "item screen and the title show them all."));
+    ImGui::PopTextWrapPos();
 }
 #endif
 
