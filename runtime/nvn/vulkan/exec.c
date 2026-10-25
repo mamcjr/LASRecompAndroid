@@ -2593,11 +2593,46 @@ static void ct_draw(Prog *pr, const char *what) {
 //     destination bound as an attachment, a texture freed or reallocated): the real copy is made first.
 // Only same-size, same-format, single-level, single-sample depth/stencil images, whole-image copies.
 // LARECOMP_VK_COPY_OPT=0: always copy (the old behaviour).
-typedef struct { NvnTexture *src, *dst; VkImage simg, dimg; } CopyAlias;
+typedef struct { NvnTexture *src, *dst; VkImage simg, dimg; bool read; } CopyAlias;
+// LARECOMP_VK_COPY_LAZY=1 (default): colour copies alias too (same format, or R11G11B10F -> RGBA16F: every value
+// exact, alpha 1 either way), and a destination that went unread through two aliases in a row is not copied into
+// when its source is next written: the game copies its HDR frame into an RGBA16F texture every frame that nothing
+// reads on the Field (1.1 ms at 1.5x). Such a "stale" destination catches up (the copy is made, from the source's
+// content at that moment) the first time it is read, partly written or bound, or when its source goes.
+static int copy_lazy(void) {
+    static int on = -1;
+#ifdef __ANDROID__  // (from LASRecomp-Android-Plus, MIT: the desktop keeps copying, as before)
+    if (on < 0) { const char *e = getenv("LARECOMP_VK_COPY_LAZY"); on = e && *e ? atoi(e) : 1; }
+#else
+    if (on < 0) { const char *e = getenv("LARECOMP_VK_COPY_LAZY"); on = e && *e ? atoi(e) : 0; }
+#endif
+    return on;
+}
+static CopyAlias stale[8];
+static int nstale;
+static struct { NvnTexture *t; VkImage img; int unread; } alias_hist[16];  // per destination: aliases dropped unread in a row
+static int nhist;
+static uint64_t stat_alias_skipped, stat_alias_late;
+
 extern uint32_t vk_view_gen;
 static CopyAlias aliases[8];
 static int naliases;
 static uint64_t stat_alias_made, stat_alias_renamed, stat_alias_partial, stat_alias_copied;
+static int hist_find(NvnTexture *t) {
+    VkImage img = t->backend ? ((TexBackend *)t->backend)->image : VK_NULL_HANDLE;
+    for (int i = 0; i < nhist; i++)
+        if (alias_hist[i].t == t) {
+            if (alias_hist[i].img != img) { alias_hist[i].img = img; alias_hist[i].unread = 0; }
+            return i;
+        }
+    int i = nhist < 16 ? nhist++ : (int)(stat_alias_made & 15);
+    alias_hist[i].t = t; alias_hist[i].img = img; alias_hist[i].unread = 0;
+    return i;
+}
+static bool is_ds(const TexBackend *b) { return b && (b->aspect & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)); }
+static bool fmt_exact(VkFormat s, VkFormat d) {  // every value of s representable in d
+    return s == d || (s == VK_FORMAT_B10G11R11_UFLOAT_PACK32 && d == VK_FORMAT_R16G16B16A16_SFLOAT);
+}
 
 static int copy_opt(void) {
     static int on = -1;
@@ -2619,6 +2654,7 @@ static void alias_drop(int i) {
 // the real copy of the aspects asked for, into the destination's own image
 static void alias_copy(CopyAlias *a, VkImageAspectFlags aspects, const char *why) {
     TexBackend *s = a->src->backend, *d = a->dst->backend;
+    if (!s || !d || !s->image || !d->image) return;
     aspects &= d->aspect;
     if (!aspects) return;
     vk_end_pass();
@@ -2627,14 +2663,28 @@ static void alias_copy(CopyAlias *a, VkImageAspectFlags aspects, const char *why
     vk_full_barrier(cb);
     gp_mark(cb, "copy texture (deferred, %s%s) %ux%u", why, aspects == d->aspect ? "" : ", stencil only", a->dst->width, a->dst->height);
     VkImageCopy c = {.srcSubresource = {aspects, 0, 0, 1}, .dstSubresource = {aspects, 0, 0, 1}, .extent = {d->width, d->height, 1}};
-    vkCmdCopyImage(cb, s->image, VK_IMAGE_LAYOUT_GENERAL, d->image, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
+    int w = (int)d->width, h = (int)d->height;
+    // (plain transfer commands only: this runs from texture teardown and from draw setup, where a draw_copy's render
+    // state switch is not safe; a 1:1 nearest blit converts R11G11B10F -> RGBA16F exactly)
+    if (s->format == d->format) vkCmdCopyImage(cb, s->image, VK_IMAGE_LAYOUT_GENERAL, d->image, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
+    else {
+        VkImageBlit bl = {.srcSubresource = {aspects, 0, 0, 1}, .srcOffsets = {{0, 0, 0}, {w, h, 1}},
+                          .dstSubresource = {aspects, 0, 0, 1}, .dstOffsets = {{0, 0, 0}, {w, h, 1}}};
+        vkCmdBlitImage(cb, s->image, VK_IMAGE_LAYOUT_GENERAL, d->image, VK_IMAGE_LAYOUT_GENERAL, 1, &bl, VK_FILTER_NEAREST);
+    }
     if (aspects == d->aspect) stat_alias_copied++; else stat_alias_partial++;
     if (ct_on()) LOG("[ct] alias copy %p -> %p aspects %#x (%s)\n", (void *)a->src, (void *)a->dst, aspects, why);
 }
 
 // t is about to be written; full: the aspects of it the write overwrites whole (0: unknown / partial)
 static void alias_before_write(NvnTexture *t, VkImageAspectFlags full, const char *why) {
-    if (!naliases || !t) return;
+    if ((!naliases && !nstale) || !t) return;
+    for (int i = nstale - 1; i >= 0; i--) {  // a stale destination written: whole - forgotten; partly - catches up first
+        CopyAlias *a = &stale[i];
+        if (a->dst != t) continue;
+        if (t->backend && (((TexBackend *)t->backend)->aspect & ~full) && alias_valid(a)) { alias_copy(a, ((TexBackend *)t->backend)->aspect, why); stat_alias_late++; }
+        stale[i] = stale[--nstale];
+    }
     for (int i = naliases - 1; i >= 0; i--) {
         CopyAlias *a = &aliases[i];
         if (!alias_valid(a)) { alias_drop(i); continue; }
@@ -2643,12 +2693,25 @@ static void alias_before_write(NvnTexture *t, VkImageAspectFlags full, const cha
         alias_copy(a, ((TexBackend *)t->backend)->aspect & (copy_opt() == 2 ? ~0u : ~full), why);
         alias_drop(i);
     }
-    NvnTexture *heir = NULL;  // t overwritten whole: one destination can take its image instead of a copy
-    if (t->backend && (((TexBackend *)t->backend)->aspect & ~full) == 0)
+    NvnTexture *heir = NULL;  // t overwritten whole: one destination can take its image instead of a copy (depth only)
+    bool ds = is_ds(t->backend);
+    if (ds && (((TexBackend *)t->backend)->aspect & ~full) == 0)
         for (int i = 0; i < naliases && !heir; i++) if (aliases[i].src == t) heir = aliases[i].dst;
     for (int i = naliases - 1; i >= 0; i--) {
         CopyAlias *a = &aliases[i];
         if (a->src != t || a->dst == heir) continue;
+        if (!alias_valid(a)) { alias_drop(i); continue; }  // (either image gone: nothing to hand over)
+        if (!ds && copy_lazy()) {  // colour: the destination's read history decides
+            int h = hist_find(a->dst);
+            alias_hist[h].unread = a->read ? 0 : alias_hist[h].unread + 1;
+            if (!a->read && alias_hist[h].unread >= 2 && nstale < (int)(sizeof stale / sizeof stale[0])) {
+                stale[nstale++] = *a;
+                stat_alias_skipped++;
+                if (ct_on()) LOG("[ct] alias skipped %p -> %p (%s)\n", (void *)a->src, (void *)a->dst, why);
+                alias_drop(i);
+                continue;
+            }
+        }
         alias_copy(a, ((TexBackend *)a->dst->backend)->aspect, why);
         alias_drop(i);
     }
@@ -2673,18 +2736,32 @@ static void alias_before_write(NvnTexture *t, VkImageAspectFlags full, const cha
 static NvnTexture *alias_read(NvnTexture *t) {
     for (int i = 0; i < naliases; i++)
         if (aliases[i].dst == t) {
-            if (alias_valid(&aliases[i])) return aliases[i].src;
+            if (alias_valid(&aliases[i])) { aliases[i].read = true; return aliases[i].src; }
             alias_drop(i);
             return t;
         }
     return t;
 }
 
+// a stale destination about to be read: its copy is made now (callers: where ending the pass is safe - before a draw's
+// pass begins, a copy or a readback; not inside a draw's texture binding)
+static void alias_catch_up(NvnTexture *t) {
+    for (int i = 0; i < nstale; i++)
+        if (stale[i].dst == t) {
+            CopyAlias a = stale[i];
+            stale[i] = stale[--nstale];
+            alias_hist[hist_find(t)].unread = 0;
+            if (alias_valid(&a)) { alias_copy(&a, ((TexBackend *)t->backend)->aspect, "late read"); stat_alias_late++; }
+            return;
+        }
+}
+
 // copy_texture: a whole-image copy that can be an alias instead (true: done)
 static bool alias_make(NvnTexture *src, NvnTexture *dst, TexBackend *s, TexBackend *d) {
     if (!copy_opt() || src == dst) return false;
-    if (!(s->aspect & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT))) return false;
-    if (s->format != d->format || s->width != d->width || s->height != d->height || s->aspect != d->aspect || s->levels != 1 ||
+    bool ds = is_ds(s);
+    if (!ds && (!copy_lazy() || !fmt_exact(s->format, d->format))) return false;
+    if ((ds && s->format != d->format) || s->width != d->width || s->height != d->height || s->aspect != d->aspect || s->levels != 1 ||
         d->levels != 1 || s->layers != 1 || d->layers != 1 || s->depth != 1 || d->depth != 1 || s->samples != 1 || d->samples != 1 ||
         s->base_type != d->base_type || s->presented || d->presented || !s->image || !d->image || !s->gpu_owned || !d->gpu_owned)
         return false;
@@ -2695,7 +2772,7 @@ static bool alias_make(NvnTexture *src, NvnTexture *dst, TexBackend *s, TexBacke
     s = src->backend;
     if (src == dst) return true;  // (copied back onto itself)
     if (naliases == (int)(sizeof aliases / sizeof aliases[0])) return false;
-    aliases[naliases++] = (CopyAlias){src, dst, s->image, d->image};
+    aliases[naliases++] = (CopyAlias){src, dst, s->image, d->image, false};
     vk_view_gen++;
     stat_alias_made++;
     return true;
@@ -2703,23 +2780,34 @@ static bool alias_make(NvnTexture *src, NvnTexture *dst, TexBackend *s, TexBacke
 
 // textures.c: t is being freed - an alias source hands its contents over first
 void vk_alias_texture_destroyed(NvnTexture *t) {
+    for (int i = nstale - 1; i >= 0; i--)  // a stale destination goes: nothing to do; its source goes: it catches up now
+        if (stale[i].dst == t) stale[i] = stale[--nstale];
+        else if (stale[i].src == t) { if (alias_valid(&stale[i])) { alias_copy(&stale[i], ((TexBackend *)stale[i].dst->backend)->aspect, "src freed"); stat_alias_late++; } stale[i] = stale[--nstale]; }
     if (naliases) alias_before_write(t, 0, "freed");
 }
-void vk_alias_reset(void) { naliases = 0; }  // (reboot: every texture goes)
+void vk_alias_reset(void) { naliases = nstale = nhist = 0; }  // (reboot: every texture goes)
 
 // (renderer_stats, once per stats interval) copies made aliases / renamed / partly or fully copied later
 void vk_alias_stats(void) {
     static int n;
     if (!stat_alias_made || (n++ > 5 && n % 30)) return;
-    LOG("[vk] copy alias: %llu made, %llu renamed, %llu stencil-only, %llu copied later (live %d)\n",
+    LOG("[vk] copy alias: %llu made, %llu renamed, %llu stencil-only, %llu copied later, %llu skipped, %llu late (live %d, stale %d)\n",
         (unsigned long long)stat_alias_made, (unsigned long long)stat_alias_renamed, (unsigned long long)stat_alias_partial,
-        (unsigned long long)stat_alias_copied, naliases);
-    stat_alias_made = stat_alias_renamed = stat_alias_partial = stat_alias_copied = 0;
+        (unsigned long long)stat_alias_copied, (unsigned long long)stat_alias_skipped, (unsigned long long)stat_alias_late, naliases, nstale);
+    stat_alias_made = stat_alias_renamed = stat_alias_partial = stat_alias_copied = stat_alias_skipped = stat_alias_late = 0;
 }
 
 // draws: attachments written (or a destination bound at all) end the aliases involved
-static void alias_draw_check(void) {
-    if (!naliases) return;
+static void alias_draw_check(Prog *pr) {
+    if (!naliases && !nstale) return;
+    if (nstale && pr) {  // sampled stale destinations catch up first
+        ShaderInfo *infos[2] = {pr->vi, pr->fi};
+        for (int sg = 0; sg < 2 && nstale; sg++)
+            for (int i = 0; i < (infos[sg] ? infos[sg]->ntex : 0) && nstale; i++) {
+                NvnTexture *t = shader_texture_object(sg, &infos[sg]->tex[i]);
+                if (t) alias_catch_up(t);
+            }
+    }
     for (int i = 0; i < st.rt.ncolor; i++)
         if (st.rt.color[i]) alias_before_write(st.rt.color[i], 0, "color target");
     NvnTexture *d = st.rt.depth;
@@ -3871,7 +3959,7 @@ static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo
                 memo[ms].type == st_->type && memo[ms].has_view == e->has_view) {
                 view = memo[ms].view;
             } else {
-                view = vk_view(naliases ? alias_read(e->tex) : e->tex, &e->view, e->has_view, false, st_->type);
+                view = vk_view(naliases || nstale ? alias_read(e->tex) : e->tex, &e->view, e->has_view, false, st_->type);
                 memo[ms].tex = e->tex; memo[ms].vh = vh; memo[ms].frame = frame; memo[ms].gen = vk_view_gen;
                 memo[ms].type = (uint8_t)st_->type; memo[ms].has_view = e->has_view; memo[ms].view = view;
             }
@@ -4517,7 +4605,7 @@ static void draw_(CmdRec *r, bool indexed) {
     }
     if (g_debug_frame) debug_draw(pr, r, indexed);
     if (ct_on()) ct_draw(pr, "draw");
-    alias_draw_check();
+    alias_draw_check(pr);
     resolve_feedback(pr);
     snap_reason = "draw-depthwrite";
     if (st.rt.depth && st.ds[0] && st.ds[1]) snapshots_invalidate(st.rt.depth);
@@ -5037,6 +5125,7 @@ static void copy_buffer_to_texture(uint64_t src, const TexRefRec *dst) {
 static void copy_texture_to_buffer(const TexRefRec *src, uint64_t dst) {
     NvnTexture *t = (NvnTexture *)(uintptr_t)src->tex;
     if (!t || !dst || dst < HEAP_BASE) return;
+    alias_catch_up(t);
     t = alias_read(t);
     vk_end_pass();
     const FormatInfo *fi;
@@ -5135,7 +5224,7 @@ static void copy_texture(const TexRefRec *src, const TexRefRec *dst, uint64_t fl
         return;
     }
     alias_before_write(dt, 0, "copy dst");
-    if (naliases) s = alias_read(st_)->backend;
+    if (naliases || nstale) { alias_catch_up(st_); s = alias_read(st_)->backend; }
     VkCommandBuffer cb = vk_cmd();
     vk_full_barrier(cb);
     VkImageAspectFlags sa = s->aspect, da = d->aspect;
