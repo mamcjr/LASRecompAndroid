@@ -31,7 +31,10 @@ enum : uint32_t {
     NAME = 0x5388, RUPEES = 0x5540, HP = 0x5544, SHELLS = 0x5548, PIECES = 0x5550, CONTAINERS = 0x5558,
     TRADE = 0x555A, SONGS = 0x555B, UPGRADES = 0x555C, BOMBS = 0x555E, ARROWS = 0x555F, POWDER = 0x5560,
     ITEMS = 0x5568, KEYITEMS = 0x556C, SENSOR = 0x556E, FAIRIES = 0x5580, LEAVES = 0x5582,
+    GOT = 0x55E4,  // one bit per item id (Items.gsheet itemID) that AddItem sets with the item
 };
+
+static void got_item(int id) { if (id >= 0 && id < 32) F<uint32_t>(GOT) |= 1u << id; }
 
 static bool loaded(void) { return F<uint32_t>(0) == 0xE && F<uint16_t>(NAME) != 0; }
 
@@ -89,18 +92,21 @@ static void bit_set(uint32_t off, int bit, int width, bool v) {
     else F<uint32_t>(off) = (F<uint32_t>(off) & ~(1u << bit)) | ((uint32_t)v << bit);
 }
 
-struct Bit { const char *name; uint32_t off; int bit; int width; const char *desc; };
+struct Bit { const char *name; uint32_t off; int bit; int width; const char *desc; int id = -1; };  // id: AddItem's (GOT)
 static void bit_rows(const Bit *b, int n) {
     for (int i = 0; i < n; i++) {
         bool v = bit_get(b[i].off, b[i].bit, b[i].width);
-        if (opt_toggle(b[i].name, &v, false, b[i].desc)) bit_set(b[i].off, b[i].bit, b[i].width, v);
+        if (!opt_toggle(b[i].name, &v, false, b[i].desc)) continue;
+        bit_set(b[i].off, b[i].bit, b[i].width, v);
+        if (v) got_item(b[i].id);
     }
 }
 
-// Level item: "owned" bit in ITEMS plus an upgrade bit in UPGRADES.
-static void level(const char *t, int item_bit, int up_bit, const char *const names[3], const char *desc) {
+// Level item: "owned" bit in ITEMS plus an upgrade bit in UPGRADES (id: AddItem's id of level 1; level 2 is id + 1).
+static void level(const char *t, int item_bit, int up_bit, int id, const char *const names[3], const char *desc) {
     int lv = !((F<uint32_t>(ITEMS) >> item_bit) & 1) ? 0 : ((F<uint8_t>(UPGRADES) >> up_bit) & 1) ? 2 : 1;
     if (!opt_choice(t, &lv, names, 3, 0, desc)) return;
+    if (lv) got_item(id + lv - 1);
     F<uint32_t>(ITEMS) = (F<uint32_t>(ITEMS) & ~(1u << item_bit)) | ((uint32_t)(lv > 0) << item_bit);
     F<uint8_t>(UPGRADES) = (uint8_t)((F<uint8_t>(UPGRADES) & ~(1u << up_bit)) | ((uint32_t)(lv == 2) << up_bit));
 }
@@ -188,23 +194,23 @@ extern "C" void save_editor_draw(float scale) {
     static const char *const sword[] = {"None", "Sword", "Level 2"};
     static const char *const shield[] = {"None", "Shield", "Mirror Shield"};
     static const char *const bracelet[] = {"None", "Power Bracelet", "Level 2"};
-    level("Sword", 0, 0, sword, "Link's sword. Level 2 is the Noble Sword from the Seashell Mansion.");
-    level("Shield", 1, 1, shield, "Link's shield. The Mirror Shield blocks beams and fire.");
-    level("Power Bracelet", 10, 2, bracelet, "Lifts pots and rocks. Level 2 lifts the heavy ones.");
+    level("Sword", 0, 0, 0, sword, "Link's sword. Level 2 is the Noble Sword from the Seashell Mansion.");
+    level("Shield", 1, 1, 2, shield, "Link's shield. The Mirror Shield blocks beams and fire.");
+    level("Power Bracelet", 10, 2, 13, bracelet, "Lifts pots and rocks. Level 2 lifts the heavy ones.");
     static const Bit items[] = {
-        {"Bombs", ITEMS, 2, 32, "The bombs item (bomb bag)."},
-        {"Bow", ITEMS, 3, 32, "The bow."},
-        {"Hookshot", ITEMS, 4, 32, "The Hookshot."},
-        {"Boomerang", ITEMS, 5, 32, "The Boomerang."},
-        {"Magic Rod", ITEMS, 6, 32, "The Magic Rod."},
-        {"Shovel", ITEMS, 7, 32, "The Shovel."},
-        {"Magic Powder", ITEMS, 8, 32, "Magic Powder."},
-        {"Roc's Feather", ITEMS, 9, 32, "Roc's Feather: jump."},
-        {"Pegasus Boots", ITEMS, 11, 32, "Pegasus Boots: dash."},
-        {"Ocarina", ITEMS, 12, 32, "The Ocarina. Songs are under Ocarina songs."},
-        {"Flippers", KEYITEMS, 0, 32, "Flippers: swim and dive."},
-        {"Secret Medicine", KEYITEMS, 1, 32, "Secret Medicine: revives Link once when his health runs out."},
-        {"Sleepy Toadstool", KEYITEMS, 15, 32, "The Sleepy Toadstool for the witch."},
+        {"Bombs", ITEMS, 2, 32, "The bombs item (bomb bag).", 4},
+        {"Bow", ITEMS, 3, 32, "The bow.", 5},
+        {"Hookshot", ITEMS, 4, 32, "The Hookshot.", 6},
+        {"Boomerang", ITEMS, 5, 32, "The Boomerang.", 7},
+        {"Magic Rod", ITEMS, 6, 32, "The Magic Rod.", 8},
+        {"Shovel", ITEMS, 7, 32, "The Shovel.", 9},
+        {"Magic Powder", ITEMS, 8, 32, "Magic Powder.", 11},
+        {"Roc's Feather", ITEMS, 9, 32, "Roc's Feather: jump.", 12},
+        {"Pegasus Boots", ITEMS, 11, 32, "Pegasus Boots: dash.", 15},
+        {"Ocarina", ITEMS, 12, 32, "The Ocarina. Songs are under Ocarina songs.", 16},
+        {"Flippers", KEYITEMS, 0, 32, "Flippers: swim and dive.", 20},
+        {"Secret Medicine", KEYITEMS, 1, 32, "Secret Medicine: revives Link once when his health runs out.", 21},
+        {"Sleepy Toadstool", KEYITEMS, 15, 32, "The Sleepy Toadstool for the witch.", 10},
         {"Seashell Sensor", SENSOR, 0, 8, "The Seashell Sensor: chimes near hidden Secret Seashells."},
     };
     bit_rows(items, sizeof items / sizeof items[0]);
