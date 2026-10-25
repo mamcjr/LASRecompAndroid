@@ -392,10 +392,30 @@ VkFormat vk_view_format(NvnTexture *t, VkFormat vf) {
     return vf;
 }
 
+// An image's share of the internal resolution: the game's own size, or (render targets) the internal resolution's.
+// (Android, from LASRecomp-Android-Plus, MIT) The game's small blur / glow levels (400x180 and below) and the water's
+// reflection (880x396) stay at most at their own size: blurred or broken up by waves, sharper is not visible (Martha's
+// Bay at 1080p: -0.6 ms, frames identical on their S20 FE). Not the first glow level (800x360): the game halves the
+// scene into it, and a smaller step there lost the water's sparkles. LARECOMP_AUX_SCALE=<f>: another cap (0 = off).
+static void tex_scale(const NvnTexture *t, const TexBackend *b, float *sx, float *sy) {
+    *sx = b->scalable ? g_rs_x : 1;
+    *sy = b->scalable ? g_rs_y : 1;
+#ifdef __ANDROID__
+    static float cap = -1;
+    if (cap < 0) cap = getenv("LARECOMP_AUX_SCALE") ? (float)atof(getenv("LARECOMP_AUX_SCALE")) : 1.0f;
+    bool aux = t->width <= 400 || (t->width >= 860 && t->width <= 900 && t->height < 560);
+    if (b->scalable && cap > 0 && aux) {
+        if (*sx > cap) *sx = cap;
+        if (*sy > cap) *sy = cap;
+    }
+#else
+    (void)t;
+#endif
+}
+
 static void create_image(NvnTexture *t, TexBackend *b) {
     VkFmt mf = fmt_of(t->format);
-    b->sx = b->scalable ? g_rs_x : 1;
-    b->sy = b->scalable ? g_rs_y : 1;
+    tex_scale(t, b, &b->sx, &b->sy);
     uint32_t tw = t->width ? t->width : 1, th = t->height ? t->height : 1;
     if (b->scalable) {
         tw = (uint32_t)lroundf(tw * b->sx); th = (uint32_t)lroundf(th * b->sy);
@@ -560,7 +580,9 @@ static void live_remove(TexBackend *b) {
 static TexBackend *tex_backend(NvnTexture *t) {
     TexBackend *b = t->backend;
     if (b) {
-        if (b->scalable && (b->sx != g_rs_x || b->sy != g_rs_y)) {  // output resolution changed: reallocate
+        float wx, wy;
+        tex_scale(t, b, &wx, &wy);
+        if (b->scalable && (b->sx != wx || b->sy != wy)) {  // output resolution changed: reallocate
             destroy_image(b);
             create_image(t, b);
         }
