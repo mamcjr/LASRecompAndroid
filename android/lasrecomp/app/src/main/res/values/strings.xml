@@ -11,4 +11,7 @@
     <string name="driver_system">Use the system driver</string>
     <string name="driver_close">Close</string>
     <string name="driver_install_failed">The driver wasn\'t installed: pick a driver package (.zip).</string>
+    <string name="play_channel">Game session</string>
+    <string name="play_title">LAS Recomp is open</string>
+    <string name="play_text">The game waits paused where you left it.</string>
 </resources>

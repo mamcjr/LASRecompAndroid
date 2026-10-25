@@ -159,6 +159,13 @@ public class LASRecompActivity extends SDLActivity {
     protected void onResume() {
         super.onResume();
         stats.post(report);
+        PlayService.start(this);  // (keeps the game alive at the home screen: PlayService.java)
+    }
+
+    @Override
+    protected void onDestroy() {
+        PlayService.stop(this);
+        super.onDestroy();
     }
 
     @Override
