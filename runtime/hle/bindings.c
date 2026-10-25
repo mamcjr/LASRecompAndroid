@@ -102,6 +102,27 @@ void bind_reset(int dev) {
     result(5, dev, -1, -1);
 }
 
+#ifdef __ANDROID__
+// Face buttons by their letters on an Xbox-style pad (and the matching places on a PlayStation one): the button
+// labelled A (south) is the Switch's A, B (east) its B, X (west) X, Y (north) Y - instead of by position (the Switch's
+// A on the right). Handhelds (AYN, Retroid...) and Xbox pads read "A swapped with B" by position. From
+// LASRecomp-Android-Plus (MIT).
+static const int16_t k_face_label[4] = {SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_EAST, SDL_GAMEPAD_BUTTON_WEST,
+                                        SDL_GAMEPAD_BUTTON_NORTH};
+bool bind_face_by_label(void) {
+    return g_bind_pad[BIND_A] == k_face_label[0] && g_bind_pad[BIND_B] == k_face_label[1] &&
+           g_bind_pad[BIND_X] == k_face_label[2] && g_bind_pad[BIND_Y] == k_face_label[3];
+}
+void bind_set_face_by_label(bool on) {
+    static const int16_t by_pos[4] = {SDL_GAMEPAD_BUTTON_EAST, SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_NORTH,
+                                      SDL_GAMEPAD_BUTTON_WEST};
+    const int16_t *f = on ? k_face_label : by_pos;
+    g_bind_pad[BIND_A] = f[0], g_bind_pad[BIND_B] = f[1], g_bind_pad[BIND_X] = f[2], g_bind_pad[BIND_Y] = f[3];
+    LOG("[input] face buttons %s\n", on ? "by label (A = the bottom button)" : "by position (A = the right button)");
+    result(5, BIND_DEV_PAD, -1, -1);
+}
+#endif
+
 bool bind_is_default(int dev) {
     return dev == BIND_DEV_PAD ? !memcmp(g_bind_pad, k_def_pad, sizeof g_bind_pad) : !memcmp(g_bind_key, k_def_key, sizeof g_bind_key);
 }

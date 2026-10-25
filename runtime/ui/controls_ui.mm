@@ -167,6 +167,22 @@ extern "C" void controls_bindings_draw(float scale) {
         ImGui::EndTable();
     }
     ImGui::Spacing();
+#ifdef __ANDROID__
+    {   // (hle/bindings.c bind_set_face_by_label; from LASRecomp-Android-Plus)
+        bool lbl = bind_face_by_label();
+        if (ImGui::Checkbox(tr("Face buttons by their letters (Xbox-style pads, handhelds)"), &lbl)) {
+            bind_capture_cancel();
+            bind_set_face_by_label(lbl);
+            settings_save();
+        }
+        ImGui::PushTextWrapPos(0);
+        ImGui::TextDisabled("%s", tr("On: the button labelled A on an Xbox-style pad or handheld (the bottom one; Cross on a "
+                                     "PlayStation pad) is the game's A. Off: by position, as on a Switch - A is the right "
+                                     "button."));
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+    }
+#endif
     ImGui::BeginDisabled(bind_is_default(BIND_DEV_PAD));
     if (ImGui::Button(tr("Reset controller to defaults"))) { bind_capture_cancel(); bind_reset(BIND_DEV_PAD); }
     ImGui::EndDisabled();

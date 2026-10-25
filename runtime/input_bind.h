@@ -35,6 +35,10 @@ const char *bind_key_label(int scancode);
 int bind_label_family(void);                   // the connected controller's family (also on the start screen)
 void bind_reset(int dev);
 bool bind_is_default(int dev);
+#ifdef __ANDROID__
+bool bind_face_by_label(void);               // A / B / X / Y on the bottom / right / left / top buttons
+void bind_set_face_by_label(bool on);        // (else by position, the Switch's: A right, B bottom, X top, Y left)
+#endif
 bool bind_is_default_slot(int dev, int slot);
 
 // "Click a binding, then press": begun from the UI; the next press (any thread's SDL event) is taken. Escape cancels,
