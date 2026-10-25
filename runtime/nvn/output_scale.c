@@ -41,18 +41,28 @@ static void dyn_update(double now, double gpu_ms) {
     // (Frame rate 30: its frames take 33.3 ms on target - against 60's budget each one looked slow, and the
     // resolution went down to its floor however much room the GPU had)
     double budget = g_settings.fps_mode == 1 ? 2.0 : 1.0;
+    // With the GPU's time (vulkan/device.c: the submissions' timestamps) only a GPU near its limit lowers the
+    // resolution: fewer pixels don't help long frames with the GPU idle - a new area's shaders compiling, a slow CPU
+    // - which by frame time alone took it down to 0.6 at each new area (issue #3). A GPU time above the frame time
+    // isn't one (a driver's odd timestamps): the frame time then.
+    if (avg_gpu > 1.5 * avg_dt) avg_gpu = -1;
+    bool slow = avg_gpu >= 0 ? avg_gpu > 14.5 * budget : avg_dt > 17.4 * budget;
+    double step = (avg_gpu >= 0 ? avg_gpu > 20 * budget : avg_dt > 22 * budget) ? 0.1 : 0.05;
 #else
     double budget = 1.0;
-#endif
     bool slow = avg_dt > 17.4 * budget || (avg_gpu >= 0 && avg_gpu > 14.5);
+    double step = avg_dt > 22 * budget ? 0.1 : 0.05;
+#endif
     if (slow) {
-        g_dyn = fmax(0.5, g_dyn - (avg_dt > 22 * budget ? 0.1 : 0.05));
+        g_dyn = fmax(0.5, g_dyn - step);
         g_dyn_good = 0;
         if (now - g_dyn_last_raise < 3.0) g_dyn_probe_wait = fmin(g_dyn_probe_wait * 2, 60.0);  // raised too eagerly
     } else if (g_dyn < 1.0) {
         g_dyn_good++;
         // with GPU timing: raise when there is clear headroom; without (Vulkan): probe upwards now and then
-        bool room = avg_gpu >= 0 ? avg_gpu < 10.5 && g_dyn_good >= 4 : now >= g_dyn_probe_at && g_dyn_good >= 2 * (int)g_dyn_probe_wait;
+        // (budget: 1 but on Android's Frame rate 30)
+        bool room = avg_gpu >= 0 ? avg_gpu < 10.5 * budget && g_dyn_good >= 4
+                                 : now >= g_dyn_probe_at && g_dyn_good >= 2 * (int)g_dyn_probe_wait;
         if (room) { g_dyn = fmin(1.0, g_dyn + 0.05); g_dyn_good = 0; g_dyn_last_raise = now; g_dyn_probe_at = now + g_dyn_probe_wait; }
     }
     g_dyn = round(g_dyn * 20) / 20;

@@ -1342,8 +1342,21 @@ void backend_present(NvnTexture *t) {
         extern bool widescreen_allowed(void);
         // render scale + placement in the window: runtime/nvn/output_scale.c (Video tab "Internal resolution");
         // no GPU timer here (-1): dynamic resolution goes by the frame time
+        double gpu_ms = -1;
+#ifdef __ANDROID__
+        {   // (Android: the GPU's busy time since the last frame, from the submissions' timestamps - exec.c
+            // gpu_busy_total, resolved a frame or two late, so per frame it jitters and dynamic resolution averages it;
+            // none until the first one resolves, or ever without timestamps). By frame time alone it took a new
+            // area's shader compiles - long frames, the GPU idle - for a GPU at its limit (issue #3: down to 0.6)
+            extern uint64_t vk_gpu_busy_ns(void);
+            static uint64_t last_busy;
+            uint64_t busy = vk_gpu_busy_ns();
+            if (busy) gpu_ms = last_busy ? (busy - last_busy) / 1e6 : -1;
+            last_busy = busy;
+        }
+#endif
         OutScale os;
-        output_scale(dw, dh, widescreen_allowed(), SDL_GetTicksNS() / 1e9, -1, &os);
+        output_scale(dw, dh, widescreen_allowed(), SDL_GetTicksNS() / 1e9, gpu_ms, &os);
 #ifdef __ANDROID__
         static int matrix_trace = -1;
         static uint64_t matrix_last;
