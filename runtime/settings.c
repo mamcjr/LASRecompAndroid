@@ -58,6 +58,29 @@ const char *const g_language_names[N_LANGUAGES] = {"Auto", "Japanese", "English"
                                                    "Italian", "Dutch", "Russian", "Korean", "Chinese (Simplified)",
                                                    "Chinese (Traditional)"};
 
+int settings_host_language(void) {
+#ifdef __ANDROID__
+    static int lang = -1;
+    if (lang < 0) {
+        static const char *const codes[] = {"es", "fr", "de", "it", "nl"};
+        const char *e = getenv("LARECOMP_HOST_LANG"), *code = e && *e ? e : NULL;
+        SDL_Locale **l = NULL;
+        if (!code) {  // (the phone's first preferred language, through SDL)
+            int n = 0;
+            l = SDL_GetPreferredLocales(&n);
+            code = l && n > 0 ? l[0]->language : NULL;
+        }
+        lang = 0;
+        for (int i = 0; i < 5 && code; i++)
+            if (!strncmp(code, codes[i], 2)) lang = i + 1;
+        SDL_free(l);
+    }
+    return lang;
+#else
+    return 0;
+#endif
+}
+
 bool settings_host_portuguese(void) {
 #ifdef __ANDROID__
     static int pt = -1;

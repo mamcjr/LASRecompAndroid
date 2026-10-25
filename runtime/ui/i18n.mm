@@ -13,11 +13,25 @@ extern "C" {
 static const char *const kPt[][2] = {
 #include "i18n_pt.inc"
 };
+static const char *const kMulti[][6] = {  // English, then es, fr, de, it, nl (settings_host_language)
+#include "i18n_multi.inc"
+};
 #endif
 
 const char *tr(const char *en) {
 #ifdef __ANDROID__
-    if (!en || !*en || !settings_host_portuguese()) return en;
+    if (!en || !*en) return en;
+    if (!settings_host_portuguese()) {  // (Spanish, French, German, Italian, Dutch: the shell's vocabulary)
+        int lang = settings_host_language();
+        if (!lang) return en;
+        static const auto *multi = [] {
+            auto *m = new std::unordered_map<std::string, const char *const *>();
+            for (const auto &e : kMulti) m->emplace(e[0], e);
+            return m;
+        }();
+        auto it = multi->find(en);
+        return it == multi->end() || !*it->second[lang] ? en : it->second[lang];
+    }
     static const auto *pt = [] {  // (built once, thread-safe: the start screen's callbacks run on Java's threads)
         auto *m = new std::unordered_map<std::string, const char *>();
         for (const auto &e : kPt) m->emplace(e[0], e[1]);

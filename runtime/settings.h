@@ -99,3 +99,5 @@ const char *settings_language(void);
 const char *settings_language_name(void);
 // Android: the phone's language is Portuguese (the menus' own text: ui/i18n.mm). LARECOMP_HOST_LANG=pt|en (tests)
 bool settings_host_portuguese(void);
+// (Android) the phone's language among the menus' others: 0 none, 1 Spanish, 2 French, 3 German, 4 Italian, 5 Dutch
+int settings_host_language(void);
