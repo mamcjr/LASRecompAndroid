@@ -495,6 +495,14 @@ static void tab_display(void) {
     }
     opt_toggle("Touch controls", &g_settings.touch_controls, false,
                "On-screen buttons and stick while no controller is connected. The back button opens this menu.");
+    {   // (vulkan/device.c bars_backdrop; from LASRecomp-Android-Plus)
+        static const char *barn[] = {"Blurred picture", "Black"};
+        int v = g_settings.black_bars ? 1 : 0;
+        if (opt_choice("Side bars", &v, barn, 2, 0,
+                       "What fills the screen around a picture narrower (or taller) than it - movies, menus, the file "
+                       "select, Original 16:9: the picture's own edges, blurred and dimmed, or plain black."))
+            g_settings.black_bars = v != 0;
+    }
     {
         static const char *fr[] = {"Auto (30 / 60)", "30 fps", "60 fps"};
 #ifdef __ANDROID__

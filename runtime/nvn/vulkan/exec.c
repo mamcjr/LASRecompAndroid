@@ -29,6 +29,11 @@ static uint64_t stat_upload_bytes;
 static int prof = -1;
 static uint64_t prof_exec, prof_draw, prof_sets, prof_vtx, prof_submit, prof_pre, prof_key, prof_dyn, prof_tex, prof_up, prof_gpu;
 static VkQueryPool prof_qp;
+#ifdef __ANDROID__
+extern bool g_box_drawn, g_full_drawn;  // (the 16:9 UI box draws: below, at vk_present_backdrop)
+extern void *g_box_rt;
+extern float g_box_frac[4];
+#endif
 static uint64_t cum_exec, cum_wait, cum_draws, cum_submits;  // (profiling) never reset: hitch log
 #ifdef __ANDROID__
 uint64_t vk_cum_wait_ns(void) { return cum_wait; }  // (the performance overlay: time spent waiting on the GPU)
@@ -4826,6 +4831,9 @@ static void draw_(CmdRec *r, bool indexed) {
         }
         bool composite = reads_scene || fade_fill || (fullscreen_fill && wide_frame == renderer_present_count());
         if (!composite) wide_frame = ~0ull;
+#ifdef __ANDROID__
+        if (composite) g_full_drawn = true;
+#endif
         if (!composite) {
             int pw, ph;
             pass_size(&pw, &ph);
@@ -4833,6 +4841,14 @@ static void draw_(CmdRec *r, bool indexed) {
             vp_sx = vp_sy = u;
             vp_ox = (pw - st.rt.color[0]->width * u) * 0.5f;
             vp_oy = (ph - st.rt.color[0]->height * u) * 0.5f;
+#ifdef __ANDROID__
+            if (pw > 0 && ph > 0) {  // (the box, as fractions of the target: device.c bars_backdrop)
+                g_box_drawn = true;
+                g_box_rt = st.rt.color[0]->backend;
+                g_box_frac[0] = vp_ox / pw, g_box_frac[1] = (vp_ox + st.rt.color[0]->width * u) / pw;
+                g_box_frac[2] = vp_oy / ph, g_box_frac[3] = (vp_oy + st.rt.color[0]->height * u) / ph;
+            }
+#endif
         }
     }
     {   // camera-attached effects sized for 16:9 are widened with the view (runtime/hle/widescreen.c)
@@ -5516,6 +5532,35 @@ static VkImageView post_process(VkCommandBuffer cb, TexBackend *b, double ow_d, 
 // Inside the window image's rendering (device.c vk_frame_begin): the game image into (vx, vy, vw, vh).
 #ifdef __ANDROID__
 static VkImageView g_present_src;  // the picture the last present drew from (post-processed): framegen.c samples it
+
+// The game's 16:9 UI box in a window of another shape: its draws go into the box of the window-shaped target, and a
+// frame with nothing else (menus, the file select, movies: no scene composited over the whole target) leaves the rest
+// of the target as it was - another frame's picture, a different one in each buffer: the bars flickered. Then the
+// present covers them (device.c bars_backdrop). Render thread. From LASRecomp-Android-Plus (MIT).
+bool g_box_drawn, g_full_drawn;  // such draws since the last present (device.c resets them; render thread, in order)
+void *g_box_rt;  // (the target they went into)
+float g_box_frac[4];  // the box: x0, x1, y0, y1 as fractions of the target
+
+// The bars' backdrop: the picture last presented (vk_present_draw), uv rect uvr sampled blurred and dimmed (light) into
+// the window rect (x, y, w, h)
+void vk_present_backdrop(VkCommandBuffer cb, float x, float y, float w, float h, const float uvr[4], bool flip, float light) {
+    if (!g_present_src || w < 1 || h < 1) return;
+    VkPipeline p = present_pipeline(g_vk.sc_format);
+    VkDescriptorSet ds = vk_alloc_set(present_set_layout);
+    VkDescriptorImageInfo ii = {vk_default_sampler(true), g_present_src, VK_IMAGE_LAYOUT_GENERAL};
+    VkWriteDescriptorSet wr = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds, .dstBinding = 0, .descriptorCount = 1,
+                               .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &ii};
+    vkUpdateDescriptorSets(g_vk.dev, 1, &wr, 0, NULL);
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, present_layout, 0, 1, &ds, 0, NULL);
+    VkViewport vp = {x, y, w, h, 0, 1};
+    vkCmdSetViewport(cb, 0, 1, &vp);
+    float pv[8] = {flip ? 1.0f : 0.0f, 0, light, 0, uvr[0], uvr[1], uvr[2], uvr[3]};
+    vkCmdPushConstants(cb, present_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, 32, pv);
+    vkCmdDraw(cb, 3, 1, 0, 0);
+    VkViewport full = {0, 0, (float)g_vk.sc_extent.width, (float)g_vk.sc_extent.height, 0, 1};
+    vkCmdSetViewport(cb, 0, 1, &full);
+}
 VkImageView vk_last_present_src(void) { return g_present_src; }
 #endif
 void vk_present_draw(VkCommandBuffer cb, TexBackend *b, float vx, float vy, float vw, float vh, const float pv[8]) {

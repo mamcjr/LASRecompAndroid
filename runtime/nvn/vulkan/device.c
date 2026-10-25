@@ -1181,6 +1181,66 @@ void vk_save_png(const char *path, const uint8_t *rgba, uint32_t w, uint32_t h) 
 // ================================================================== game presentation (metal.m backend_present)
 // Draws the game's image into the window with the widescreen crop, then the overlay menu.
 extern void vk_present_draw(VkCommandBuffer cb, TexBackend *b, float vx, float vy, float vw, float vh, const float pv[8]);
+#ifdef __ANDROID__
+// The window around the picture (a 16:9 picture - movies, menus, the file select, Authentic 16:9 - in a wider or
+// taller window) filled with the picture's own edges, blurred and dimmed, instead of black (Video > Side bars); and a
+// frame of only the game's 16:9 UI box (exec.c g_box_drawn) gets the box's edges over the rest of its target, which
+// held another frame's picture (the bars flickered). The picture was drawn into (vx, vy, vw, vh) from the uv crop of
+// b; again: the same frame drawn a second time (an in-between one). From LASRecomp-Android-Plus (MIT).
+static void bars_backdrop(VkCommandBuffer cb, TexBackend *b, double vx, double vy, double vw, double vh, const float crop[4],
+                          bool flip, bool again) {
+    extern bool g_box_drawn, g_full_drawn;
+    extern void *g_box_rt;
+    extern float g_box_frac[4];
+    extern void vk_present_backdrop(VkCommandBuffer cb, float x, float y, float w, float h, const float uvr[4], bool flip,
+                                    float light);
+    static int on = -1;  // LARECOMP_BARS=0: the bars as the target has them
+    if (on < 0) on = !getenv("LARECOMP_BARS") || atoi(getenv("LARECOMP_BARS"));
+    static bool need;  // (this present's real frame: kept for its in-between frames)
+    if (!again) need = g_box_drawn && !g_full_drawn && g_box_rt == (void *)b, g_box_drawn = g_full_drawn = false;
+    if (!on || g_settings.black_bars || crop[2] <= 0 || crop[3] <= 0) return;
+    {
+        double W = g_vk.sc_extent.width, H = g_vk.sc_extent.height, cw = crop[2] * 0.3, ch = crop[3] * 0.3;
+        if (vx >= 1) {
+            float uv[4] = {crop[0], crop[1], (float)cw, crop[3]};
+            vk_present_backdrop(cb, 0, (float)vy, (float)vx, (float)vh, uv, flip, 0.42f);
+        }
+        if (W - vx - vw >= 1) {
+            float uv[4] = {(float)(crop[0] + crop[2] - cw), crop[1], (float)cw, crop[3]};
+            vk_present_backdrop(cb, (float)(vx + vw), (float)vy, (float)(W - vx - vw), (float)vh, uv, flip, 0.42f);
+        }
+        if (vy >= 1) {
+            float uv[4] = {crop[0], flip ? (float)(crop[1] + crop[3] - ch) : crop[1], crop[2], (float)ch};
+            vk_present_backdrop(cb, 0, 0, (float)W, (float)vy, uv, flip, 0.42f);
+        }
+        if (H - vy - vh >= 1) {
+            float uv[4] = {crop[0], flip ? crop[1] : (float)(crop[1] + crop[3] - ch), crop[2], (float)ch};
+            vk_present_backdrop(cb, 0, (float)(vy + vh), (float)W, (float)(H - vy - vh), uv, flip, 0.42f);
+        }
+    }
+    if (!need) return;
+    const float *f = g_box_frac;
+    double x0 = vx + (f[0] - crop[0]) / crop[2] * vw, x1 = vx + (f[1] - crop[0]) / crop[2] * vw;
+    double y0 = vy + (f[2] - crop[1]) / crop[3] * vh, y1 = vy + (f[3] - crop[1]) / crop[3] * vh;
+    float bw = f[1] - f[0], bh = f[3] - f[2], light = 0.42f;
+    if (x0 - vx >= 1) {  // left, from the box's left third; right, from its right third
+        float uv[4] = {f[0], f[2], bw * 0.3f, bh};
+        vk_present_backdrop(cb, (float)vx, (float)vy, (float)(x0 - vx), (float)vh, uv, flip, light);
+    }
+    if (vx + vw - x1 >= 1) {
+        float uv[4] = {f[1] - bw * 0.3f, f[2], bw * 0.3f, bh};
+        vk_present_backdrop(cb, (float)x1, (float)vy, (float)(vx + vw - x1), (float)vh, uv, flip, light);
+    }
+    if (y0 - vy >= 1) {  // (a taller window: above and below)
+        float uv[4] = {f[0], flip ? f[3] - bh * 0.3f : f[2], bw, bh * 0.3f};
+        vk_present_backdrop(cb, (float)x0, (float)vy, (float)(x1 - x0), (float)(y0 - vy), uv, flip, light);
+    }
+    if (vy + vh - y1 >= 1) {
+        float uv[4] = {f[0], flip ? f[2] : f[3] - bh * 0.3f, bw, bh * 0.3f};
+        vk_present_backdrop(cb, (float)x0, (float)y1, (float)(x1 - x0), (float)(vy + vh - y1), uv, flip, light);
+    }
+}
+#endif
 void renderer_submit(void);
 void renderer_set_scale(float sx, float sy);
 uint64_t renderer_present_count(void);
@@ -1298,6 +1358,9 @@ void backend_present(NvnTexture *t) {
         float pv[8] = {renderer_origin_lower_left() ? 1.0f : 0.0f, 0, 0, 0, crop[0], crop[1], crop[2], crop[3]};
         memcpy(g_shot_crop, crop, sizeof crop);
         vk_present_draw(cb, b, (float)vx, (float)vy, (float)vw, (float)vh, pv);
+#ifdef __ANDROID__
+        bars_backdrop(cb, b, vx, vy, vw, vh, crop, pv[0] > 0.5f, false);
+#endif
         static long menu_at = -1;
         if (menu_at < 0) menu_at = getenv("LARECOMP_MENU_AT") ? atol(getenv("LARECOMP_MENU_AT")) : 0;
         if (menu_at && (long)total_frames + 1 == menu_at) { extern void menu_test_open(void); menu_test_open(); }
@@ -1324,6 +1387,7 @@ void backend_present(NvnTexture *t) {
             float rect[4] = {(float)vx, (float)vy, (float)vw, (float)vh};
             fg_draw(vk_cmd(), g_vk.sc_format, g_vk.sc_extent.width, g_vk.sc_extent.height, b, rect, crop, pv[0] > 0.5f,
                     (float)k / (n + 1));
+            bars_backdrop(vk_cmd(), b, vx, vy, vw, vh, crop, pv[0] > 0.5f, true);
             extern bool fg_draws_overlays(void);  // (drawn from the presented picture: the window's overlays on top again)
             extern void menu_redraw(void *cmd);
             if (fg_draws_overlays()) menu_redraw((void *)vk_cmd());

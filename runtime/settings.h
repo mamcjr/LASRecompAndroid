@@ -55,6 +55,7 @@ typedef struct {
     float touch_scale, touch_opacity;
     bool touch_stick_fixed;  // the touch stick stays at its place (else its base comes to the thumb)
     bool touch_context;      // only the buttons the game uses now (B, R, L, X / Y once Link has their items; no ZL / ZR)
+    bool black_bars;         // the bars around a picture narrower than the screen plain black (else its blurred edges)
 #endif
     bool dpad_move;      // the d-pad (and arrow keys) move Link like the stick
     bool move_360;       // analog movement in any direction (the game snaps the stick to 8): runtime/hle/qol.c

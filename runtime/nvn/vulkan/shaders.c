@@ -250,6 +250,41 @@ VkDescriptorSetLayout vk_set_layout(const VkBindingInfo *b, int n, uint32_t set,
 
 // ================================================================== built-in shaders
 static const char *builtin_src(const char *name, int *stage) {
+#ifdef __ANDROID__
+    // pv[0].z: 0 the picture as it is; > 0 the bars' backdrop (device.c bars_backdrop): a 7x7 box of taps spread wide
+    // over the sampled strip (soft, no detail - a narrower spread left streaks), that much light. From
+    // LASRecomp-Android-Plus (MIT).
+    if (!strcmp(name, "present.vert")) {
+        *stage = STAGE_VERTEX;
+        return "#version 450\n"
+               "layout(push_constant) uniform P { vec4 a; vec4 crop; } pc;\n"
+               "layout(location = 0) out vec2 uv;\n"
+               "layout(location = 1) out vec2 fx;\n"
+               "void main() {\n"
+               "  vec2 p = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2);\n"
+               "  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
+               "  vec2 u = vec2(p.x, pc.a.x > 0.5 ? 1.0 - p.y : p.y);\n"
+               "  uv = pc.crop.xy + u * pc.crop.zw;\n"
+               "  fx = vec2(pc.a.z, length(pc.crop.zw));\n"
+               "}\n";
+    }
+    if (!strcmp(name, "present.frag")) {
+        *stage = STAGE_FRAGMENT;
+        return "#version 450\n"
+               "layout(set = 0, binding = 0) uniform sampler2D t;\n"
+               "layout(location = 0) in vec2 uv;\n"
+               "layout(location = 1) in vec2 fx;\n"
+               "layout(location = 0) out vec4 o;\n"
+               "void main() {\n"
+               "  if (fx.x <= 0.0) { o = vec4(texture(t, uv).rgb, 1.0); return; }\n"
+               "  vec3 c = vec3(0.0);\n"
+               "  float r = 0.16 * fx.y;\n"
+               "  for (int j = -3; j <= 3; j++)\n"
+               "    for (int i = -3; i <= 3; i++) c += textureLod(t, uv + vec2(i, j) * (r / 3.0), 0.0).rgb;\n"
+               "  o = vec4(c / 49.0 * fx.x, 1.0);\n"
+               "}\n";
+    }
+#endif
     if (!strcmp(name, "present.vert")) {
         *stage = STAGE_VERTEX;
         // pv[0].x: flip (lower-left origin), pv[1]: uv crop (origin, size). Fullscreen triangle; Vulkan NDC y points down.
