@@ -362,7 +362,12 @@ For development, the game code can still be built on the PC and pushed: `bash an
 - **[LASRecomp-Android-Plus](https://github.com/Nycolazs/LASRecomp-Android-Plus)** by Nycolazs (MIT): the Vulkan 1.1 /
   1.2 path with extensions for drivers below 1.3 (`runtime/nvn/vulkan/device.c`) follows its approach, and its list
   of hot game functions from play profiles (`tools/hot_functions.txt`) lets setup compile the rest faster; the frame
-  generation by reprojection (`runtime/nvn/vulkan/framegen.c`) is adapted from its own.
+  generation by reprojection (`runtime/nvn/vulkan/framegen.c`) is adapted from its own. With its author's agreement,
+  more of it was merged into this project: the driver error dialog, the controller choice, safe settings writes, the
+  keep-alive service, the fixed stick and the context-aware touch buttons, face buttons by label, 1.25x / 1.5x,
+  the blurred side bars, Turnip's compressed render targets (UBWC), the small glow levels at their own size, lazy
+  colour copies, no heap import on phones, the build's file order, and the Spanish, French, German, Italian and Dutch
+  menu strings (which come from [deedywu/LASRecomp](https://github.com/deedywu/LASRecomp), MIT).
 - [SDL 3](https://libsdl.org) (zlib): window, input, audio and the Android activity.
 - [libadrenotools](https://github.com/bylaws/libadrenotools) by bylaws (BSD 2-Clause): loads a custom Vulkan
   driver.

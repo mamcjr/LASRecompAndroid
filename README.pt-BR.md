@@ -369,7 +369,13 @@ depois `bash android/push_game.sh <pasta com exefs/ e romfs/>`.
   Vulkan 1.1 / 1.2 com extensões para drivers abaixo do 1.3 (`runtime/nvn/vulkan/device.c`) segue a abordagem dele, e
   a lista de funções quentes do jogo, tirada de perfis de jogo (`tools/hot_functions.txt`), permite à configuração
   compilar o resto mais rápido; a geração de quadros por reprojeção (`runtime/nvn/vulkan/framegen.c`) é adaptada
-  da dele.
+  da dele. Com o acordo do autor, mais partes dele foram incorporadas a este projeto: o diálogo de erro do driver, a
+  escolha do controle, a gravação segura das configurações, o serviço que mantém o jogo vivo, o analógico fixo e os
+  botões de toque conforme o contexto, os botões de ação pelas letras, 1,25x / 1,5x, as barras laterais desfocadas,
+  os alvos de renderização comprimidos do Turnip (UBWC), os níveis pequenos de brilho no próprio tamanho, as cópias
+  de cor sob demanda, a importação do heap desligada nos celulares, a ordem dos arquivos na compilação e os textos
+  dos menus em espanhol, francês, alemão, italiano e holandês (que vêm do
+  [deedywu/LASRecomp](https://github.com/deedywu/LASRecomp), MIT).
 - [SDL 3](https://libsdl.org) (zlib): janela, entrada, áudio e a activity do Android.
 - [libadrenotools](https://github.com/bylaws/libadrenotools), de bylaws (BSD 2-Clause): carrega um driver Vulkan
   personalizado.
