@@ -7,12 +7,17 @@
 // The layout is the player's (the Controls tab, ui/controls_ui.mm): each control's place (g_settings.touch_pos, a
 // share of the screen; negative: the default), their size and opacity. Editing it (touch_edit_begin) closes the menu
 // and lets the controls be dragged; a bar on the screen saves, resets or cancels.
+// Two looks: the island one (cream and green), or (g_settings.touch_icons, from LASRecomp-Android-Plus, MIT) blue
+// bubbles with the game's own item icons on them - the sword on B, the shield on R, the Pegasus Boots on L, the
+// equipped items on X / Y, a white badge naming the button - and a compass-rose stick.
 #ifdef __ANDROID__
 #include <SDL3/SDL.h>
 #include <float.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "imgui.h"
@@ -25,6 +30,8 @@ int game_in_play(void);          // runtime/hle (the game past its title and fil
 int inventory_items_cursor(void);  // ui/inventory_overlay.mm: -1 unless the pause menu's Items page is up
 void menu_test_open(void);       // ui/menu.mm: opens the in-game menu
 void menu_request_close(void);   // ui/menu.mm
+int texpatch_ui_rgba_list(const char *const *names, int n, uint8_t **out, int *w, int *h);  // runtime/nvn/texpatch.c
+uint64_t vk_imgui_texture_rgba(const void *rgba, int w, int h);  // runtime/nvn/vulkan/imgui_glue.cpp
 _Atomic uint64_t g_touch_buttons;  // (runtime/hle/input.c) Switch button bits held on the screen
 _Atomic int32_t g_touch_lx, g_touch_ly;  // left stick, -32767..32767, y up
 }
@@ -100,6 +107,7 @@ static bool ctl_wanted(int k) {
 static int layout(Ctl *c) {  // in pixels of the window (landscape)
     float u = disp_h / 100.0f, z = size_scale();
     float br = 7.5f * u * z, sw = 15 * u * z, sh = 7 * u * z, sr = 4.5f * u * z;
+    bool bubbles = g_settings.touch_icons;  // (the bubbles: round shoulders)
     static const struct { int k, bit; const char *label; int shape; } T[] = {
         {K_A, TB_A, "A", 0}, {K_B, TB_B, "B", 0}, {K_X, TB_X, "X", 0}, {K_Y, TB_Y, "Y", 0},
         {K_L, TB_L, "L", 1}, {K_ZL, TB_ZL, "ZL", 1}, {K_R, TB_R, "R", 1}, {K_ZR, TB_ZR, "ZR", 1},
@@ -109,6 +117,11 @@ static int layout(Ctl *c) {  // in pixels of the window (landscape)
         if (!ctl_wanted(t.k)) continue;
         float x, y;
         pos_of(t.k, &x, &y);
+        if (bubbles && t.shape != 2) {
+            float r = t.shape == 1 ? (t.k == K_ZL || t.k == K_ZR ? 5.2f : 6.4f) * u * z : br;
+            c[n++] = (Ctl){x, y, r, t.bit, t.label, false, 0, 0, t.k};
+            continue;
+        }
         c[n++] = t.shape == 1 ? (Ctl){x, y, 0, t.bit, t.label, true, sw, sh, t.k}
                               : (Ctl){x, y, t.shape == 2 ? sr : br, t.bit, t.label, false, 0, 0, t.k};
     }
@@ -297,6 +310,142 @@ extern "C" bool touch_controls_event(const SDL_Event *e) {
     return true;
 }
 
+// ---- the bubbles' look (g_settings.touch_icons; from LASRecomp-Android-Plus, MIT)
+// The item icons by the save's slot numbers (0 the sword, 1 the shield ... 11 the Pegasus Boots, 13-15 the bottles): the
+// game's own UI textures, read from the player's Game.arc (75 MB) once on a thread of their own the first time they're
+// wanted, then uploaded on the render thread (nothing of the game ships)
+static const char *const k_icon_names[14] = {
+    "EqSword_01^q", "EqShield_00^q", "ItemBomb_00^w", "ItemBow_00^w", "ItemFookShot_00^w", "ItemBoomerang_00^w",
+    "ItemMagicRod_00^w", "ItemShovel_00^w", "ItemMagicPowder_00^w", "ItemRocsFeather_00^w", "EqPowerBracelet_00^q",
+    "EqPegasusBoots_00^q", "ItemOcarina_03^w", "ItemBottle_00^w"};
+static uint8_t *icon_px[14];
+static int icon_w[14], icon_h[14];
+static uint64_t icon_tex[14];
+static atomic_int icons_state;  // 0 not asked, 1 reading, 2 read, 3 uploaded
+
+static void *icons_read(void *) {
+    int n = texpatch_ui_rgba_list(k_icon_names, 14, icon_px, icon_w, icon_h);
+    fprintf(stderr, "[touch] %d of 14 item icons from the game files\n", n);
+    icons_state = 2;
+    return NULL;
+}
+
+static uint64_t slot_icon(int slot) {  // (render thread) 0: none, or not read yet
+    if (slot < 0 || slot > 15) return 0;
+    if (icons_state == 0) {
+        icons_state = 1;
+        pthread_t t;
+        if (pthread_create(&t, NULL, icons_read, NULL) == 0) pthread_detach(t);
+        else icons_state = 3;
+        return 0;
+    }
+    if (icons_state == 2) {
+        for (int i = 0; i < 14; i++)
+            if (icon_px[i]) {
+                icon_tex[i] = vk_imgui_texture_rgba(icon_px[i], icon_w[i], icon_h[i]);
+                free(icon_px[i]);
+                icon_px[i] = NULL;
+            }
+        icons_state = 3;
+    }
+    return icons_state == 3 ? icon_tex[slot < 13 ? slot : 13] : 0;
+}
+
+// what's on the control in play: B / R / L Link's sword / shield / boots, X / Y the items on them (as ctl_wanted reads)
+static uint64_t ctl_icon(int k) {
+    if (!game_in_play()) return 0;
+    bool items_page = inventory_items_cursor() >= 0;
+    uint32_t items = *(const uint32_t *)(uintptr_t)(GA(LIVE_SAVE) + 0x5568);
+    switch (k) {
+    case K_B: return !items_page && (items & 1) ? slot_icon(0) : 0;
+    case K_R: return !items_page && (items & 2) ? slot_icon(1) : 0;
+    case K_L: return !items_page && (items >> 11 & 1) ? slot_icon(11) : 0;
+    case K_X: case K_Y: {
+        int slot = *(const uint8_t *)(uintptr_t)(GA(LIVE_SAVE) + (k == K_X ? 0x5563 : 0x5562));
+        return slot > 1 && slot <= 15 ? slot_icon(slot) : 0;
+    }
+    default: return 0;
+    }
+}
+
+static ImU32 col(int r, int g, int b, float a) { return IM_COL32(r, g, b, (int)fminf(fmaxf(a * 255, 0), 255)); }
+
+// a glossy bubble: a translucent body, a lighter top, a bright rim (A teal)
+static void bubble(ImDrawList *dl, ImVec2 c, float r, bool on, bool teal, float a, float th) {
+    a = fmaxf(a, 0.55f);  // (the opacity setting fades them, never to washed out)
+    int br = teal ? 30 : 38, bg = teal ? 170 : 128, bb = teal ? 150 : 200;
+    if (on) br += 70, bg += 60, bb += 40;
+    dl->AddCircleFilled(ImVec2(c.x, c.y + r * 0.06f), r * 1.02f, col(5, 30, 60, 0.35f * a), 48);       // (shadow)
+    dl->AddCircleFilled(c, r, col(br / 2, bg / 2, bb / 2, 0.80f * a), 48);                            // dark rim
+    dl->AddCircleFilled(c, r * 0.90f, col(br, bg, bb, (on ? 0.95f : 0.72f) * a), 48);                  // body
+    dl->AddCircleFilled(ImVec2(c.x, c.y + r * 0.22f), r * 0.62f, col(br + 30, bg + 40, bb + 30, 0.35f * a), 40);  // glow
+    dl->AddCircleFilled(ImVec2(c.x - r * 0.30f, c.y - r * 0.40f), r * 0.24f, col(255, 255, 255, 0.28f * a), 24);  // gloss
+    dl->AddCircle(c, r * 0.90f, col(185, 232, 255, 0.95f * a), 48, 2.8f * th);
+}
+
+// the Switch button's letter on a small white badge, upper left of the bubble
+static void badge(ImDrawList *dl, ImFont *font, ImVec2 c, float r, const char *lab, float a) {
+    float br = fmaxf(r * 0.34f, 11.0f);
+    ImVec2 p(c.x - r * 0.70f, c.y - r * 0.70f);
+    dl->AddCircleFilled(ImVec2(p.x + 1.5f, p.y + 2.0f), br, col(0, 0, 0, 0.30f * a), 24);
+    dl->AddCircleFilled(p, br, col(250, 252, 255, 0.95f * fmaxf(a, 0.7f)), 24);
+    float fs = br * (strlen(lab) > 1 ? 1.05f : 1.45f);
+    ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0, lab);
+    dl->AddText(font, fs, ImVec2(p.x - ts.x * 0.5f, p.y - ts.y * 0.5f), col(30, 60, 105, 1), lab);
+    dl->AddText(font, fs, ImVec2(p.x - ts.x * 0.5f + fs * 0.05f, p.y - ts.y * 0.5f), col(30, 60, 105, 1), lab);
+}
+
+// the stick: a compass rose under a glossy knob
+static void compass(ImDrawList *dl, ImVec2 c, float r, ImVec2 knob, float a, float th) {
+    a = fmaxf(a, 0.55f);
+    dl->AddCircleFilled(c, r, col(30, 100, 165, 0.45f * a), 64);
+    dl->AddCircle(c, r, col(190, 235, 255, 0.80f * a), 64, 2.6f * th);
+    dl->AddCircle(c, r * 0.80f, col(190, 235, 255, 0.35f * a), 64, 1.6f * th);
+    for (int k = 0; k < 8; k++) {  // eight points: the four long ones bright
+        float ang = k * 3.14159265f / 4, len = k % 2 ? 0.62f : 0.92f, wd = k % 2 ? 0.10f : 0.14f;
+        ImVec2 tip(c.x + cosf(ang) * r * len, c.y + sinf(ang) * r * len);
+        ImVec2 s1(c.x + cosf(ang + 1.5708f) * r * wd, c.y + sinf(ang + 1.5708f) * r * wd);
+        ImVec2 s2(c.x - cosf(ang + 1.5708f) * r * wd, c.y - sinf(ang + 1.5708f) * r * wd);
+        dl->AddTriangleFilled(tip, s1, s2, col(205, 240, 255, (k % 2 ? 0.30f : 0.45f) * a));
+    }
+    float kr = r * 0.42f;
+    dl->AddCircleFilled(ImVec2(knob.x, knob.y + kr * 0.12f), kr, col(0, 0, 0, 0.25f * a), 40);
+    dl->AddCircleFilled(knob, kr, col(70, 165, 225, 0.85f * a), 40);
+    dl->AddCircleFilled(ImVec2(knob.x, knob.y - kr * 0.32f), kr * 0.6f, col(255, 255, 255, 0.14f * a), 32);
+    dl->AddCircle(knob, kr, col(220, 245, 255, 0.95f * a), 40, 2.4f * th);
+    float d = kr * 0.32f;  // a small diamond on it
+    dl->AddQuadFilled(ImVec2(knob.x, knob.y - d), ImVec2(knob.x + d * 0.7f, knob.y), ImVec2(knob.x, knob.y + d),
+                      ImVec2(knob.x - d * 0.7f, knob.y), col(230, 248, 255, 0.85f * a));
+}
+
+static void bubble_ctl(ImDrawList *dl, ImFont *font, const Ctl &c, bool on, float a, float th) {
+    ImVec2 p(c.x, c.y);
+    float r = on ? c.r * 0.95f : c.r;
+    bubble(dl, p, r, on, c.k == K_A, a, th);
+    if (c.bit == C_MENU) {  // three bars
+        float u = r * 0.42f;
+        for (int k = -1; k <= 1; k++)
+            dl->AddLine(ImVec2(c.x - u, c.y + k * u * 0.6f), ImVec2(c.x + u, c.y + k * u * 0.6f), col(255, 255, 255, fmaxf(a, 0.8f)), 3 * th);
+        return;
+    }
+    uint64_t tex = ctl_icon(c.k);
+    if (tex) {
+        float s = r * 1.5f;
+        dl->AddImage((ImTextureID)tex, ImVec2(c.x - s * 0.5f, c.y - s * 0.5f), ImVec2(c.x + s * 0.5f, c.y + s * 0.5f),
+                     ImVec2(0, 0), ImVec2(1, 1), col(255, 255, 255, fmaxf(a, 0.75f)));
+        badge(dl, font, p, r, c.label, a);
+        return;
+    }
+    bool pm = c.label[0] == '+' || c.label[0] == '-';  // (no icon: the letter in the middle, heavier)
+    float fs = r * (pm ? 1.4f : c.k == K_A ? 1.15f : 0.95f);
+    ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0, c.label);
+    ImVec2 q(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f);
+    ImU32 white = col(255, 255, 255, fmaxf(a, 0.85f));
+    dl->AddText(font, fs, ImVec2(q.x + 2, q.y + 2), col(0, 0, 0, 0.55f), c.label);
+    dl->AddText(font, fs, q, white, c.label);
+    dl->AddText(font, fs, ImVec2(q.x + fs * 0.04f, q.y), white, c.label);
+}
+
 // Drawn with the in-game overlay (ui/menu.mm menu_render), between ImGui's NewFrame and Render.
 extern "C" void touch_controls_draw(ImVec2 display, ImFont *font) {
     disp_w = display.x, disp_h = display.y;
@@ -326,9 +475,11 @@ extern "C" void touch_controls_draw(ImVec2 display, ImFont *font) {
         dl->AddText(font, fs, ImVec2(tp.x + 0.2f * u, tp.y + 0.2f * u), IM_COL32(31, 47, 32, 230), tip);
         dl->AddText(font, fs, tp, IM_COL32(255, 247, 219, 255), tip);
     }
+    float th = disp_h / 1080.0f;  // (the bubbles' line widths)
     for (int i = 0; i < n; i++) {
         bool bar = c[i].bit >= C_DONE && c[i].bit <= C_CANCEL;
         bool on = c[i].bit >= 0 && c[i].bit < 16 && (held >> c[i].bit & 1);
+        if (g_settings.touch_icons && !bar) { bubble_ctl(dl, font, c[i], on, alpha, th); continue; }
         float fs = (c[i].rect ? c[i].h * (bar ? 0.45f : 0.6f) : c[i].r * 0.9f);
         ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0, c[i].label);
         ImU32 f = bar ? IM_COL32(55, 86, 53, 240) : on ? fill_on : fill;
@@ -365,6 +516,7 @@ extern "C" void touch_controls_draw(ImVec2 display, ImFont *font) {
     float cx = on ? stick_cx : rx, cy = on ? stick_cy : ry, kx = on ? stick_kx : cx, ky = on ? stick_ky : cy;
     pthread_mutex_unlock(&t_lock);
     float R = stick_radius();
+    if (g_settings.touch_icons) { compass(dl, ImVec2(cx, cy), R, ImVec2(kx, ky), alpha, th); return; }
     dl->AddCircleFilled(ImVec2(cx, cy), R, fill, 48);
     dl->AddCircle(ImVec2(cx, cy), R, line, 48, 0.3f * u);
     dl->AddCircle(ImVec2(cx, cy), R - 0.55f * u, trim, 48, 0.15f * u);

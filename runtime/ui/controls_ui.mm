@@ -91,6 +91,13 @@ static void touch_layout_draw(void) {
                                  "an item is on them, and ZL / ZR (the game doesn't use them) only if you moved them. The "
                                  "item screen and the title show them all."));
     ImGui::PopTextWrapPos();
+    // (from LASRecomp-Android-Plus, MIT: ui/touch_controls.mm bubble_ctl)
+    if (ImGui::Checkbox(tr("Buttons with the item icons"), &g_settings.touch_icons)) settings_save();
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextDisabled("%s", tr("Blue bubbles with the game's own icons: the sword on B, the shield on R, the Pegasus Boots "
+                                 "on L and the equipped items on X and Y, with the button's letter on a badge. Off: the "
+                                 "island look."));
+    ImGui::PopTextWrapPos();
 }
 #endif
 

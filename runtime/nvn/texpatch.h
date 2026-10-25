@@ -31,6 +31,12 @@ uint32_t texpatch_generation(void);
 // (rows of 4x4 blocks, `row` bytes apart; RGBA8 rows for uncompressed). No-op for the Nintendo look. Only the
 // tunic (Cosmetics tab colour) changes levels other than 0.
 void texpatch_apply(int id, uint32_t lv, uint8_t *blocks, uint32_t w, uint32_t h, uint32_t row);
+#ifdef __ANDROID__
+// The game's own UI textures by name ("ItemBomb_00^w"...), decoded to RGBA8 (w[i] x h[i]) from the user's UI archives,
+// each archive read once: out[i] NULL when not there; the caller frees them. Returns how many were found (the touch
+// controls' item icons, ui/touch_controls.mm).
+int texpatch_ui_rgba_list(const char *const *names, int n, uint8_t **out, int *w, int *h);
+#endif
 // Known texture `id` is a heart of the HUD / file select (full, empty, frame, life-up flash): 1, else 0.
 int texpatch_heart_kind(int id);
 // The per-draw tint (renderer `ltint`) for a heart draw (`kind` = texpatch_heart_kind) in the Cosmetics tab's heart colour;
