@@ -159,6 +159,24 @@ static std::atomic<bool> g_last_pad{false};
 static char g_kbd_text[96];
 static int g_kbd_max = 8;
 static bool capturing() { return g_open.load() || g_kbd.load() == 1; }
+// The game's name limit counts characters as the console's keyboard does, in UTF-16 units (a character past U+FFFF
+// takes two); the text is UTF-8. Cuts s after max_units of them, only between characters (a character left incomplete
+// - a cut inside it, or bytes that are no character - goes too, with the rest), and returns how many units are left.
+static int kbd_cut(char *s, int max_units) {
+    int units = 0;
+    for (unsigned char *p = (unsigned char *)s; *p;) {
+        int n = *p < 0x80 ? 1 : *p >= 0xc2 && *p <= 0xdf ? 2 : *p >= 0xe0 && *p <= 0xef ? 3 : *p >= 0xf0 && *p <= 0xf4 ? 4 : 0;
+        int i = 1;
+        while (i < n && (p[i] & 0xc0) == 0x80) i++;
+        if (i == n && n > 2 && ((*p == 0xe0 && p[1] < 0xa0) || (*p == 0xed && p[1] > 0x9f) || (*p == 0xf0 && p[1] < 0x90) ||
+                                (*p == 0xf4 && p[1] > 0x8f)))
+            n = 0;  // (overlong, a surrogate or past U+10FFFF: the game's UTF-8 conversion refuses those too)
+        int u = n == 4 ? 2 : 1;
+        if (!n || i < n || units + u > max_units) { *p = 0; break; }
+        units += u, p += n;
+    }
+    return units;
+}
 // The game gets no input while this is true (runtime/hle/input.c): menu or name entry up.
 extern "C" bool menu_input_captured(void) { return capturing(); }
 
@@ -823,8 +841,8 @@ static void keyboard_draw(ImGuiIO &io, float scale) {
         ImGui::InputText("##name", g_kbd_text, (size_t)(g_kbd_max * 4 + 1 < (int)sizeof g_kbd_text ? g_kbd_max * 4 + 1 : sizeof g_kbd_text),
                          ImGuiInputTextFlags_CallbackCharFilter, name_filter);
         ImGui::PopFont();
-        if ((int)strlen(g_kbd_text) > g_kbd_max) g_kbd_text[g_kbd_max] = 0;
-        ImGui::TextDisabled("Enter  confirm      Esc  cancel      (%d / %d)", (int)strlen(g_kbd_text), g_kbd_max);
+        int units = kbd_cut(g_kbd_text, g_kbd_max);
+        ImGui::TextDisabled("Enter  confirm      Esc  cancel      (%d / %d)", units, g_kbd_max);
     } else {  // controller: on-screen keyboard (osk.mm, shared with our menus' text fields)
         int r = osk_keys(g_kbd_text, sizeof g_kbd_text, g_kbd_max, appearing, scale, g_font_big);
         if (r) g_kbd = r > 0 ? 2 : 3;  // (Start / + confirms in menu_handle_event too)
@@ -849,6 +867,7 @@ extern "C" int menu_keyboard_run(const char *initial, int max_len, char *out, in
         uint64_t dt = SDL_GetTicks() - t0;
         if (dt < 16) SDL_Delay((uint32_t)(16 - dt));
     }
+    kbd_cut(g_kbd_text, g_kbd_max);  // (whatever entered it: typed, on-screen keys, the test hook)
     bool ok = g_kbd.load() == 2 && g_kbd_text[0];
     if (ok) snprintf(out, cap, "%s", g_kbd_text);
     g_kbd = 0;

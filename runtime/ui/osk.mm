@@ -97,7 +97,10 @@ int osk_keys(char *text, size_t cap, int max_chars, bool appearing, float scale,
     if (max_chars <= 0 || max_chars > (int)cap - 1) max_chars = (int)cap - 1;
     int len = (int)strlen(text), r = 0;
     auto add = [&](char ch) { if (len < max_chars) text[len++] = ch, text[len] = 0; };
-    auto del = [&]() { if (len > 0) text[--len] = 0; };
+    auto del = [&]() {  // (a whole character: the text may hold UTF-8 typed before a controller took over)
+        while (len > 0 && ((unsigned char)text[len - 1] & 0xc0) == 0x80) text[--len] = 0;
+        if (len > 0) text[--len] = 0;
+    };
 
     // typed on a keyboard while it's up: straight into the text
     for (ImWchar c : io.InputQueueCharacters) if (c >= 0x20 && c < 0x7f) add((char)c);
