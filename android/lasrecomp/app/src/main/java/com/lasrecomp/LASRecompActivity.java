@@ -97,7 +97,7 @@ public class LASRecompActivity extends SDLActivity {
 
     private static final int REQ_GAME = 0x4c41, REQ_DRIVER = 0x4c42;
     private static final int REQ_SAVE_FOLDER = 0x4c43, REQ_SAVE_ZIP = 0x4c44, REQ_SAVE_EXPORT = 0x4c45, REQ_MOD = 0x4c46;
-    private static final int REQ_LOG = 0x4c47;
+    private static final int REQ_LOG = 0x4c47, REQ_DRIVER_RECOVER = 0x4c48;
     private File saveTarget;
     private boolean exportPrevious;
     private static LASRecompActivity self;
@@ -558,6 +558,15 @@ public class LASRecompActivity extends SDLActivity {
             if (f != null) new Thread(() -> importDriver(f), "driver").start();
             return;
         }
+        if (req == REQ_DRIVER_RECOVER) {
+            Uri f = result == Activity.RESULT_OK && data != null ? data.getData() : null;
+            if (f == null) showDriverError(null);
+            else new Thread(() -> {
+                if (copyDriver(f) != null) restartApp();
+                else runOnUiThread(() -> showDriverError(getString(R.string.driver_install_failed)));
+            }, "driver").start();
+            return;
+        }
         if (req == REQ_MOD) {
             Uri tree = result == Activity.RESULT_OK && data != null ? data.getData() : null;
             if (tree == null) nativeModImportDone("2|");
@@ -774,16 +783,19 @@ public class LASRecompActivity extends SDLActivity {
     // A driver package (.zip, or a bare .so) into <external files>/drivers, in place of any there (customDriver loads
     // it at the next start)
     private void importDriver(Uri f) {
+        String name = copyDriver(f);
+        nativeDriverPicked(name != null ? name : "");
+    }
+
+    // (the package's name, or null: not a .zip / .so, or it couldn't be copied)
+    private String copyDriver(Uri f) {
         String name = "driver.zip";
         try (Cursor c = getContentResolver().query(f, new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null)) {
             if (c != null && c.moveToFirst() && !c.isNull(0)) name = c.getString(0);
         } catch (Exception ignored) {
         }
         String low = name.toLowerCase();
-        if (!low.endsWith(".zip") && !low.endsWith(".so")) {
-            nativeDriverPicked("");
-            return;
-        }
+        if (!low.endsWith(".zip") && !low.endsWith(".so")) return null;
         try {
             File dir = new File(getExternalFilesDir(null), "drivers");
             deleteTree(dir);
@@ -791,11 +803,56 @@ public class LASRecompActivity extends SDLActivity {
             try (InputStream in = getContentResolver().openInputStream(f)) {
                 copy(in, new File(dir, name));
             }
-            nativeDriverPicked(name);
+            return name;
         } catch (Exception e) {
             Log.e(TAG, "driver: " + e);
-            nativeDriverPicked("");
+            return null;
         }
+    }
+
+    // ---- a graphics driver error that stops the app (runtime/platform/android.c plat_fatal_notice): the driver is
+    // loaded before the start screen, so the Settings rows that choose it can't be reached when it fails (issue #4).
+    // This dialog installs a driver package, or goes back to the system's driver, and starts the app again; else it
+    // closes. Blocks the calling (native) thread until the player closes it. From LASRecomp-Android-Plus (MIT).
+    private static final Object dlgLock = new Object();
+    private static boolean dlgDone;
+    private static String dlgText;
+
+    public static boolean driverErrorDialog(String text) {
+        LASRecompActivity a = self;
+        if (a == null) return false;
+        synchronized (dlgLock) { dlgDone = false; dlgText = text; }
+        a.runOnUiThread(() -> a.showDriverError(null));
+        synchronized (dlgLock) {
+            while (!dlgDone) {
+                try { dlgLock.wait(); } catch (InterruptedException e) { break; }
+            }
+        }
+        return true;
+    }
+
+    private void showDriverError(String extra) {
+        String msg = dlgText + (extra != null ? "\n\n" + extra : "");
+        AlertDialog.Builder b = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle(R.string.driver_error_title).setMessage(msg).setCancelable(false)
+            .setPositiveButton(R.string.driver_install, (d, w) -> {
+                Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                i.addCategory(Intent.CATEGORY_OPENABLE);
+                i.setType("*/*");
+                try {
+                    startActivityForResult(i, REQ_DRIVER_RECOVER);
+                } catch (Exception e) {
+                    Log.e(TAG, "file picker: " + e);
+                    showDriverError(getString(R.string.driver_install_failed));
+                }
+            })
+            .setNegativeButton(R.string.driver_close, (d, w) -> {
+                synchronized (dlgLock) { dlgDone = true; dlgLock.notifyAll(); }
+            });
+        File[] custom = new File(getExternalFilesDir(null), "drivers").listFiles((dir, n) -> n.endsWith(".so") || n.endsWith(".zip"));
+        if (custom != null && custom.length > 0)
+            b.setNeutralButton(R.string.driver_system, (d, w) -> { dropCustomDriver(); restartApp(); });
+        b.show();
     }
 
     // (by size and date: the game code is ~100 MB)

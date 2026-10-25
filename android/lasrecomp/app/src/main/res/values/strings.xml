@@ -6,4 +6,9 @@
     <string name="import_saves_message">This replaces all current save slots. A backup is kept and can be exported with Export previous saves.</string>
     <string name="import_saves_continue">Continue</string>
     <string name="import_saves_cancel">Cancel</string>
+    <string name="driver_error_title">Graphics driver error</string>
+    <string name="driver_install">Install a driver</string>
+    <string name="driver_system">Use the system driver</string>
+    <string name="driver_close">Close</string>
+    <string name="driver_install_failed">The driver wasn\'t installed: pick a driver package (.zip).</string>
 </resources>

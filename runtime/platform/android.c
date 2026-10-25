@@ -260,12 +260,32 @@ const char *plat_symbol(uint64_t pc, uint64_t *offset) {
     return di.dli_sname;
 }
 
+// A graphics driver the game can't run on: LASRecompActivity.driverErrorDialog offers to install another one (or go
+// back to the system's) and starts the app again - the Settings rows that choose the driver are out of reach when it
+// fails before the start screen (issue #4). From LASRecomp-Android-Plus (MIT). False: no dialog shown.
+static bool driver_error_dialog(const char *text) {
+    JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
+    jobject act = (jobject)SDL_GetAndroidActivity();
+    if (!env || !act) return false;
+    bool shown = false;
+    jclass c = (*env)->GetObjectClass(env, act);
+    jmethodID m = (*env)->GetStaticMethodID(env, c, "driverErrorDialog", "(Ljava/lang/String;)Z");
+    jstring s = (*env)->NewStringUTF(env, text);
+    if (m && s) shown = (*env)->CallStaticBooleanMethod(env, c, m, s);
+    if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionClear(env); shown = false; }
+    if (s) (*env)->DeleteLocalRef(env, s);
+    (*env)->DeleteLocalRef(env, c);
+    (*env)->DeleteLocalRef(env, act);
+    return shown;
+}
+
 void plat_fatal_notice(void) {
     fflush(stderr);
     char message[1400];
     snprintf(message, sizeof message, "LAS Recomp for Android stopped because of an error.\n\n%s\n\n"
              "Please include a screenshot of this message and your app/driver version in your bug report.\n"
              "More details: logcat, tag LASRecomp.", fatal_message[0] ? fatal_message : "The runtime encountered a fatal error.");
+    if (strcasestr(fatal_message, "vulkan") && driver_error_dialog(message)) return;  // (the driver's own errors)
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "LAS Recomp for Android", message, NULL);
 }
 

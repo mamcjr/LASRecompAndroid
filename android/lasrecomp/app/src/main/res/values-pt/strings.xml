@@ -6,4 +6,9 @@
     <string name="import_saves_message">Isto substitui todos os slots de save atuais. Um backup é guardado e pode ser exportado com Exportar saves anteriores.</string>
     <string name="import_saves_continue">Continuar</string>
     <string name="import_saves_cancel">Cancelar</string>
+    <string name="driver_error_title">Erro no driver de vídeo</string>
+    <string name="driver_install">Instalar um driver</string>
+    <string name="driver_system">Usar o driver do sistema</string>
+    <string name="driver_close">Fechar</string>
+    <string name="driver_install_failed">O driver não foi instalado: escolha um pacote de driver (.zip).</string>
 </resources>
