@@ -132,8 +132,11 @@ typedef struct TexBackend {
     int tp;              // runtime/nvn/texpatch.c: 0 not checked yet, -1 none, else known UI texture + 1
     uint32_t tp_gen;     // texpatch_generation() it was last uploaded with
     int reg;  // slot in textures.c's live list + 1 (a reboot destroys them all)
+    VkFormat fmt_twin;  // (Android) a format-listed render target (textures.c, UBWC): the one other view format allowed
+    bool fmt_listed;
 } TexBackend;
 
+VkFormat vk_view_format(NvnTexture *t, VkFormat vf);  // the format a view asking for vf gets (textures.c)
 TexBackend *vk_tex(NvnTexture *t, bool for_render);  // backend image (uploads CPU contents unless for_render)
 VkFormat vk_format(uint32_t nvn_format);
 bool vk_format_alpha_one(uint32_t nvn_format);

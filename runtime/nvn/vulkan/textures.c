@@ -349,6 +349,49 @@ void vk_collect_dead(void) {
     vk_rp_collect(done);
 }
 
+#ifdef __ANDROID__
+// Turnip compresses a mutable-format image (UBWC) only when it lists its view formats: render targets list their own
+// format and its sRGB / UNORM twin, and views in any other format fall back to the image's own (vk_view_format). From
+// LASRecomp-Android-Plus (MIT): 8% less GPU at 1x on its S20 FE. Core from Vulkan 1.2 (an older device: none).
+// LARECOMP_VK_FMTLIST=0: off.
+static VkFormat srgb_twin(VkFormat f) {  // (VK_FORMAT_UNDEFINED: none)
+    static const VkFormat P[][2] = {{VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8B8A8_SRGB},
+                                    {VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_B8G8R8A8_SRGB},
+                                    {VK_FORMAT_A8B8G8R8_UNORM_PACK32, VK_FORMAT_A8B8G8R8_SRGB_PACK32},
+                                    {VK_FORMAT_R8_UNORM, VK_FORMAT_R8_SRGB}, {VK_FORMAT_R8G8_UNORM, VK_FORMAT_R8G8_SRGB}};
+    for (size_t i = 0; i < sizeof P / sizeof *P; i++) {
+        if (P[i][0] == f) return P[i][1];
+        if (P[i][1] == f) return P[i][0];
+    }
+    return VK_FORMAT_UNDEFINED;
+}
+static bool vk_fmt_list(void) {
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("LARECOMP_VK_FMTLIST");
+        on = g_vk.api >= VK_API_VERSION_1_2 && (e ? atoi(e) != 0 : 1);
+    }
+    return on;
+}
+#endif
+
+// The format a view of t asks for (vf), as the image can give it: fallback images keep their own; (Android) a
+// format-listed one only its own or its twin (else its own, logged). Both vk_view and exec.c's pass formats use it.
+VkFormat vk_view_format(NvnTexture *t, VkFormat vf) {
+    TexBackend *b = t->backend;
+    if (!b || vk_format(t->format) != b->format) return b ? b->format : vf;
+#ifdef __ANDROID__
+    if (b->fmt_listed && vf != b->format && vf != b->fmt_twin) {
+        static int nlog;
+        if (nlog++ < 20)
+            LOG("[vk] texture %ux%u fmt %#x (vk %d) viewed as vk %d outside its format list: its own format instead\n",
+                t->width, t->height, t->format, b->format, vf);
+        return b->format;
+    }
+#endif
+    return vf;
+}
+
 static void create_image(NvnTexture *t, TexBackend *b) {
     VkFmt mf = fmt_of(t->format);
     b->sx = b->scalable ? g_rs_x : 1;
@@ -424,6 +467,17 @@ static void create_image(NvnTexture *t, TexBackend *b) {
                             .extent = {tw, th, depth}, .mipLevels = levels, .arrayLayers = layers,
                             .samples = (VkSampleCountFlagBits)samples, .tiling = VK_IMAGE_TILING_OPTIMAL, .usage = usage,
                             .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
+#ifdef __ANDROID__
+    VkFormat fl_fmts[2] = {vf, srgb_twin(vf)};
+    VkImageFormatListCreateInfo fl = {.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO,
+                                      .viewFormatCount = fl_fmts[1] ? 2 : 1, .pViewFormats = fl_fmts};
+    b->fmt_listed = false;
+    if (vk_fmt_list() && !depthfmt && (usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)) {  // (render targets: UBWC)
+        ci.pNext = &fl;
+        b->fmt_listed = true;
+        b->fmt_twin = fl_fmts[1];
+    }
+#endif
     VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
     VkResult r = vmaCreateImage(g_vk.vma, &ci, &ai, &b->image, &b->mem, NULL);
     if (r != VK_SUCCESS) {
@@ -432,6 +486,10 @@ static void create_image(NvnTexture *t, TexBackend *b) {
         ci.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
                    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
         ci.flags &= ~VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+#ifdef __ANDROID__
+        ci.pNext = NULL;
+        b->fmt_listed = false;
+#endif
         VK_CHECK(vmaCreateImage(g_vk.vma, &ci, &ai, &b->image, &b->mem, NULL));
         depthfmt = false;
     }
@@ -911,7 +969,7 @@ VkImageView vk_view(NvnTexture *t, const NvnTextureView *v, bool has_view, bool 
     VkFormat fmt = b->format;
     if (v && (v->setmask & 4) && !(b->aspect & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT))) {
         VkFormat vf = fmt_of(v->format).vf;
-        if (vk_format(t->format) == b->format) fmt = vf;  // (fallback images keep their own format)
+        if (vk_format(t->format) == b->format) fmt = vk_view_format(t, vf);  // (fallback images keep their own format)
 #ifdef __ANDROID__
         else if (b->bc_vf && is_bc(vf)) { uint32_t bpp; fmt = bc_target(vf, &bpp); }  // (decoded BC: its sRGB / UNORM view)
 #endif
