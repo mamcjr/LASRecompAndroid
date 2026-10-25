@@ -207,6 +207,11 @@ static _Atomic int pace_on = -1;
 #ifdef __ANDROID__
 // (runtime/hle/framepace.c: Auto's hold also raises the game's least interval - every frame two world steps)
 bool vk_pace_holds_30(void) { return pace_on > 0 && pace_slow; }
+// Shader jobs queued or running (run_job / run_translate: translation, programs, pipelines) and when the last one
+// ended: while they run - a new area's first seconds, up to 4 cores at them - the game's frames are long for that
+// alone, which isn't a workload 60 doesn't fit (vk_pace_frame)
+static _Atomic int shader_jobs;
+static _Atomic uint64_t shader_jobs_done_ns;
 #endif
 
 void vk_pace_frame(void) {
@@ -307,8 +312,15 @@ void vk_pace_frame(void) {
     }
 #ifdef __ANDROID__
     // (or one that missed its vsync, whatever held it: with the render thread both halves can fit and the frame still
-    // take two vsyncs - slow motion all the same)
-    int o = steps == 1 && (busy > 16.2 || p > 20000000ull);
+    // take two vsyncs - slow motion all the same) - but not while shaders compile, nor 1 s after: the CPU busy with
+    // them took Auto to 30 for 4 s at a time (issue #3, the OnePlus Pad 2; on the POCO F7 Ultra with every shader
+    // translated again, after the title, each time). The first seconds of an area that follow - the GPU at 18-20 ms a
+    // frame on its first draws, 13 after - are real: 60 there plays in slow motion (37-40 fps), so they still count.
+    // LARECOMP_PACE_COMPILES=1: as before.
+    static int count_compiles = -1;
+    if (count_compiles < 0) count_compiles = getenv("LARECOMP_PACE_COMPILES") != NULL;
+    bool compiling = !count_compiles && (shader_jobs > 0 || now - shader_jobs_done_ns < 1000000000ull);
+    int o = steps == 1 && (busy > 16.2 || p > 20000000ull) && !compiling;
     // Low-volume diagnostics: distinguish real work from a late presentation without per-frame logcat traffic.
     // Deliberately independent of ADPF and of the decision below.
     static int trace = -1;
@@ -998,6 +1010,9 @@ static void *worker(void *a) {
         pthread_mutex_unlock(&jobs_lock);
         j->fn(j->arg);
         free(j);
+#ifdef __ANDROID__
+        shader_jobs_done_ns = plat_now_ns(), shader_jobs--;  // (the pacer: vk_pace_frame)
+#endif
     }
     return NULL;
 }
@@ -1025,6 +1040,9 @@ static void *translator(void *a) {
         pthread_mutex_unlock(&tjobs_lock);
         j->fn(j->arg);
         free(j);
+#ifdef __ANDROID__
+        shader_jobs_done_ns = plat_now_ns(), shader_jobs--;
+#endif
     }
     return NULL;
 }
@@ -1033,6 +1051,9 @@ static void run_translate(void (*fn)(void *), void *arg) {
     if (sync_shaders()) { fn(arg); return; }
     static bool started;
     if (!started) { started = true; pthread_t t; pthread_create(&t, NULL, translator, NULL); }
+#ifdef __ANDROID__
+    shader_jobs++;  // (the pacer: vk_pace_frame; back down when the translator has done it)
+#endif
     Job *j = malloc(sizeof *j);
     j->fn = fn; j->arg = arg; j->next = NULL;
     pthread_mutex_lock(&tjobs_lock);
@@ -1060,6 +1081,9 @@ static void run_job(void (*fn)(void *), void *arg) {
         if (n > 16) n = 16;
         for (int i = 0; i < n; i++) { pthread_t t; pthread_create(&t, NULL, worker, NULL); }
     }
+#ifdef __ANDROID__
+    shader_jobs++;  // (the pacer: vk_pace_frame; back down when a worker has done it)
+#endif
     Job *j = malloc(sizeof *j);
     j->fn = fn; j->arg = arg; j->next = NULL;
     pthread_mutex_lock(&jobs_lock);

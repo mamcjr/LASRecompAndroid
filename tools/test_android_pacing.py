@@ -53,7 +53,8 @@ char *strncpy(char *d, const char *s, size_t n) {
     for (; i < n; i++) d[i] = 0;
     return d;
 }
-const char *game_level_name(void) { return "Field"; }  // (one scene: trials never start over here)
+static const char *level_name = "Field";  // (one scene unless a test changes it: scene())
+const char *game_level_name(void) { return level_name; }
 uint64_t plat_now_ns(void) { return clock_ns; }
 bool vk_async_on(void) { return true; }
 uint64_t vk_async_frame_work_ns(void) { return render_ns; }
@@ -72,6 +73,11 @@ int frame(int period_us, int work_us, int interval, int mode, int resolution) {
     return pace_slow;
 }
 int target_us(void) { return hint_target / 1000; }
+void scene(int other) { level_name = other ? "Dungeon" : "Field"; }
+void compiles(int n) {  // shader jobs queued or running; 0: the last one ends now
+    if (!n && shader_jobs) shader_jobs_done_ns = clock_ns;
+    shader_jobs = n;
+}
 void pacing_off(void) { disabled = 1; }
 void tracing_on(void) { tracing = 1; }
 int logs(void) { return log_count; }
@@ -80,7 +86,7 @@ int logs(void) { return log_count; }
 subprocess.run([str(bin_dir / 'clang.exe'), '--target=wasm32', '-O2', '-fno-builtin', '-nostdlib',
                 '-c', str(out / 'test.c'), '-o', str(out / 'test.o')], check=True)
 subprocess.run([str(bin_dir / 'ld.lld.exe'), '-flavor', 'wasm', '--no-entry', '--export=frame',
-                '--export=target_us', '--export=pacing_off', '--export=tracing_on', '--export=logs',
+                '--export=target_us', '--export=pacing_off', '--export=tracing_on', '--export=logs', '--export=compiles', '--export=scene',
                 str(out / 'test.o'), '-o', str(out / 'test.wasm')], check=True)
 (out / 'run.cjs').write_text(r'''
 const fs = require('fs');
@@ -130,7 +136,20 @@ function backoff(p) {
   assert.equal(run(p, 600, 16667, 12000), 0, 'trace must preserve sustainable 60');
   assert.ok(p.logs() >= 4 && p.logs() < 10, 'trace must log summaries, not every frame');
   assert.equal(run(p, 20, 16667, 18000), 1, 'trace must preserve overload fallback');
-  console.log('16 Android pacing behavior checks passed (production C)');
+  // shaders compiling (a new area: issue #3) - their long frames aren't a workload 60 doesn't fit
+  p = await fresh();
+  run(p, 60, 16667, 12000);
+  p.compiles(3);
+  assert.equal(run(p, 300, 20000, 18000), 0, 'frames while shaders compile must not force 30');
+  p.compiles(0);
+  assert.equal(run(p, 45, 20000, 18000), 0, 'nor those in the 1 s after the last one');
+  assert.equal(run(p, 120, 16667, 18000), 1, 'an overload after the compiles still falls back');
+  // a new scene's first seconds without compiles are real work (the GPU on its first draws): they still count
+  p = await fresh();
+  run(p, 600, 16667, 12000);
+  p.scene(1);
+  assert.equal(run(p, 20, 20000, 18000), 1, 'a new scene that does not fit 60 still falls back');
+  console.log('20 Android pacing behavior checks passed (production C)');
 })().catch(e => { console.error(e); process.exit(1); });
 ''')
 subprocess.run(['node', str(out / 'run.cjs'), str(out / 'test.wasm')], check=True)
