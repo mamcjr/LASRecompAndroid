@@ -19,7 +19,9 @@
 // and the generator in LARECOMP_GEN_DIR, android/deps/build_gen_deps.sh) and zig compiles for aarch64-linux-musl: the
 // C library's headers only - the library links -nostdlib against libmain.so, and Android's linker resolves its libc
 // calls. -O1 as on the desktop (on the phone a build takes minutes; -O2 measured no faster in game).
-#define GAMELIB_CFLAGS "-target aarch64-linux-musl -O1 -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibility=hidden -fPIC"
+// -mllvm -dag-maps-huge-region=500: the schedulers' dependency graph of huge runs of stores was quadratic (main_012.c
+// 4.3 s -> 0.7 s, 806 of 812 objects byte-identical: from LASRecomp-Android-Plus, MIT).
+#define GAMELIB_CFLAGS "-target aarch64-linux-musl -O1 -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibility=hidden -fPIC -mllvm -dag-maps-huge-region=500"
 #define GAMELIB_SHARED "-target aarch64-linux-musl -shared -nostdlib -Wl,-z,max-page-size=16384"
 #endif
 // From the Makefile: the flags the game code is compiled and linked with (as `make` builds it in a source checkout)
@@ -259,6 +261,7 @@ static void log_tail(const char *path, char *out, size_t n) {  // the last line 
 typedef struct {
     char src[1100], obj[1100], log[1100];
     unsigned long long bytes;
+    bool started;
 } Unit;
 
 typedef struct {
@@ -277,6 +280,7 @@ static void add_unit(Units *us, const char *src, const char *work, const char *s
     snprintf(u->log, sizeof u->log, "%s" SEP "%s.log", work, stem);
     struct stat st;
     u->bytes = stat(src, &st) == 0 ? (unsigned long long)st.st_size : 0;
+    u->started = false;
 }
 
 // The flags the game code was built with (GAMELIB_CFLAGS, part of its id). zig cc reads -march=<cpu> with its own CPU
@@ -540,15 +544,22 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         if (!ok) break;
         for (int k = 0; k < units.n; k++) written += units.u[k].bytes;
 
-        // compiles
+        // compiles: the largest file ready first (a big one started last held the build's end on one core; from
+        // LASRecomp-Android-Plus, MIT)
         while (nrun < jobs && next < units.n) {
+            int pick = -1;
+            for (int k = 0; k < units.n; k++)
+                if (!units.u[k].started && (pick < 0 || units.u[k].bytes > units.u[pick].bytes)) pick = k;
+            if (pick < 0) break;
 #ifdef __ANDROID__  // (unit 0 is the shipped entry file; a file that can't be marked just stays at -O1)
-            if (next > 0 && g_nhot && !mark_cold(units.u[next].src))
-                LOG("[gamebuild] couldn't mark cold functions in %s\n", units.u[next].src);
+            if (pick > 0 && g_nhot && !mark_cold(units.u[pick].src))
+                LOG("[gamebuild] couldn't mark cold functions in %s\n", units.u[pick].src);
 #endif
-            PlatProc p = start_compile(&t, &units.u[next]);
+            PlatProc p = start_compile(&t, &units.u[pick]);
             if (!p) { snprintf(why, why_size, "the compiler didn't start"); ok = false; break; }
-            run[nrun].p = p, run[nrun].unit = next++;
+            units.u[pick].started = true;
+            run[nrun].p = p, run[nrun].unit = pick;
+            next++;  // (units started)
             nrun++;
         }
         for (int k = 0; k < nrun; k++) {
