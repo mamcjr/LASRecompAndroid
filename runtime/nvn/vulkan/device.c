@@ -1654,7 +1654,10 @@ int ui_run(void) {
         while (SDL_WaitEventTimeout(&e, 16)) {
 #endif
 #ifdef __ANDROID__
-            if (e.type == SDL_EVENT_WILL_ENTER_BACKGROUND && g_vk.dev) vk_pipeline_cache_save();  // (may not come back)
+            if (e.type == SDL_EVENT_WILL_ENTER_BACKGROUND && g_vk.dev) {  // (may not come back)
+                vk_pipeline_cache_save();
+                settings_save();  // (options changed with the menu still open were lost: from LASRecomp-Android-Plus)
+            }
 #endif
             if (e.type == SDL_EVENT_QUIT) {
                 LOG("window closed\n");

@@ -7,6 +7,7 @@
 #include "hle.h"
 #include "input_bind.h"
 #ifdef __ANDROID__
+#include <stdatomic.h>
 #include <SDL3/SDL_locale.h>
 #include <SDL3/SDL_stdinc.h>
 #endif
@@ -219,8 +220,20 @@ void settings_load(void) {
 }
 
 void settings_save(void) {
+#ifdef __ANDROID__
+    // Written to larecomp.ini.tmp, then put in its place: a phone ends apps in the background at any moment (the app
+    // saves then too: vulkan/device.c), and a file cut short there lost every setting. One writer at a time. (From
+    // LASRecomp-Android-Plus, MIT.)
+    static atomic_flag lock = ATOMIC_FLAG_INIT;
+    char tmp[1024];
+    snprintf(tmp, sizeof tmp, "%s.tmp", SETTINGS_FILE);
+    while (atomic_flag_test_and_set(&lock)) {}
+    FILE *f = fopen(tmp, "w");
+    if (!f) { LOG("[settings] cannot write %s\n", tmp); atomic_flag_clear(&lock); return; }
+#else
     FILE *f = fopen(SETTINGS_FILE, "w");
     if (!f) { LOG("[settings] cannot write %s\n", SETTINGS_FILE); return; }
+#endif
     fprintf(f, "# LAS Recomp settings (edited from the in-game menu: F1, Esc, or Minus+Plus on a controller)\n");
     fprintf(f, "aspect = %s\n", g_settings.aspect == ASPECT_ORIGINAL ? "original" : "unlocked");
     fprintf(f, "fullscreen = %d\n", g_settings.fullscreen);
@@ -280,5 +293,10 @@ void settings_save(void) {
     fprintf(f, "tunic = %s\nhearts = %s\n", g_tunic_colours[g_settings.tunic], g_heart_colours[g_settings.hearts]);
     bind_settings_save(f);
     fprintf(f, "rando_seed = %s\n", g_settings.rando_seed);
+#ifdef __ANDROID__
+    if (fclose(f) != 0 || rename(tmp, SETTINGS_FILE) != 0) LOG("[settings] cannot write %s\n", SETTINGS_FILE);
+    atomic_flag_clear(&lock);
+#else
     fclose(f);
+#endif
 }
