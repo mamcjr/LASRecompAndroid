@@ -155,14 +155,54 @@ int input_pad_family(void) {
     return env >= 0 ? env : pad_family;
 }
 
+#ifdef __ANDROID__
+// Which connected controller the game reads (from LASRecomp-Android-Plus, MIT). Android lists other input devices as
+// gamepads too (a wireless keyboard / mouse receiver's media keys: "Logitech USB Receiver Mouse"), and the first one
+// listed used to be taken for good: a DualSense connected beside it was never read. Now a pad SDL knows (PlayStation,
+// Xbox, Switch...) beats one with sticks and face buttons, which beats anything else; and the controller whose button
+// is pressed (or stick pushed well off centre) becomes the one read.
+static int pad_rank(SDL_JoystickID id) {
+    SDL_GamepadType t = SDL_GetGamepadTypeForID(id);
+    if (t != SDL_GAMEPAD_TYPE_UNKNOWN && t != SDL_GAMEPAD_TYPE_STANDARD) return 3;
+    char *m = SDL_GetGamepadMappingForID(id);
+    int r = m && strstr(m, "leftx:") && strstr(m, ",a:") && strstr(m, ",b:") ? 2 : 1;
+    SDL_free(m);
+    return r;
+}
+static void use_pad(SDL_JoystickID id, const char *why) {
+    if (pad && SDL_GetGamepadID(pad) == id) return;
+    SDL_Gamepad *p = SDL_OpenGamepad(id);
+    if (!p) { LOG("[input] gamepad %u: %s\n", (unsigned)id, SDL_GetError()); return; }
+    if (pad) SDL_CloseGamepad(pad);
+    pad = p;
+    LOG("[input] gamepad: %s (%s)\n", SDL_GetGamepadName(pad), why);
+    note_family();
+}
+static void pick_pad(const char *why) {  // the best connected one, unless the one read is as good
+    int n = 0, best = -1, cur = pad ? pad_rank(SDL_GetGamepadID(pad)) : 0;
+    SDL_JoystickID *ids = SDL_GetGamepads(&n), pick = 0;
+    for (int i = 0; i < n; i++) {
+        int r = pad_rank(ids[i]);
+        LOG("[input] connected: %s (rank %d)\n", SDL_GetGamepadNameForID(ids[i]), r);
+        if (r > best) best = r, pick = ids[i];
+    }
+    SDL_free(ids);
+    if (pick && best > cur) use_pad(pick, why);
+}
+#endif
+
 void input_handle_event(const SDL_Event *e) {
     static bool scanned;  // pads present at startup: their ADDED event may have gone to the start screen's loop
     if (!scanned) {
         scanned = true;
+#ifdef __ANDROID__
+        pick_pad("connected");
+#else
         int n = 0;
         SDL_JoystickID *ids = SDL_GetGamepads(&n);
         if (n > 0 && !pad) { pad = SDL_OpenGamepad(ids[0]); LOG("[input] gamepad: %s\n", SDL_GetGamepadName(pad)); note_family(); }
         SDL_free(ids);
+#endif
     }
     switch (e->type) {
     case SDL_EVENT_KEY_DOWN: case SDL_EVENT_KEY_UP:
@@ -171,13 +211,32 @@ void input_handle_event(const SDL_Event *e) {
         recompute_keyboard();
         break;
     case SDL_EVENT_GAMEPAD_ADDED:
+#ifdef __ANDROID__
+        pick_pad("connected");
+#else
         if (!pad) { pad = SDL_OpenGamepad(e->gdevice.which); LOG("[input] gamepad: %s\n", SDL_GetGamepadName(pad)); note_family(); }
+#endif
         break;
     case SDL_EVENT_GAMEPAD_REMOVED:
-        if (pad && SDL_GetGamepadID(pad) == e->gdevice.which) { SDL_CloseGamepad(pad); pad = NULL; note_family(); }
+        if (pad && SDL_GetGamepadID(pad) == e->gdevice.which) {
+            SDL_CloseGamepad(pad); pad = NULL; note_family();
+#ifdef __ANDROID__
+            pick_pad("another one left");  // (a controller still connected takes over)
+#endif
+        }
         recompute_pad();
         break;
     case SDL_EVENT_GAMEPAD_AXIS_MOTION: case SDL_EVENT_GAMEPAD_BUTTON_DOWN: case SDL_EVENT_GAMEPAD_BUTTON_UP:
+#ifdef __ANDROID__
+        if (!host_test && e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && e->gbutton.which != TEST_DEVICE)
+            use_pad(e->gbutton.which, "pressed");  // (the controller in use is the one read)
+        if (!host_test && e->type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
+            if (abs(e->gaxis.value) > 20000 && (!pad || SDL_GetGamepadID(pad) != e->gaxis.which) &&
+                pad_rank(e->gaxis.which) >= (pad ? pad_rank(SDL_GetGamepadID(pad)) : 1))
+                use_pad(e->gaxis.which, "stick moved");  // (pushed well off centre, on a pad at least as good)
+            if (pad && SDL_GetGamepadID(pad) != e->gaxis.which) break;  // (another device's axes: not the game's)
+        }
+#endif
         recompute_pad();
         break;
     }
