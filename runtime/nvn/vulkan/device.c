@@ -299,9 +299,11 @@ static void pick_device(void) {
     uint32_t best_queue = UINT32_MAX;
     bool have_api = false;
     // LARECOMP_VK_API=1.1 / 1.2 (test): use a newer device as that version - the extensions' path on a phone at hand
-    // (drivers keep listing the extensions their version promoted)
+    // (drivers keep listing the extensions their version promoted); 1.0: as a driver too old, for its error and the
+    // driver dialog (platform/android.c driver_error_dialog)
     const char *force = getenv("LARECOMP_VK_API");
-    uint32_t cap = force && !strcmp(force, "1.1") ? VK_API_VERSION_1_1 : force && !strcmp(force, "1.2") ? VK_API_VERSION_1_2 : 0;
+    uint32_t cap = force && !strcmp(force, "1.1") ? VK_API_VERSION_1_1 : force && !strcmp(force, "1.2") ? VK_API_VERSION_1_2
+                 : force && !strcmp(force, "1.0") ? VK_API_VERSION_1_0 : 0;
     for (uint32_t i = 0; i < n; i++) {
         VkPhysicalDeviceProperties p;
         vkGetPhysicalDeviceProperties(pd[i], &p);
