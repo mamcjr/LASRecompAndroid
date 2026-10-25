@@ -23,6 +23,21 @@ For the PC versions (Windows, macOS, Linux), features and the randomizer, see th
 > copy of the extracted game files of *Link's Awakening* **v1.0.0, v1.0.1 or v1.1.0**. Instructions on how to obtain
 > them will not be provided.
 
+## New in 0.5.4
+
+More of [LASRecomp-Android-Plus](https://github.com/Nycolazs/LASRecomp-Android-Plus) by Nycolazs, merged in with its author's agreement, and a fix for a black screen at start.
+
+- **Black screen at start** (0.5.3, reported on X): a window that failed to open made the app wait up to 10 minutes without saying why; the error now shows after 5 s.
+- **Driver errors**: if the Vulkan driver fails at start, a dialog offers to install another driver or go back to the phone's own.
+- **Touch controls**: buttons with the game's own item icons, as an option (Settings > Controls > Buttons with the item icons); a fixed stick; only the buttons the game uses right now (on by default).
+- **Controllers**: the one in use is the one the game reads; face buttons by their letters, for Xbox-style pads and handhelds.
+- **Video**: 1.25x and 1.5x internal resolution; the bars beside a narrower picture show its edges blurred (or plain black: Video > Side bars).
+- **Performance**: render targets compressed on Turnip (UBWC), fewer colour copies, the small glow levels at their own size, and the game code built on the phone about 6% faster.
+- **Menus in Spanish, French, German, Italian and Dutch** on a phone set to one of them.
+- The game stays open while you're at the home screen, and settings are no longer lost when Android ends the app.
+
+Validation: on the POCO F7 Ultra, the village at 60 fps with Turnip and 30 fps with the Qualcomm driver, the game code of 1.0.1 built on the phone, the item icons on the buttons and the driver dialog. Controllers, the new languages and other GPUs not tested here.
+
 ## New in 0.5.3
 
 More drivers below Vulkan 1.3, such as the stock Mali drivers on many Samsung phones.
@@ -364,7 +379,8 @@ For development, the game code can still be built on the PC and pushed: `bash an
   of hot game functions from play profiles (`tools/hot_functions.txt`) lets setup compile the rest faster; the frame
   generation by reprojection (`runtime/nvn/vulkan/framegen.c`) is adapted from its own. With its author's agreement,
   more of it was merged into this project: the driver error dialog, the controller choice, safe settings writes, the
-  keep-alive service, the fixed stick and the context-aware touch buttons, face buttons by label, 1.25x / 1.5x,
+  keep-alive service, the fixed stick and the context-aware touch buttons, face buttons by label, the buttons with the item
+  icons, 1.25x / 1.5x,
   the blurred side bars, Turnip's compressed render targets (UBWC), the small glow levels at their own size, lazy
   colour copies, no heap import on phones, the build's file order, and the Spanish, French, German, Italian and Dutch
   menu strings (which come from [deedywu/LASRecomp](https://github.com/deedywu/LASRecomp), MIT).

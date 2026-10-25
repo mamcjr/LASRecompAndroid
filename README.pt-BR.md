@@ -23,6 +23,21 @@ Para as versões de PC (Windows, macOS, Linux), os recursos e o randomizer, veja
 > obtida legalmente, dos arquivos extraídos de *Link's Awakening* **v1.0.0, v1.0.1 ou v1.1.0**. Não serão dadas
 > instruções de como obtê-los.
 
+## Novidades da 0.5.4
+
+Mais partes do [LASRecomp-Android-Plus](https://github.com/Nycolazs/LASRecomp-Android-Plus), do Nycolazs, incorporadas com o acordo do autor, e a correção de uma tela preta ao abrir.
+
+- **Tela preta ao abrir** (0.5.3, relatada no X): uma janela que não abria fazia o app esperar até 10 minutos sem dizer por quê; agora o erro aparece depois de 5 s.
+- **Erros de driver**: se o driver Vulkan falhar ao abrir, uma janela oferece instalar outro driver ou voltar ao do próprio celular.
+- **Controles na tela**: botões com os ícones dos itens do próprio jogo, como opção (Configurações > Controles > Botões com os ícones dos itens); analógico fixo; só os botões que o jogo usa no momento (ligado por padrão).
+- **Controles físicos**: o controle em uso é o que o jogo lê; botões de ação pelas letras, para controles estilo Xbox e portáteis.
+- **Vídeo**: resolução interna de 1,25x e 1,5x; as faixas ao lado de uma imagem mais estreita mostram as bordas dela desfocadas (ou preto: Vídeo > Barras laterais).
+- **Desempenho**: alvos de renderização comprimidos no Turnip (UBWC), menos cópias de cor, os níveis pequenos de brilho no próprio tamanho, e o código do jogo compilado no celular cerca de 6% mais rápido.
+- **Menus em espanhol, francês, alemão, italiano e holandês** num celular configurado num desses idiomas.
+- O jogo continua aberto enquanto você está na tela inicial do celular, e as configurações não se perdem mais quando o Android fecha o app.
+
+Validação: no POCO F7 Ultra, a vila a 60 fps com o Turnip e a 30 fps com o driver da Qualcomm, o código do jogo da 1.0.1 compilado no celular, os ícones dos itens nos botões e a janela de erro do driver. Controles físicos, os novos idiomas e outras GPUs não foram testados aqui.
+
 ## Novidades da 0.5.3
 
 Mais drivers abaixo do Vulkan 1.3, como os drivers Mali de fábrica de muitos celulares Samsung.
@@ -371,7 +386,8 @@ depois `bash android/push_game.sh <pasta com exefs/ e romfs/>`.
   compilar o resto mais rápido; a geração de quadros por reprojeção (`runtime/nvn/vulkan/framegen.c`) é adaptada
   da dele. Com o acordo do autor, mais partes dele foram incorporadas a este projeto: o diálogo de erro do driver, a
   escolha do controle, a gravação segura das configurações, o serviço que mantém o jogo vivo, o analógico fixo e os
-  botões de toque conforme o contexto, os botões de ação pelas letras, 1,25x / 1,5x, as barras laterais desfocadas,
+  botões de toque conforme o contexto, os botões de ação pelas letras, os botões com
+  os ícones dos itens, 1,25x / 1,5x, as barras laterais desfocadas,
   os alvos de renderização comprimidos do Turnip (UBWC), os níveis pequenos de brilho no próprio tamanho, as cópias
   de cor sob demanda, a importação do heap desligada nos celulares, a ordem dos arquivos na compilação e os textos
   dos menus em espanhol, francês, alemão, italiano e holandês (que vêm do
