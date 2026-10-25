@@ -796,6 +796,23 @@ static void SDLCALL picked_fonts(void *, const char *const *files, int) {
     pthread_mutex_unlock(&g_lock);
 }
 
+#ifdef __ANDROID__
+// The activity's font picker (LASRecompActivity.pickFonts: SDL's gave content:// addresses that fopen can't read, and
+// let only .ttf be chosen): the picked files, copied into its cache under their own names - import_fonts takes them
+// and deletes them
+extern "C" JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeFontsPicked(JNIEnv *env, jclass, jobjectArray paths) {
+    jsize n = paths ? env->GetArrayLength(paths) : 0;
+    pthread_mutex_lock(&g_lock);
+    for (jsize i = 0; i < n; i++) {
+        jstring s = (jstring)env->GetObjectArrayElement(paths, i);
+        const char *p = s ? env->GetStringUTFChars(s, NULL) : NULL;
+        if (p) g_font_picks.push_back(p), env->ReleaseStringUTFChars(s, p);
+        if (s) env->DeleteLocalRef(s);
+    }
+    pthread_mutex_unlock(&g_lock);
+}
+#endif
+
 static void import_fonts() {
     pthread_mutex_lock(&g_lock);
     std::vector<std::string> picks;
@@ -821,6 +838,10 @@ static void import_fonts() {
         if (in) fclose(in);
         if (out) fclose(out);
     }
+#ifdef __ANDROID__
+    for (auto &src : picks)  // (the picker's copies, nativeFontsPicked)
+        if (src.find("/font-import/") != std::string::npos) unlink(src.c_str());
+#endif
     g_font_msg = std::to_string(ok) + tr(" font file(s) imported") +
                  (skipped ? ", " + std::to_string(skipped) + tr(" not recognized") : "") + tr(". Used from the next game start.");
 }
@@ -1466,7 +1487,12 @@ static void prelaunch_tab(float sc) {
     ImGui::PopTextWrapPos();
     if (!g_font_msg.empty()) ImGui::Text("%s", tr(g_font_msg.c_str()));
     static const SDL_DialogFileFilter font_f[] = {{"Switch fonts", "bfttf;ttf"}};
+#ifdef __ANDROID__
+    (void)font_f, (void)&picked_fonts;
+    if (ImGui::Button(tr("Import fonts"))) android_call("pickFonts");  // (the activity's picker: nativeFontsPicked)
+#else
     if (ImGui::Button(tr("Import fonts"))) SDL_ShowOpenFileDialog(picked_fonts, NULL, g_launcher_win, font_f, 1, NULL, true);
+#endif
     if (fs || fe) {
         ImGui::SameLine();
         if (ImGui::Button(tr("Use substitute font"))) remove_fonts();

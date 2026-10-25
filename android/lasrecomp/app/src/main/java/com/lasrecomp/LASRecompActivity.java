@@ -94,10 +94,11 @@ public class LASRecompActivity extends SDLActivity {
     private static native void nativeSaveTransferDone(String message);
     private static native void nativeModImportDone(String message);
     private static native void nativeLogFolderPicked(String name);
+    private static native void nativeFontsPicked(String[] paths);
 
     private static final int REQ_GAME = 0x4c41, REQ_DRIVER = 0x4c42;
     private static final int REQ_SAVE_FOLDER = 0x4c43, REQ_SAVE_ZIP = 0x4c44, REQ_SAVE_EXPORT = 0x4c45, REQ_MOD = 0x4c46;
-    private static final int REQ_LOG = 0x4c47, REQ_DRIVER_RECOVER = 0x4c48;
+    private static final int REQ_LOG = 0x4c47, REQ_DRIVER_RECOVER = 0x4c48, REQ_FONTS = 0x4c49;
     private File saveTarget;
     private boolean exportPrevious;
     private static LASRecompActivity self;
@@ -262,6 +263,24 @@ public class LASRecompActivity extends SDLActivity {
                 self.startActivityForResult(i, REQ_DRIVER);
             } catch (Exception e) {
                 Log.e(TAG, "file picker: " + e);
+            }
+        });
+    }
+
+    // The Switch fonts (Settings > Saves & files > Import fonts): any type - .bfttf has no MIME type, so SDL's picker
+    // (filtered by the types of its extensions) only let .ttf files be chosen, and it hands back content:// addresses
+    // that fopen can't read and that don't carry the file's name (issue #3). Copied with their names (copyFonts),
+    // then the start screen checks the names and imports them (launcher.mm import_fonts).
+    public static void pickFonts() {
+        self.runOnUiThread(() -> {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.setType("*/*");
+            i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+            try {
+                self.startActivityForResult(i, REQ_FONTS);
+            } catch (Exception e) {
+                Log.e(TAG, "font picker: " + e);
             }
         });
     }
@@ -565,6 +584,16 @@ public class LASRecompActivity extends SDLActivity {
             if (f != null) new Thread(() -> importDriver(f), "driver").start();
             return;
         }
+        if (req == REQ_FONTS) {
+            List<Uri> picked = new ArrayList<>();
+            if (result == Activity.RESULT_OK && data != null) {
+                if (data.getClipData() != null)
+                    for (int k = 0; k < data.getClipData().getItemCount(); k++) picked.add(data.getClipData().getItemAt(k).getUri());
+                else if (data.getData() != null) picked.add(data.getData());
+            }
+            if (!picked.isEmpty()) new Thread(() -> copyFonts(picked), "fonts").start();
+            return;
+        }
         if (req == REQ_DRIVER_RECOVER) {
             Uri f = result == Activity.RESULT_OK && data != null ? data.getData() : null;
             if (f == null) showDriverError(null);
@@ -792,6 +821,29 @@ public class LASRecompActivity extends SDLActivity {
     private void importDriver(Uri f) {
         String name = copyDriver(f);
         nativeDriverPicked(name != null ? name : "");
+    }
+
+    // The picked fonts into <cache>/font-import under their own names (the native side checks the names, copies the
+    // known ones into fonts/ and deletes these)
+    private void copyFonts(List<Uri> picked) {
+        File dir = new File(getCacheDir(), "font-import");
+        deleteTree(dir);
+        dir.mkdirs();
+        List<String> paths = new ArrayList<>();
+        for (Uri f : picked) {
+            String name = null;
+            try (Cursor c = getContentResolver().query(f, new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+                if (c != null && c.moveToFirst() && !c.isNull(0)) name = c.getString(0);
+            } catch (Exception ignored) {
+            }
+            if (name == null || name.isEmpty() || name.contains("/")) name = "font-" + paths.size();
+            try (InputStream in = getContentResolver().openInputStream(f)) {
+                paths.add(copy(in, new File(dir, name)).getAbsolutePath());
+            } catch (Exception e) {
+                Log.e(TAG, "font " + name + ": " + e);
+            }
+        }
+        nativeFontsPicked(paths.toArray(new String[0]));
     }
 
     // (the package's name, or null: not a .zip / .so, or it couldn't be copied)
