@@ -23,6 +23,9 @@ static double g_dyn_gpu_sum, g_dyn_dt_sum, g_last_t;
 static int g_dyn_n, g_dyn_gpu_n, g_dyn_good;
 static double g_dyn_cool_until, g_dyn_probe_wait = 5.0, g_dyn_probe_at;
 static double g_dyn_last_raise = -100;
+#ifdef __ANDROID__
+static double g_dyn_drop_gpu = -1, g_dyn_hold_until;  // the GPU's time before the last step down; no step down until
+#endif
 
 static void dyn_update(double now, double gpu_ms) {
     double dt = g_last_t > 0 ? (now - g_last_t) * 1000.0 : 16.7;
@@ -48,6 +51,15 @@ static void dyn_update(double now, double gpu_ms) {
     if (avg_gpu > 1.5 * avg_dt) avg_gpu = -1;
     bool slow = avg_gpu >= 0 ? avg_gpu > 14.5 * budget : avg_dt > 17.4 * budget;
     double step = (avg_gpu >= 0 ? avg_gpu > 20 * budget : avg_dt > 22 * budget) ? 0.1 : 0.05;
+    // A step down that didn't lower the GPU's time (by 3%: its work isn't in the internal resolution - passes, the
+    // upscaler and the HUD at the screen's size) isn't taken again for 30 s: the POCO F7 Ultra's Field took 13.3 ms at
+    // 0.9 and at 0.7 alike, and a lower limit slid it down step after step for nothing
+    if (avg_gpu >= 0 && g_dyn_drop_gpu >= 0) {  // (the first look after a step down)
+        if (avg_gpu > g_dyn_drop_gpu * 0.97) g_dyn_hold_until = now + 30;
+        g_dyn_drop_gpu = -1;
+    }
+    if (slow && now < g_dyn_hold_until) slow = false;
+    if (slow) g_dyn_drop_gpu = avg_gpu;
 #else
     double budget = 1.0;
     bool slow = avg_dt > 17.4 * budget || (avg_gpu >= 0 && avg_gpu > 14.5);
