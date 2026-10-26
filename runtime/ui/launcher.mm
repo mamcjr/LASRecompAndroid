@@ -302,6 +302,9 @@ static bool build_game_code(void) {
     return ok;
 }
 
+#ifdef __ANDROID__
+static bool romfs_damaged(const std::string &root);
+#endif
 static void *extract_thread(void *) {
     std::string src;
     pthread_mutex_lock(&g_lock);
@@ -365,6 +368,12 @@ check:
     {
         std::string why = check_game_files(g_root);
         if (why.empty()) set_job("Game files ready.");
+#ifdef __ANDROID__
+        if (why.empty() && romfs_damaged(g_root))  // (romfs_check: ready, but the game may crash on them)
+            set_job("Game files damaged or changed", true,
+                    "Some of the game's files are missing, renamed or changed (the log names them). The game may crash: "
+                    "dump the game again from your console and set it up again.");
+#endif
         else set_failure(why.find("version") != std::string::npos ? FAIL_VERSION : FAIL_MISSING);
     }
 done:
@@ -566,6 +575,47 @@ static bool keep_loose(const char *rel) {
     return false;
 }
 
+// (from upstream LASRecomp beta_5.3: its issues #391 / #389) A copy with one of the game's files damaged, renamed or
+// missing crashed at boot with nothing saying why. romfs/'s files are checked by name and size against the game's
+// (game_addresses.c game_romfs_check_*) and their total against the version's; the six game code files some copies
+// also have at the romfs root are left out when exefs/ has them at the same size (their bytes aren't at hand here, as
+// upstream compares them). The log names the odd files; romfs.check keeps the counts for the start screen
+// (romfs_damaged). The game still plays: a translation mod changes sizes too.
+static std::atomic<int> g_romfs_check_epoch;
+static void romfs_check(const RomfsEntry *e, int n) {
+    enum { LOGGED = 20 };
+    const GameVersion *v = game_version_of(g_root.c_str());
+    GameRomfsCheck *c = game_romfs_check_begin(v);
+    int odd = 0, copies = 0;
+    uint64_t bytes = 0;
+    for (int i = 0; i < n; i++) {
+        struct stat st;
+        if (!strchr(e[i].path, '/') && game_romfs_exefs_name(e[i].path) &&
+            stat((g_root + "/exefs/" + e[i].path).c_str(), &st) == 0 && (uint64_t)st.st_size == e[i].size) {
+            copies++;
+            continue;
+        }
+        bytes += e[i].size;
+        if (!game_romfs_check_file(c, e[i].path, e[i].size) && odd++ < LOGGED)
+            fprintf(stderr, "[launcher] romfs: not one of the game's files: %s (%llu bytes)\n", e[i].path,
+                    (unsigned long long)e[i].size);
+    }
+    if (odd > LOGGED) fprintf(stderr, "[launcher] romfs: %d more files that aren't the game's\n", odd - LOGGED);
+    if (copies) fprintf(stderr, "[launcher] romfs: %d copies of the game code at the root, ignored\n", copies);
+    int missing = game_romfs_check_end(c);
+    if (missing) fprintf(stderr, "[launcher] romfs: %d of the game's files missing or changed\n", missing);
+    uint64_t want = game_romfs_bytes(v);
+    if (want && bytes != want)
+        fprintf(stderr, "[launcher] romfs: %llu bytes in %d files, this version's are %llu: damaged or changed game files\n",
+                (unsigned long long)bytes, n - copies, (unsigned long long)want);
+    if (FILE *f = fopen((g_root + "/romfs.check").c_str(), "w")) {
+        fprintf(f, "odd %d\nmissing %d\nbytes %llu\nwant %llu\n", odd, missing, (unsigned long long)bytes,
+                (unsigned long long)want);
+        fclose(f);
+    }
+    g_romfs_check_epoch++;
+}
+
 // Called by the activity's import thread with romfs/'s files (relative paths, sizes): romfs.bin straight from the
 // picked folder - each file's descriptor from openRomfsFile(index) - and the loose few beside it. Returns NULL, or why
 // it failed.
@@ -595,6 +645,7 @@ extern "C" JNIEXPORT jstring JNICALL Java_com_lasrecomp_LASRecompActivity_native
     RomfsJni j = {env, act, env->GetMethodID(cls, "openRomfsFile", "(I)I")};
     env->DeleteLocalRef(cls);
     if (!j.open) { env->ExceptionClear(); return env->NewStringUTF("Internal error: openRomfsFile missing."); }
+    romfs_check(entries.data(), n);
     set_job("Building the game data image...");
     g_phase_base = g_done;  // (exefs/ copied: the image's bytes follow)
     char why[256] = "";
@@ -637,6 +688,23 @@ static void *prune_thread(void *) {
 // extracted-<release>/ and res/lasgame-<release>.so. Switching renames (no copy); importing another release puts the
 // current one aside first, importing the same release replaces it. Saves are shared.
 static int g_version_epoch;  // (bumped at each switch: the release line reads its label again)
+// The game files in root were found damaged or changed at their setup (romfs_check's romfs.check: files that aren't
+// the game's, the game's missing or changed, another total). None there (set up before this check): false.
+static bool romfs_damaged(const std::string &root) {
+    static std::string memo_root;
+    static int memo_epoch = -1, memo_version = -1;
+    static bool memo;
+    if (root == memo_root && memo_epoch == g_romfs_check_epoch.load() && memo_version == g_version_epoch) return memo;
+    memo_root = root, memo_epoch = g_romfs_check_epoch.load(), memo_version = g_version_epoch, memo = false;
+    if (FILE *f = fopen((root + "/romfs.check").c_str(), "r")) {
+        int odd = 0, missing = 0;
+        unsigned long long bytes = 0, want = 0;
+        if (fscanf(f, "odd %d missing %d bytes %llu want %llu", &odd, &missing, &bytes, &want) == 4)
+            memo = odd > 0 || missing > 0 || (want && bytes != want);
+        fclose(f);
+    }
+    return memo;
+}
 static std::string release_of(const std::string &root) {
     char label[32];
     const char *v = game_release_label((root + "/exefs").c_str(), label, sizeof label);
@@ -2269,6 +2337,13 @@ extern "C" void launcher_run(const char *root) {
             ImGui::PushFont(g_font_small);
             ImGui::SetCursorPos(ImVec2(x0, ds.y - 118 * s));
             if (status.empty()) {
+#ifdef __ANDROID__
+                const bool damaged = romfs_damaged(g_root);  // (romfs_check at setup: in place of "ready", in orange)
+                if (damaged)
+                    ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "!  %s",
+                                       tr("Game files damaged or changed: if the game crashes, dump it again"));
+                if (!damaged)
+#endif
                 {  // a drawn check mark (the Switch font has no ✓)
                     ImVec2 p = ImGui::GetCursorScreenPos();
                     float u = ImGui::GetTextLineHeight();
@@ -2277,6 +2352,9 @@ extern "C" void launcher_run(const char *root) {
                     ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x + u * 0.35f, p.y + u * 0.8f), ImVec2(p.x + u * 0.85f, p.y + u * 0.2f), g, u * 0.12f);
                     ImGui::SetCursorPosX(x0 + u * 1.3f);
                 }
+#ifdef __ANDROID__
+                if (!damaged)
+#endif
                 ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.55f, 1), "%s", tr("Game files ready."));
                 ImGui::SetCursorPosX(x0);
                 static std::string version_label;  // (the copied files' release, "1.0.1": read again when they change)
