@@ -683,6 +683,15 @@ static std::vector<std::string> other_versions(void) {
     std::sort(out.begin(), out.end());
     return out;
 }
+// "v1.0.0, v1.0.1": the release in play and the others, each once (one set up again shows twice while its new copy
+// builds: the old one stays until then)
+static std::string versions_text(const std::vector<std::string> &others) {
+    std::vector<std::string> seen{release_of(g_root)};
+    std::string have = "v" + seen[0];
+    for (const std::string &o : others)
+        if (std::find(seen.begin(), seen.end(), o) == seen.end()) seen.push_back(o), have += ", v" + o;
+    return have;
+}
 static bool is_base_release(const std::string &r) { return r == "1.0.0"; }  // (kept: no Remove for it)
 // The base release in play with others installed: its game files stay (no Delete for them)
 static bool base_kept(void) { return is_base_release(release_of(g_root)) && !other_versions().empty(); }
@@ -1441,8 +1450,7 @@ static void prelaunch_tab(float sc) {
         // aside removed (a tap, then a confirmation)
         static std::string confirm_rm;
         std::vector<std::string> others = other_versions();
-        std::string have = "v" + release_of(g_root);
-        for (const std::string &o : others) have += ", v" + o;
+        std::string have = versions_text(others);
         ImGui::Spacing();
         ImGui::Text(tr("Game versions: %s"), have.c_str());
         ImGui::PushTextWrapPos(0);
@@ -2128,8 +2136,7 @@ extern "C" void launcher_run(const char *root) {
                         // folder, one put aside removed (a tap, then a confirmation)
                         static std::string confirm_rm;
                         std::vector<std::string> others = other_versions();
-                        std::string have = "v" + release_of(g_root);
-                        for (const std::string &o : others) have += ", v" + o;
+                        std::string have = versions_text(others);
                         opt_section("Game versions");
                         if (busy) opt_disable_next();
                         if (opt_action("Add another version", have.c_str(),
