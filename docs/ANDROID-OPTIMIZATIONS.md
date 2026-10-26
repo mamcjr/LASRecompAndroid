@@ -4,6 +4,15 @@ These changes were initially built and checked on the PC. A subsequent user-driv
 
 ## Changes
 
+### Shader local memory and the jump-table fallback (2026-10-26)
+
+Two engine fixes:
+
+- **Shader local memory sized to its use.** The translator declared `uint lmem[256]` and zeroed all of it in every invocation, even in shaders that only spill one register there (`STL` / `LDL` at `[0x0]`): 1 KB a thread lives in scratch memory, and the loop writes 256 times a pixel. One draw with such a shader took 95-102 ms of GPU on the Adreno 830 for that. Now the array is as large as the accesses need (constant addresses: the words they reach; a register address: the SPH's local memory size, or 256 without an SPH), a power of two (the index is masked with `lmask_`). GLSL fuzz (`tools/test_translate.c`, 4,000 programs, same seed): 2,726 compiled and validated, 0 failures, as with the translator before; `tools/test_translate_ops.sh`: 29 cases, 0 failures (GLSL and 32-bit GLSL).
+- **`gen.py`: the jump-table fallback only at block starts.** Every function with a jump table got a fallback switch over all of its instructions (in case the table's emulation missed a target): an edge into each instruction. Now only block starts - branch targets, the tables' own and each instruction after a jump, return or trap; a function with an unresolved table keeps every instruction, as before. 1.0.0, the 545 files rebuilt: 101 -> 60 CPU minutes, the slowest 5.5 -> 1.3 min, the build 4 min on the PC; 1.0.1 from scratch in 5.5 min. Also: the cleanup of an earlier run's extra chunks matched only 3-digit names.
+
+The game code's id changes, so each release's game code builds again. Not run on the phone yet (it was locked).
+
 ### Shader cache and Vulkan startup robustness
 
 The SPIR-V cache now includes the compilation mode in its identity: `LARECOMP_VK_OPT` experiments cannot populate the same entries as normal compilation. Cache generation 4 deliberately bypasses earlier keys, because old entries do not identify their optimization mode. The first encounter with a shader will compile again; this is not a startup-speed improvement. Old cache files are not deleted by this change.

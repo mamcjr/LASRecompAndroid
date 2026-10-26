@@ -376,11 +376,19 @@ class Module:
             refs.add(t)
             return f'__attribute__((musttail)) return {fname(t)}(c);'
 
-        # Functions with jump tables also get the all-instruction fallback: a table whose emulation
-        # missed some cases then still reaches the right instruction instead of aborting.
+        # Functions with jump tables also get a fallback switch: a table whose emulation missed some cases then still
+        # reaches the right instruction instead of aborting. With an unresolved table ('all') it holds every
+        # instruction. With resolved ones every block's start is enough - the branch targets, the tables' own and each
+        # instruction after a jump, return or trap: a case missed is one of those. (With every instruction there, a
+        # function seen with a 9,745-way switch had an edge into each one: clang took 199 min on its file, and each
+        # instruction stood alone, its registers reloaded from memory. Its 685 block starts: 10 s. 2026-10-26.)
         all_labels = bool(tables)
         if all_labels:
-            labels = set(range(entry, end, 4))
+            if 'all' in tables.values():
+                labels = set(range(entry, end, 4))
+            else:
+                labels = set(labels) | {entry} | {a + 4 for a in range(entry, end - 4, 4)
+                                                   if self.lift(a).kind in ('b', 'br', 'ret', 'trap')}
         rando_here = [a for a in range(entry, end, 4) if a - self.base in RANDO_CODE]
         if rando_here:
             labels = set(labels)
@@ -459,7 +467,7 @@ class Module:
             out.append('    ' + jump(end) if end < self.hi else f'    rt_udf(c, {gaddr(end)});')
         if all_labels:
             out.append('L_dispatch:')
-            cases = ' '.join(f'case {case_key(t)}: goto L_{t:x};' for t in range(entry, end, 4))
+            cases = ' '.join(f'case {case_key(t)}: goto L_{t:x};' for t in sorted(labels) if entry <= t < end)
             out.append(f'    switch ({switch_on("c->pc")}) {{ {cases} default: break; }}')
             out.append('    __attribute__((musttail)) return rt_dispatch(c);')
         out.append('}')
@@ -644,8 +652,8 @@ def main():
         nchunks += 1
         # (the start screen's setup reads these for its progress bar: runtime/gamebuild.c)
         print(f'{args.name}: progress {ci}/{len(order)} files {nchunks}', file=sys.stderr, flush=True)
-    for fn in os.listdir(args.outdir):  # an earlier run's extra chunks
-        mm = re.fullmatch(re.escape(args.name) + r'_(\d{3})\.c', fn)
+    for fn in os.listdir(args.outdir):  # an earlier run's extra chunks (name_1000.c too: 1,000 chunks and over)
+        mm = re.fullmatch(re.escape(args.name) + r'_(\d{3,})\.c', fn)
         if mm and int(mm.group(1)) >= nchunks:
             os.remove(os.path.join(args.outdir, fn))
     import io

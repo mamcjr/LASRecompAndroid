@@ -96,7 +96,25 @@ typedef struct {
     bool structured;         // (maxwell_structured) the body is if / else / for, not the state machine
     int nbrx;                // jump tables read from cbuf 1 (brx_table): each BRX's possible targets
     struct { uint32_t at; int n; uint32_t t[256]; } brx[4];
+    uint32_t lmem_const_words;  // local memory words the LDL / STL at constant addresses reach (lmem_words)
+    bool lmem_dynamic;          // an LDL / STL at a register's address
+    uint32_t lmem_sph_bytes;    // the SPH's local memory size (graphics stages; 0: none given)
 } Ctx;
+
+// The local memory array's size in words, a power of two (its index is masked to it: lmask_). Every invocation zeroes
+// it, and an array that big lives in scratch memory: shaders that spill one register (STL / LDL [0x0]) zeroed 256
+// words a pixel - one such draw took 100 ms of GPU on the Adreno 830 (2026-10-26). Constant addresses only: the words
+// they reach; else the SPH's size (or the whole LMEM_WORDS without one).
+static uint32_t lmem_words(const Ctx *c) {
+    uint32_t need = c->lmem_const_words;
+    if (c->lmem_dynamic) {
+        uint32_t sph = (c->lmem_sph_bytes + 3) / 4;
+        need = sph ? (sph > need ? sph : need) : LMEM_WORDS;
+    }
+    uint32_t n = 1;
+    while (n < need && n < LMEM_WORDS) n <<= 1;
+    return n;
+}
 
 static uint64_t bits(uint64_t w, int lo, int n) { return (w >> lo) & ((n == 64) ? ~0ull : ((1ull << n) - 1)); }
 static int64_t sbits(uint64_t w, int lo, int n) {
@@ -1631,29 +1649,31 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         bool store = bits(w, 52, 1);
         int size = (int)bits(w, 48, 3);
         int32_t off = (int32_t)sbits(w, 20, 24);
+        int nw = size == 5 ? 2 : size >= 6 ? 4 : 1;
         c->uses_local = true;
+        if (a != RZ || off < 0) c->lmem_dynamic = true;
+        else if ((uint32_t)off / 4 + (uint32_t)nw > c->lmem_const_words) c->lmem_const_words = (uint32_t)off / 4 + (uint32_t)nw;
         char addr[128];
         if (a == RZ) sprintf(addr, "%du", off);
         else sprintf(addr, "(%s + %du)", R(a), (uint32_t)off);
-        int nw = size == 5 ? 2 : size >= 6 ? 4 : 1;
         sp(&c->body, "    { uint la = %s;\n", addr);
         if (!store) {
             if (size < 4) {
                 static const char *const ext[] = {"(v >> sh) & 0xFFu", "uint(int(char((v >> sh) & 0xFFu)))", "(v >> sh) & 0xFFFFu",
                                                   "uint(int(short((v >> sh) & 0xFFFFu)))"};
-                if (d != RZ) { c->reg_used[d] = 1; sp(&c->body, "      uint v = lmem[(la >> 2) & %du]; uint sh = (la & 3u) * 8u; r%d = %s;\n", LMEM_WORDS - 1, d, ext[size]); }
+                if (d != RZ) { c->reg_used[d] = 1; sp(&c->body, "      uint v = lmem[(la >> 2) & lmask_]; uint sh = (la & 3u) * 8u; r%d = %s;\n", d, ext[size]); }
             } else {
                 for (int k = 0; k < nw; k++)
-                    if (d != RZ && d + k < RZ) { c->reg_used[d + k] = 1; sp(&c->body, "      r%d = lmem[((la >> 2) + %du) & %du];\n", d + k, k, LMEM_WORDS - 1); }
+                    if (d != RZ && d + k < RZ) { c->reg_used[d + k] = 1; sp(&c->body, "      r%d = lmem[((la >> 2) + %du) & lmask_];\n", d + k, k); }
             }
         } else {
             if (size < 4) {
                 uint32_t m = size < 2 ? 0xFFu : 0xFFFFu;
-                sp(&c->body, "      uint sh = (la & 3u) * 8u; uint i = (la >> 2) & %du; lmem[i] = (lmem[i] & ~(0x%xu << sh)) | ((%s & 0x%xu) << sh);\n",
-                   LMEM_WORDS - 1, m, R(d), m);
+                sp(&c->body, "      uint sh = (la & 3u) * 8u; uint i = (la >> 2) & lmask_; lmem[i] = (lmem[i] & ~(0x%xu << sh)) | ((%s & 0x%xu) << sh);\n",
+                   m, R(d), m);
             } else {
                 for (int k = 0; k < nw; k++)
-                    sp(&c->body, "      lmem[((la >> 2) + %du) & %du] = %s;\n", k, LMEM_WORDS - 1, R(d == RZ ? RZ : d + k));
+                    sp(&c->body, "      lmem[((la >> 2) + %du) & lmask_] = %s;\n", k, R(d == RZ ? RZ : d + k));
             }
         }
         sp(&c->body, "    }\n");
@@ -2436,7 +2456,9 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     for (int i = 0; i < 7; i++)
         if (c->pred_used[i]) sp(&s, "  bool p%d = false;\n", i);
     if (c->uses_cc) sp(&s, "  uint cc = 0u; bool ccz = false, ccs = false;\n");
-    if (c->uses_local) sp(&s, "  uint lmem[%d]; for (int li_ = 0; li_ < %d; li_++) lmem[li_] = 0u;\n", LMEM_WORDS, LMEM_WORDS);
+    if (c->uses_local)
+        sp(&s, "  const uint lmask_ = %uu; uint lmem[%u]; for (int li_ = 0; li_ < %u; li_++) lmem[li_] = 0u;\n",
+           lmem_words(c) - 1, lmem_words(c), lmem_words(c));
     if (dbg) sp(&s, maxwell_dbg_pc == 0xffffffffu ? "  float dbgv = 1.0f;\n" : "  float dbgv = -1.0f;\n");
     if (any_branch && c->structured) {
         sp(&s, "  bool exit_now = false;\n  do {\n%s  } while (false);\n", body.buf ? body.buf : "");
@@ -2508,6 +2530,8 @@ ShaderInfo *maxwell_translate_bounded(const uint8_t *blob, size_t max_size, size
     c->glsl = key && key->glsl;
     const uint8_t *sph = blob + 0x30;
     const uint8_t *code = blob + 0x80;
+    if (stage != STAGE_COMPUTE)  // (CommonWord1 / 2: ShaderLocalMemoryLowSize / HighSize, bytes, 24 bits each)
+        c->lmem_sph_bytes = (*(const uint32_t *)(sph + 4) & 0xFFFFFFu) + (*(const uint32_t *)(sph + 8) & 0xFFFFFFu);
     // compute programs have neither the 0x30-byte NVN header nor an SPH: code starts at the blob
     if (stage == STAGE_COMPUTE) code = blob;
     if (stage == STAGE_FRAGMENT) {
@@ -2706,7 +2730,7 @@ ShaderInfo *maxwell_translate_bounded(const uint8_t *blob, size_t max_size, size
     for (int i = 0; i < 7; i++)
         if (c->pred_used[i]) sp(&s, "  bool p%d = false;\n", i);
     if (c->uses_cc) sp(&s, "  uint cc = 0; bool ccz = false, ccs = false;\n");
-    if (c->uses_local) sp(&s, "  uint lmem[%d] = {};\n", LMEM_WORDS);
+    if (c->uses_local) sp(&s, "  const uint lmask_ = %uu; uint lmem[%u] = {};\n", lmem_words(c) - 1, lmem_words(c));
     if (dbg) sp(&s, maxwell_dbg_pc == 0xffffffffu ? "  float dbgv = 1.0f;\n" : "  float dbgv = -1.0f;\n");
     if (any_branch) {
         sp(&s, "  uint pc = 8u; uint ssy[16]; uint ssy_n = 0; uint pbk[16]; uint pbk_n = 0; uint pcnt[16]; uint pcnt_n = 0;\n");
