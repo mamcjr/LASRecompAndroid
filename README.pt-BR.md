@@ -23,6 +23,18 @@ Para as versões de PC (Windows, macOS, Linux), os recursos e o randomizer, veja
 > obtida legalmente, dos arquivos extraídos de *Link's Awakening* **v1.0.0, v1.0.1 ou v1.1.0**. Não serão dadas
 > instruções de como obtê-los.
 
+## Novidades da 0.5.5
+
+Correções do que foi relatado na 0.5.4: a pescaria, o Auto caindo para 30 fps ao entrar numa área, a resolução dinâmica e as fontes personalizadas.
+
+- **Pescaria**: a vista de baixo d'água mostrava outra sala, o lago antes do jogo começar, ou nada; os peixes voltaram, a 30 e a 60 fps e em qualquer proporção.
+- **Taxa de quadros Auto**: os quadros gastos preparando os shaders de uma área nova não fazem mais ela cair para 30 fps por alguns segundos.
+- **Resolução dinâmica** se guia pelo tempo da própria GPU, então o trabalho com shaders não a baixa mais.
+- **Fontes personalizadas**: o app abre o próprio seletor de arquivos, onde dá para escolher arquivos de fonte.
+- **LRZ do Turnip** ligado por padrão também nas Adreno 7xx; as barras laterais desfocadas ficaram mais leves (um terço das leituras de textura); os logs mostram o tempo da GPU por quadro.
+
+Validação: no POCO F7 Ultra, a pescaria (baixo d'água preto na 0.5.4, os peixes de volta na 0.5.5), uma queda para 30 por execução em vez de duas com shaders novos, a resolução dinâmica estável numa área nova e uma fonte importada. LRZ numa Adreno 7xx e as barras laterais numa Mali não foram testados aqui.
+
 ## Novidades da 0.5.4
 
 Mais partes do [LASRecomp-Android-Plus](https://github.com/Nycolazs/LASRecomp-Android-Plus), do Nycolazs, incorporadas com o acordo do autor, e a correção de uma tela preta ao abrir.

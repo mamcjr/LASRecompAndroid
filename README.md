@@ -23,6 +23,18 @@ For the PC versions (Windows, macOS, Linux), features and the randomizer, see th
 > copy of the extracted game files of *Link's Awakening* **v1.0.0, v1.0.1 or v1.1.0**. Instructions on how to obtain
 > them will not be provided.
 
+## New in 0.5.5
+
+Fixes for what was reported on 0.5.4: the fishing game, Auto dropping to 30 fps when entering an area, dynamic resolution and custom fonts.
+
+- **Fishing game**: the underwater view showed another room, the pond before the game began, or nothing; the fish are back, at 30 and 60 fps and in any aspect ratio.
+- **Auto frame rate**: the frames spent preparing a new area's shaders no longer make it drop to 30 fps for a few seconds.
+- **Dynamic resolution** goes by the GPU's own time, so shader work no longer lowers it.
+- **Custom fonts**: the app opens its own file picker, where font files can be selected.
+- **Turnip LRZ** on by default on the Adreno 7xx too; the blurred side bars are lighter (a third of the texture reads); logs show the GPU's time per frame.
+
+Validation: on the POCO F7 Ultra, the fishing game (black underwater on 0.5.4, the fish back on 0.5.5), one drop to 30 a run instead of two with new shaders, dynamic resolution steady through a new area, and a font imported. LRZ on an Adreno 7xx and the side bars on a Mali not tested here.
+
 ## New in 0.5.4
 
 More of [LASRecomp-Android-Plus](https://github.com/Nycolazs/LASRecomp-Android-Plus) by Nycolazs, merged in with its author's agreement, and a fix for a black screen at start.
