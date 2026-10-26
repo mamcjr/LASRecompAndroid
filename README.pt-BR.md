@@ -23,6 +23,17 @@ Para as versões de PC (Windows, macOS, Linux), os recursos e o randomizer, veja
 > obtida legalmente, dos arquivos extraídos de *Link's Awakening* **v1.0.0, v1.0.1 ou v1.1.0**. Não serão dadas
 > instruções de como obtê-los.
 
+## Novidades da 0.5.6
+
+Correções do LAS Recomp original, duas correções do motor e uma verificação de arquivos do jogo danificados.
+
+- **Nomes com acento**: um nome como "Sebastiã" era cortado no meio de uma letra e a seleção de arquivos travava; agora o nome é cortado em letras inteiras (8, como no console).
+- **Arquivos do jogo danificados ou alterados**: a instalação confere cada arquivo do jogo por nome e tamanho; se algum estiver faltando, renomeado ou alterado, a tela inicial avisa (o jogo pode travar neles) e o log diz quais são.
+- **Editor de saves**: o Dar item entrega o item escolhido (a partir da Escama de Sereia ele entregava outro).
+- **Código do jogo compilado mais rápido** no celular (1.0.1: 284 s no POCO F7 Ultra, 416 s antes), e shaders que usam memória local pesam menos na GPU. Ao atualizar, o código do jogo de cada versão é compilado mais uma vez.
+
+Validação: no POCO F7 Ultra, um arquivo novo com o nome "Sebastiã", 100 rupias dadas pelo editor de saves, o aviso de arquivos danificados na tela inicial e o código do jogo da 1.0.1 compilado em 284 s. Importar uma cópia realmente danificada não foi testado aqui (a verificação em si é testada com os arquivos reais da 1.0.0).
+
 ## Novidades da 0.5.5
 
 Correções do que foi relatado na 0.5.4: a pescaria, o Auto caindo para 30 fps ao entrar numa área, a resolução dinâmica e as fontes personalizadas.

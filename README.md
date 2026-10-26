@@ -23,6 +23,17 @@ For the PC versions (Windows, macOS, Linux), features and the randomizer, see th
 > copy of the extracted game files of *Link's Awakening* **v1.0.0, v1.0.1 or v1.1.0**. Instructions on how to obtain
 > them will not be provided.
 
+## New in 0.5.6
+
+Fixes from the original LAS Recomp, two engine fixes, and a check for damaged game files.
+
+- **Names with accents**: a name like "Sebastiã" was cut in the middle of a letter and the file select crashed; names are now cut at whole letters (8, as on the console).
+- **Damaged or changed game files**: the setup checks every game file by name and size; if one is missing, renamed or changed, the start screen says so (the game may crash on them) and the log names the files.
+- **Save editor**: Give hands out the item you chose (from Mermaid's Scale on it gave another one).
+- **Game code built faster** on the phone (1.0.1: 284 s on the POCO F7 Ultra, 416 s before), and shaders that use local memory are lighter on the GPU. Updating builds each version's game code once more.
+
+Validation: on the POCO F7 Ultra, a new file named "Sebastiã", 100 rupees given from the save editor, the damaged-files warning on the start screen, and 1.0.1's game code built in 284 s. Importing a really damaged copy not tested here (the check itself is tested against the real 1.0.0 files).
+
 ## New in 0.5.5
 
 Fixes for what was reported on 0.5.4: the fishing game, Auto dropping to 30 fps when entering an area, dynamic resolution and custom fonts.
