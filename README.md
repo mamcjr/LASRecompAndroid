@@ -423,6 +423,10 @@ Report Android bugs and suggestions in this fork's [Issues](https://github.com/m
 Portuguese and English are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for device details to include,
 Android development, validation and pull request guidance.
 
+If you'd like to support the work on this port, you can sponsor it on
+[GitHub Sponsors](https://github.com/sponsors/mamcjr). It's entirely optional: every release stays free and the
+same for everyone, with nothing exclusive for sponsors.
+
 ## License
 
 The code is open source under the [MIT License](LICENSE). The original LAS Recomp copyright notice for Peiikai

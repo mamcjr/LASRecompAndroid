@@ -432,6 +432,10 @@ Relate problemas e sugestões do Android nas [Issues deste fork](https://github.
 Português e inglês são bem-vindos. Consulte [CONTRIBUTING.md](CONTRIBUTING.md) para saber quais informações do
 aparelho incluir, como desenvolver para Android e como validar e enviar alterações.
 
+Se quiser apoiar o trabalho neste port, você pode patrociná-lo pelo
+[GitHub Sponsors](https://github.com/sponsors/mamcjr). É totalmente opcional: todas as versões continuam gratuitas e
+iguais para todos, sem nada exclusivo para quem apoia.
+
 ## Licença
 
 O código é aberto sob a [Licença MIT](LICENSE). O aviso original de copyright de Peiikai foi preservado;
