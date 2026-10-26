@@ -690,13 +690,15 @@ static void *prune_thread(void *) {
 static int g_version_epoch;  // (bumped at each switch: the release line reads its label again)
 // The game files in root were found damaged or changed at their setup (romfs_check's romfs.check: files that aren't
 // the game's, the game's missing or changed, another total). None there (set up before this check): false.
+// (test) LARECOMP_ROMFS_CHECK=<file>: that file read in place of root's.
 static bool romfs_damaged(const std::string &root) {
     static std::string memo_root;
     static int memo_epoch = -1, memo_version = -1;
     static bool memo;
     if (root == memo_root && memo_epoch == g_romfs_check_epoch.load() && memo_version == g_version_epoch) return memo;
     memo_root = root, memo_epoch = g_romfs_check_epoch.load(), memo_version = g_version_epoch, memo = false;
-    if (FILE *f = fopen((root + "/romfs.check").c_str(), "r")) {
+    const char *test = getenv("LARECOMP_ROMFS_CHECK");
+    if (FILE *f = fopen(test ? test : (root + "/romfs.check").c_str(), "r")) {
         int odd = 0, missing = 0;
         unsigned long long bytes = 0, want = 0;
         if (fscanf(f, "odd %d missing %d bytes %llu want %llu", &odd, &missing, &bytes, &want) == 4)
