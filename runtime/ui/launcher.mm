@@ -478,6 +478,7 @@ static void android_call(const char *method) {  // a static method of the activi
 // (LASRecompActivity pickLogFolder / openLog), where a file manager can open it - Android/data/ is out of its reach
 extern "C" void android_log_file(bool on);
 extern "C" bool vk_adreno_8xx(const char *name);  // (Driver compatibility's Automatic: runtime/nvn/vulkan/device.c)
+extern "C" bool vk_lrz_auto(const char *name);
 extern "C" bool vk_lrz_at_start(void);
 extern "C" const char *vk_gpu_name(void);
 static std::string g_log_folder;  // its name ("Download/LASRecomp"), "" with none
@@ -1315,11 +1316,12 @@ static void prelaunch_tab(float sc) {
     heading("Driver compatibility");
     {   // (runtime/settings.h gpu_heap / turnip_lrz / log_file: for GPUs where a Turnip path draws wrong)
         bool changed = false;
-        const bool a8 = vk_adreno_8xx(vk_gpu_name());  // (Automatic: on for Adreno 8xx only)
-        auto tri = [&](const char *id, int *v) {  // Automatic / On / Off: -1 / 1 / 0
+        const bool a8 = vk_adreno_8xx(vk_gpu_name());  // (Automatic: the heap on for Adreno 8xx only, LRZ for 7xx too)
+        const bool lrz_auto = vk_lrz_auto(vk_gpu_name());
+        auto tri = [&](const char *id, int *v, bool auto_on) {  // Automatic / On / Off: -1 / 1 / 0
             bool ch = false;
             ImGui::PushID(id);
-            ch |= ImGui::RadioButton(tr(a8 ? "Automatic (on for this GPU)" : "Automatic (off for this GPU)"), v, -1);
+            ch |= ImGui::RadioButton(tr(auto_on ? "Automatic (on for this GPU)" : "Automatic (off for this GPU)"), v, -1);
             ImGui::SameLine();
             ch |= ImGui::RadioButton(tr("On"), v, 1);
             ImGui::SameLine();
@@ -1334,18 +1336,18 @@ static void prelaunch_tab(float sc) {
         ImGui::Text(tr("This GPU: %s"), vk_gpu_name());
         ImGui::Spacing();
         ImGui::Text("%s", tr("Game memory on the GPU (Turnip)"));
-        changed |= tri("heap", &g_settings.gpu_heap);
+        changed |= tri("heap", &g_settings.gpu_heap, a8);
         ImGui::TextDisabled("%s", tr("On: the game's memory is mapped straight into the GPU's, the fastest way. Off: what each "
                                      "frame uses is copied instead, which costs CPU time but draws right where the fast way "
                                      "doesn't. Automatic: on for Adreno 8xx GPUs, off for the others. Applies when the game "
                                      "starts."));
         ImGui::Spacing();
         ImGui::Text("%s", tr("Turnip low-resolution Z (LRZ)"));
-        changed |= tri("lrz", &g_settings.turnip_lrz);
+        changed |= tri("lrz", &g_settings.turnip_lrz, lrz_auto);
         ImGui::TextDisabled("%s", tr("Turnip's early depth test, a little faster. Off can fix missing or broken drawing on "
-                                     "some Adreno GPUs. Automatic: on for Adreno 8xx GPUs, off for the others. Applies when "
-                                     "LAS Recomp restarts."));
-        bool lrz_now = g_settings.turnip_lrz < 0 ? a8 : g_settings.turnip_lrz != 0;
+                                     "some Adreno GPUs. Automatic: on for Adreno 7xx and 8xx GPUs, off for the others. "
+                                     "Applies when LAS Recomp restarts."));
+        bool lrz_now = g_settings.turnip_lrz < 0 ? lrz_auto : g_settings.turnip_lrz != 0;
         if (lrz_now != vk_lrz_at_start()) {  // (Turnip reads it once, when the app starts)
             ImGui::Text("%s", tr("Restart LAS Recomp to apply it."));
             ImGui::SameLine();

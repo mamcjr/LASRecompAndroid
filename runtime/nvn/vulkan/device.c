@@ -1561,12 +1561,21 @@ static void quick_exit_handler(void) {
 // Driver compatibility's Automatic (settings.h gpu_heap / turnip_lrz): the fastest paths on the Adreno 8xx GPUs they
 // were made on, the compatible ones elsewhere (an Adreno 750 drew text and colors wrong with them). name: Vulkan's
 // "Adreno (TM) 830v1" or the kernel's "Adreno830v2".
-bool vk_adreno_8xx(const char *name) {
+static int adreno_number(const char *name) {
     const char *a = name ? strstr(name, "Adreno") : NULL;
-    if (!a) return false;
+    if (!a) return 0;
     while (*a && (*a < '0' || *a > '9')) a++;
-    int n = atoi(a);
+    return atoi(a);
+}
+bool vk_adreno_8xx(const char *name) {
+    int n = adreno_number(name);
     return n >= 800 && n < 900;
+}
+// LRZ's Automatic: on for the Adreno 7xx too - that 750's text and colors were the 128 MB storage range (fixed in
+// 0.5.0), and with LRZ on it draws right at 55-60 fps (issue #3)
+bool vk_lrz_auto(const char *name) {
+    int n = adreno_number(name);
+    return n >= 700 && n < 900;
 }
 static bool g_lrz_at_start = true;
 bool vk_lrz_at_start(void) { return g_lrz_at_start; }  // (the start screen: a change needs a restart)
@@ -1598,7 +1607,7 @@ void ui_window_init(void) {
                 model[strcspn(model, "\r\n")] = 0;
             }
             if (!model[0]) snprintf(model, sizeof model, "%s", g_settings.gpu_model);
-            lrz = !model[0] || vk_adreno_8xx(model);
+            lrz = !model[0] || vk_lrz_auto(model);
         }
         g_lrz_at_start = lrz != 0;
         if (!lrz && !getenv("TU_DEBUG")) setenv("TU_DEBUG", "nolrz", 1);
