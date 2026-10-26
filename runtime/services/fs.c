@@ -17,6 +17,7 @@
 #include "../mods.h"
 #include "../rando.h"
 #include "../ipc.h"
+#include "../game_addresses.h"
 
 #define FS_PATH_NOT_FOUND MAKE_RESULT(2, 1)
 #define FS_PATH_EXISTS MAKE_RESULT(2, 2)
@@ -259,6 +260,40 @@ static void rom_index(int fd) {
         rom_files[rom_nfiles++] = (RomFile){rom_data_off + data, size, path, (uint32_t)o};
         o += 0x20 + ((namelen + 3) & ~3u);
     }
+#ifdef __ANDROID__
+    {   // (from upstream LASRecomp beta_5.3: its issues #391 / #389) the game's files by name and size against its own
+        // (game_addresses.c game_romfs_check_*), and their total: one damaged, renamed or missing made the game crash at
+        // boot with no hint. The log names the odd files (the start screen says so too: launcher.mm romfs_check). The
+        // game code's six files some copies have at the romfs root count when exefs/ has them at the same size.
+        enum { LOGGED = 20 };
+        GameRomfsCheck *check = game_romfs_check_begin(game_version());
+        int odd = 0, copies = 0;
+        uint64_t bytes = 0;
+        for (int i = 0; i < rom_nfiles; i++) {
+            const char *p = rom_files[i].path;
+            char exe[1200];
+            struct stat es;
+            size_t rl = g_romfs_dir ? strlen(g_romfs_dir) : 0;  // (<root>/romfs: its exefs/ beside it)
+            if (!strchr(p, '/') && game_romfs_exefs_name(p) && rl > 5 &&
+                snprintf(exe, sizeof exe, "%.*sexefs/%s", (int)(rl - 5), g_romfs_dir, p) < (int)sizeof exe &&
+                stat(exe, &es) == 0 && (uint64_t)es.st_size == rom_files[i].size) {
+                copies++;
+                continue;
+            }
+            bytes += rom_files[i].size;
+            if (!game_romfs_check_file(check, p, rom_files[i].size) && odd++ < LOGGED)
+                LOG("[fs] romfs: not one of the game's files: %s (%llu bytes)\n", p, (unsigned long long)rom_files[i].size);
+        }
+        if (odd > LOGGED) LOG("[fs] romfs: %d more files that aren't the game's\n", odd - LOGGED);
+        if (copies) LOG("[fs] romfs: %d copies of the game code at the root, ignored\n", copies);
+        int missing = game_romfs_check_end(check);
+        if (missing) LOG("[fs] romfs: %d of the game's files missing or changed\n", missing);
+        uint64_t want = game_romfs_bytes(game_version());
+        if (want && bytes != want)
+            LOG("[fs] romfs: %llu bytes in %d files, this version's are %llu: damaged or changed game files\n",
+                (unsigned long long)bytes, rom_nfiles - copies, (unsigned long long)want);
+    }
+#endif
     // Randomizer seed: replacement files are served from the seed folder. The file-meta table is patched
     // (in a copy) to point them at data appended past the end of the image; reads there go to host files.
     for (int i = 0; i < rom_nfiles; i++) {
