@@ -251,9 +251,9 @@ VkDescriptorSetLayout vk_set_layout(const VkBindingInfo *b, int n, uint32_t set,
 // ================================================================== built-in shaders
 static const char *builtin_src(const char *name, int *stage) {
 #ifdef __ANDROID__
-    // pv[0].z: 0 the picture as it is; > 0 the bars' backdrop (device.c bars_backdrop): a 7x7 box of taps spread wide
+    // pv[0].z: 0 the picture as it is; > 0 the bars' backdrop (device.c bars_backdrop): a 4x4 box of taps spread wide
     // over the sampled strip (soft, no detail - a narrower spread left streaks), that much light. From
-    // LASRecomp-Android-Plus (MIT).
+    // LASRecomp-Android-Plus (MIT), where it was 7x7: 49 taps a pixel over the bars cost a Mali-G57 frames (issue #2).
     if (!strcmp(name, "present.vert")) {
         *stage = STAGE_VERTEX;
         return "#version 450\n"
@@ -279,9 +279,9 @@ static const char *builtin_src(const char *name, int *stage) {
                "  if (fx.x <= 0.0) { o = vec4(texture(t, uv).rgb, 1.0); return; }\n"
                "  vec3 c = vec3(0.0);\n"
                "  float r = 0.16 * fx.y;\n"
-               "  for (int j = -3; j <= 3; j++)\n"
-               "    for (int i = -3; i <= 3; i++) c += textureLod(t, uv + vec2(i, j) * (r / 3.0), 0.0).rgb;\n"
-               "  o = vec4(c / 49.0 * fx.x, 1.0);\n"
+               "  for (int j = 0; j < 4; j++)\n"
+               "    for (int i = 0; i < 4; i++) c += textureLod(t, uv + (vec2(i, j) - 1.5) * (r / 1.5), 0.0).rgb;\n"
+               "  o = vec4(c / 16.0 * fx.x, 1.0);\n"
                "}\n";
     }
 #endif
