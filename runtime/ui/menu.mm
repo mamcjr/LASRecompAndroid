@@ -795,7 +795,8 @@ static void keyboard_draw_touch(ImGuiIO &io, float scale, bool appearing) {
     ImGui::InputText("##name", g_kbd_text, (size_t)(g_kbd_max * 4 + 1 < (int)sizeof g_kbd_text ? g_kbd_max * 4 + 1 : sizeof g_kbd_text),
                      ImGuiInputTextFlags_CallbackCharFilter, name_filter);
     ImGui::PopFont();
-    if ((int)strlen(g_kbd_text) > g_kbd_max) g_kbd_text[g_kbd_max] = 0;
+    int units = kbd_cut(g_kbd_text, g_kbd_max);  // (whole characters, as the keyboard dialog below: a cut inside an
+                                                 // accented one crashed the file select)
     float bw = 340 * scale, bh = 120 * scale, sp = ImGui::GetStyle().ItemSpacing.x;
     // one row: the count at the left, the buttons at the right (placed, not SameLine: the same top for both)
     float y = ImGui::GetCursorPosY(), x0 = ImGui::GetCursorPosX(), xr = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x;
@@ -807,7 +808,7 @@ static void keyboard_draw_touch(ImGuiIO &io, float scale, bool appearing) {
     ImGui::PopFont();
     ImGui::PushFont(small);
     ImGui::SetCursorPos(ImVec2(x0, y + (bh - ImGui::GetTextLineHeight()) * 0.5f));
-    ImGui::TextDisabled("%d / %d", (int)strlen(g_kbd_text), g_kbd_max);
+    ImGui::TextDisabled("%d / %d", units, g_kbd_max);
     ImGui::PopFont();
     ImGui::End();
     ImGui::PopStyleVar(5);
