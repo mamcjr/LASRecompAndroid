@@ -288,14 +288,24 @@ extern "C" void save_editor_draw(float scale) {
 
     opt_section("Give any item");
     {   // the game's own AddItem (same path as an item pickup / Inventory.AddItemByKey event)
+        enum { N_ITEMS = sizeof kItems / sizeof kItems[0] };
+        static const char *names[N_ITEMS];
+        for (int i = 0; i < N_ITEMS; i++) names[i] = kItems[i].name;
         static int item = 0, count = 1, index = -1;
-        int n = (int)(sizeof kItemNames / sizeof kItemNames[0]);
-        opt_choice("Item", &item, kItemNames, n, -1, "The item to give, through the game's own pickup.");
+        opt_choice("Item", &item, names, N_ITEMS, -1, "The item to give, through the game's own pickup.");
         opt_int("Count", &count, 1, 99, 1, 1, "%d", "How many to give.");
         opt_int("Index", &index, -1, 99, 1, -1, "%d",
                 "Which one, for items with several: Pieces of Heart, Secret Seashells, Golden Leaves etc. each have "
-                "an index.", "Any");
-        if (opt_button("Give", "Gives the item above.")) give_item_request(item, count, index);
+                "an index.\n\nFor Small Keys, Nightmare Keys, maps, compasses and Stone Beaks: the dungeon (1-8, Color "
+                "Dungeon 9). Any: the dungeon Link is in.", "Any");
+        if (opt_button("Give", "Gives the item above.")) {
+            int id = kItems[item].id, idx = index;
+            // (dungeon items: keysanity's index, 0-7 = dungeons 1-8, 9 = Color Dungeon; runtime/hle/keysanity.c)
+            bool dungeon_item = id == 44 || id == 45 || id == 47 || id == 48 || id == 49;
+            if (dungeon_item && idx >= 1 && idx <= 8) idx--;
+            else if (dungeon_item && idx > 9) idx = -1;
+            give_item_request(id, count, idx);
+        }
     }
     opt_end();
     sync_header();
