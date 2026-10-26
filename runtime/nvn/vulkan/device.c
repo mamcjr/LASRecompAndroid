@@ -1511,9 +1511,23 @@ void backend_present(NvnTexture *t) {
     prev_present = now;
     if (now - last_fps_time >= fps_iv) {
         extern const char *game_level_name(void);
+#ifdef __ANDROID__
+        // (Android) and the GPU's busy time per frame over the interval (exec.c gpu_busy_total, from the submissions'
+        // timestamps; "-" without them): whether the GPU or the CPU holds the frame rate (issue #2: a Mali at 15-19 fps)
+        extern uint64_t vk_gpu_busy_ns(void);
+        static uint64_t busy_last;
+        uint64_t busy = vk_gpu_busy_ns();
+        char gpu[24] = "-";
+        if (busy && busy_last && frames) snprintf(gpu, sizeof gpu, "%.1fms", (busy - busy_last) / 1e6 / frames);
+        busy_last = busy;
+        if (last_fps_time > 0)
+            LOG("[vk] t=%.1f frame %llu %.1f fps max %.0fms gpu %s level %s (%s)\n", now, (unsigned long long)total_frames,
+                frames / (now - last_fps_time), max_gap * 1000.0, gpu, game_level_name(), renderer_stats());
+#else
         if (last_fps_time > 0)
             LOG("[vk] t=%.1f frame %llu %.1f fps max %.0fms level %s (%s)\n", now, (unsigned long long)total_frames,
                 frames / (now - last_fps_time), max_gap * 1000.0, game_level_name(), renderer_stats());
+#endif
         max_gap = 0;
         frames = 0;
         last_fps_time = now;
