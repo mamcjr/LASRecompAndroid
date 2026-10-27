@@ -401,6 +401,7 @@ static void storage(Service *s, IpcReq *req, IpcResp *resp) {
         IpcBuf *b = out_buf(req, 0);
         if (!b) { resp->result = MAKE_RESULT(2, 6001); break; }
         if (size > b->size) size = b->size;
+        plat_write_prepare(b->addr, size);  // (a read into pages write tracking made read-only: EFAULT)
         ssize_t n = romfs_read(st->fd, (uint8_t *)(uintptr_t)b->addr, size, off);
         if (n < 0) LOG("[fs] storage read failed at %llx: %s\n", off, strerror(errno));
         {
@@ -694,6 +695,7 @@ static void file(Service *s, IpcReq *req, IpcResp *resp) {
         IpcBuf *b = out_buf(req, 0);
         if (!b || off < 0 || size < 0) { resp->result = MAKE_RESULT(2, 6001); break; }
         if ((uint64_t)size > b->size) size = (int64_t)b->size;
+        plat_write_prepare(b->addr, size);
         ssize_t n = pread(f->fd, (void *)(uintptr_t)b->addr, (size_t)size, off);
         if (n < 0) resp->result = errno_result();
         if (n > 0 && !f->scratch && strstr(f->path, "savedata")) {

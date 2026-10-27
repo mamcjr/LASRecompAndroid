@@ -1241,6 +1241,8 @@ void vk_exec_init(void) {
 #ifdef __ANDROID__
     gcopy_mode = !g_vk.host_import && !getenv("LARECOMP_VK_NO_GCOPY");
     if (gcopy_mode) LOG("[vk] no heap import: shader global memory through CPU copies\n");
+    // (for good, without placed memory: the vertex cache and the texture checks fed by write tracking - vc_flush)
+    if (gcopy_mode && !g_vk.map_placed) plat_write_tracking_enable(HEAP_BASE, HEAP_BASE + HEAP_MAX);
 #endif
     if (prof) {
         prof_up_ns = 0;
@@ -3022,27 +3024,32 @@ bool vk_heap_place(uint64_t size) {
     if (!size) return false;
     vk_wait_ready();
     if (gmem_buf) return true;
-    if (!g_vk.map_placed || getenv("LARECOMP_VK_NO_PLACED")) return false;
+    // Not placed: the heap stays CPU memory copied for the GPU, and the vertex cache and the texture checks need the
+    // write tracking - vk_exec_init turns it on only without placed memory at all, so a Turnip that has it with Game
+    // memory on the GPU off (or not an Adreno 8xx, Automatic) had neither (BOTWRecompAndroid 262653c: 7-9 fps on an
+    // Adreno 730). A page not tracked yet counts as written, so turning it on late is safe.
+#define NOT_PLACED() (gcopy_mode ? plat_write_tracking_enable(HEAP_BASE, HEAP_BASE + HEAP_MAX) : (void)0, false)
+    if (!g_vk.map_placed || getenv("LARECOMP_VK_NO_PLACED")) return NOT_PLACED();
     extern bool vk_adreno_8xx(const char *name);
     if (g_settings.gpu_heap < 0 ? !vk_adreno_8xx(g_vk.props.deviceName) : !g_settings.gpu_heap) {
         // (Saves & files > Driver compatibility: Automatic leaves it to the Adreno 8xx it was made on)
         LOG("[vk] guest heap as GPU memory: off (%s) - shader global memory through CPU copies\n",
             g_settings.gpu_heap < 0 ? "automatic: not an Adreno 8xx" : "settings");
-        return false;
+        return NOT_PLACED();
     }
     uint64_t align = g_vk.placed_align > 65536 ? g_vk.placed_align : 65536;
     size = (size + align - 1) & ~(align - 1);
     if ((HEAP_BASE & (align - 1)) || size > HEAP_MAX) {
         LOG("[vk] heap placement: %llx / %llu MB doesn't fit (alignment %llu)\n", (unsigned long long)HEAP_BASE,
             (unsigned long long)(size >> 20), (unsigned long long)align);
-        return false;
+        return NOT_PLACED();
     }
     VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = size,
                              .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                                       VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
                                       (g_vk.bda ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0)};
     VkBuffer buf;
-    if (vkCreateBuffer(g_vk.dev, &bi, NULL, &buf) != VK_SUCCESS) return false;
+    if (vkCreateBuffer(g_vk.dev, &bi, NULL, &buf) != VK_SUCCESS) return NOT_PLACED();
     VkMemoryRequirements mr;
     vkGetBufferMemoryRequirements(g_vk.dev, buf, &mr);
     VkPhysicalDeviceMemoryProperties mp;
@@ -3821,9 +3828,14 @@ static bool vcache_lookup(uint64_t addr, uint64_t size, VkBuffer *buf, VkDeviceS
             vc_on = 0;
         }
     }
-    if (!vc_on || !gmem_buf || size > VC_MAX_RANGE) return false;
+#ifdef __ANDROID__
+    bool cpu_fill = !gmem_buf && gcopy_mode;  // (the copy mode: filled from the CPU - vc_flush)
+#else
+    bool cpu_fill = false;
+#endif
+    if (!vc_on || (!gmem_buf && !cpu_fill) || size > VC_MAX_RANGE) return false;
     uint64_t lo = (addr - HEAP_BASE) & ~(VC_PAGE - 1), hi = (addr - HEAP_BASE + size + VC_PAGE - 1) & ~(VC_PAGE - 1);
-    if (hi > gmem_size) return false;
+    if (hi > (gmem_buf ? gmem_size : HEAP_MAX)) return false;
     uint64_t pend = vk_pending_seq();
     uint64_t h = (lo * 0x9E3779B97F4A7C15ull) ^ (hi * 0xC2B2AE3D27D4EB4Full);
     uint32_t slot = (uint32_t)(h ^ (h >> 32)) & (VC_TAB - 1), free_slot = ~0u, old_slot = ~0u;
@@ -3911,10 +3923,19 @@ void vc_flush(void) {
             if (nc == 64) { nc = 1; cp[0] = (VkBufferCopy){e->lo, 0, e->hi - e->lo}; break; }  // (scattered: the whole range)
             cp[nc++] = (VkBufferCopy){o, o - e->lo, VC_PAGE};
         }
-        if (nc) {
-            vkCmdCopyBuffer(cb, gmem_buf, e->buf, (uint32_t)nc, cp);
-            for (int k = 0; k < nc; k++) prof_vc_copied += cp[k].size;
+        if (nc && gmem_buf) vkCmdCopyBuffer(cb, gmem_buf, e->buf, (uint32_t)nc, cp);
+        else if (nc) {  // (copy mode: no heap buffer - the written pages go through the upload ring)
+            uint64_t tot = 0, o = 0;
+            for (int k = 0; k < nc; k++) tot += cp[k].size;
+            VkSpan sp = vk_transient(tot, 256);
+            for (int k = 0; k < nc; k++) {
+                memcpy((uint8_t *)sp.ptr + o, (const void *)(uintptr_t)(HEAP_BASE + cp[k].srcOffset), cp[k].size);
+                cp[k].srcOffset = sp.off + o;
+                o += cp[k].size;
+            }
+            vkCmdCopyBuffer(cb, sp.buf, e->buf, (uint32_t)nc, cp);
         }
+        for (int k = 0; k < nc; k++) prof_vc_copied += cp[k].size;
         e->gen = g;
     }
     vc_npend = 0;
@@ -3928,6 +3949,9 @@ static bool guest_direct(uint64_t addr, uint64_t size, VkBuffer *buf, VkDeviceSi
     static int copy = -1;
     if (copy < 0) copy = getenv("LARECOMP_VK_COPY_VERTICES") != NULL;
     if (copy || addr < HEAP_BASE) return false;
+#ifdef __ANDROID__
+    if (gcopy_mode && !gmem_buf) return addr + size <= HEAP_BASE + HEAP_MAX && vcache_lookup(addr, size, buf, off);  // (else copied)
+#endif
     if (addr + size > HEAP_BASE + gmem_size && kernel_heap_size() != gmem_tried) { gmem_tried = kernel_heap_size(); gmem_info(); }
     if (!gmem_buf || addr + size > HEAP_BASE + gmem_size) return false;
     if (vcache_lookup(addr, size, buf, off)) return true;

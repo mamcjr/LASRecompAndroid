@@ -58,6 +58,9 @@ bool plat_reserve_guest(uint64_t lo, uint64_t hi) {
     return true;
 }
 
+void plat_write_tracking_enable(uint64_t lo, uint64_t hi) { (void)lo; (void)hi; }
+void plat_write_prepare(uint64_t addr, uint64_t size) { (void)addr; (void)size; }
+
 int plat_written_pages(uint64_t addr, uint64_t size, uint64_t *pages, int max, uint64_t *page) {
     if (!g_write_watch || addr < g_lo || addr + size > g_hi || max <= 0) return -1;
     ULONG_PTR n = (ULONG_PTR)max;
