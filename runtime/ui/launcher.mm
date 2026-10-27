@@ -2403,7 +2403,11 @@ extern "C" void launcher_run(const char *root) {
                     if (bold) dl->AddText(font, size, ImVec2(p.x + 0.7f * s, p.y), col, t);
                 };
 #ifdef __ANDROID__
+#ifdef LAS_APP_VERSION
+                std::string ver = "v" LAS_APP_VERSION;  // (this app's versionName: build.gradle.kts)
+#else
                 std::string ver;  // (the PC version's label: not this app's)
+#endif
 #else
                 std::string ver = tag_label(LARECOMP_VERSION, true);
 #endif

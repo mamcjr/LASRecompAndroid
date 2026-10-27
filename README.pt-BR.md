@@ -28,6 +28,7 @@ Para as versões de PC (Windows, macOS, Linux), os recursos e o randomizer, veja
 Menos trabalho de CPU em celulares cujo driver não consegue mapear a memória do jogo na GPU (Mali, Samsung Xclipse, o driver da própria Qualcomm).
 
 - **Dados de vértices copiados só onde mudaram**: nesses drivers, todos os buffers de vértices e índices eram copiados a cada quadro (250 a 490 MB a cada 2 s numa Mali-G57). Agora o app percebe quais páginas da memória do jogo o jogo escreveu e copia só essas. Vem do BOTWRecompAndroid.
+- **A versão do app** aparece no canto inferior direito da tela inicial.
 
 Validação: no POCO F7 Ultra simulando o caminho de um driver como o da Mali, as cópias pela CPU no campo foram de 769 para 123 MB a cada 2 s, com a mesma imagem. Não testado numa Mali de verdade aqui.
 

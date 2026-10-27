@@ -29,6 +29,7 @@ android {
         externalNativeBuild {
             cmake {
                 arguments += "-DLAS_GEN_DIR=${gen.get().asFile.resolve("inc").absolutePath.replace('\\', '/')}"
+                arguments += "-DLAS_APP_VERSION=$versionName"  // (the start screen shows it: launcher.mm)
             }
         }
     }

@@ -81,6 +81,9 @@ target_include_directories(main PRIVATE ${R}/runtime ${R}/runtime/nvn ${IMGUI} $
 target_compile_definitions(main PRIVATE
     VK_NO_PROTOTYPES VK_USE_PLATFORM_ANDROID_KHR IMGUI_IMPL_VULKAN_USE_VOLK   # Vulkan from the loaded driver (volk)
     VMA_STATIC_VULKAN_FUNCTIONS=0 VMA_DYNAMIC_VULKAN_FUNCTIONS=1)
+if(LAS_APP_VERSION)  # (the app's versionName, from build.gradle.kts: the start screen's lower right)
+    target_compile_definitions(main PRIVATE LAS_APP_VERSION="${LAS_APP_VERSION}")
+endif()
 if(HAVE_FFMPEG)
     target_link_libraries(main PRIVATE avcodec avformat avutil swscale)
 else()

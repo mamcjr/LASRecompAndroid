@@ -28,6 +28,7 @@ For the PC versions (Windows, macOS, Linux), features and the randomizer, see th
 Less CPU work on phones whose driver can't map the game's memory on the GPU (Mali, Samsung Xclipse, Qualcomm's own driver).
 
 - **Vertex data copied only where it changed**: on those drivers every vertex and index buffer was copied each frame (250-490 MB every 2 s on a Mali-G57). The app now notices which pages of the game's memory the game wrote and copies only those. From BOTWRecompAndroid.
+- **The app's version** shows in the start screen's lower right corner.
 
 Validation: on the POCO F7 Ultra with a Mali-like driver path simulated, CPU copies in the field went from 769 to 123 MB every 2 s with the same picture. Not tested on a real Mali here.
 
