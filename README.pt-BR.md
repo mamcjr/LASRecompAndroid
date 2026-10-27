@@ -23,6 +23,14 @@ Para as versões de PC (Windows, macOS, Linux), os recursos e o randomizer, veja
 > obtida legalmente, dos arquivos extraídos de *Link's Awakening* **v1.0.0, v1.0.1 ou v1.1.0**. Não serão dadas
 > instruções de como obtê-los.
 
+## Novidades da 0.5.7
+
+Menos trabalho de CPU em celulares cujo driver não consegue mapear a memória do jogo na GPU (Mali, Samsung Xclipse, o driver da própria Qualcomm).
+
+- **Dados de vértices copiados só onde mudaram**: nesses drivers, todos os buffers de vértices e índices eram copiados a cada quadro (250 a 490 MB a cada 2 s numa Mali-G57). Agora o app percebe quais páginas da memória do jogo o jogo escreveu e copia só essas. Vem do BOTWRecompAndroid.
+
+Validação: no POCO F7 Ultra simulando o caminho de um driver como o da Mali, as cópias pela CPU no campo foram de 769 para 123 MB a cada 2 s, com a mesma imagem. Não testado numa Mali de verdade aqui.
+
 ## Novidades da 0.5.6
 
 Correções do LAS Recomp original, duas correções do motor e uma verificação de arquivos do jogo danificados.

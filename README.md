@@ -23,6 +23,14 @@ For the PC versions (Windows, macOS, Linux), features and the randomizer, see th
 > copy of the extracted game files of *Link's Awakening* **v1.0.0, v1.0.1 or v1.1.0**. Instructions on how to obtain
 > them will not be provided.
 
+## New in 0.5.7
+
+Less CPU work on phones whose driver can't map the game's memory on the GPU (Mali, Samsung Xclipse, Qualcomm's own driver).
+
+- **Vertex data copied only where it changed**: on those drivers every vertex and index buffer was copied each frame (250-490 MB every 2 s on a Mali-G57). The app now notices which pages of the game's memory the game wrote and copies only those. From BOTWRecompAndroid.
+
+Validation: on the POCO F7 Ultra with a Mali-like driver path simulated, CPU copies in the field went from 769 to 123 MB every 2 s with the same picture. Not tested on a real Mali here.
+
 ## New in 0.5.6
 
 Fixes from the original LAS Recomp, two engine fixes, and a check for damaged game files.
