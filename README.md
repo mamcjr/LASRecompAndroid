@@ -23,6 +23,13 @@ For the PC versions (Windows, macOS, Linux), features and the randomizer, see th
 > copy of the extracted game files of *Link's Awakening* **v1.0.0, v1.0.1 or v1.1.0**. Instructions on how to obtain
 > them will not be provided.
 
+## Support the project
+
+If you'd like to support the ongoing work on this port, you can sponsor it on GitHub. Supporting is entirely
+optional: every release stays free and the same for everyone, with nothing exclusive for sponsors.
+
+[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-on%20GitHub-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/mamcjr)
+
 ## New in 0.5.7
 
 Less CPU work on phones whose driver can't map the game's memory on the GPU (Mali, Samsung Xclipse, Qualcomm's own driver).
@@ -449,15 +456,11 @@ This is a fan project. It is not affiliated with, endorsed by or sponsored by Ni
 *Link's Awakening* are trademarks of Nintendo. No game files, game code, assets or fonts are included, in this
 repository or in any build. You must provide your own legally obtained copy of the game files to play.
 
-## Contributing and support
+## Contributing
 
 Report Android bugs and suggestions in this fork's [Issues](https://github.com/mamcjr/LASRecompAndroid/issues).
 Portuguese and English are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for device details to include,
 Android development, validation and pull request guidance.
-
-If you'd like to support the work on this port, you can sponsor it on
-[GitHub Sponsors](https://github.com/sponsors/mamcjr). It's entirely optional: every release stays free and the
-same for everyone, with nothing exclusive for sponsors.
 
 ## License
 

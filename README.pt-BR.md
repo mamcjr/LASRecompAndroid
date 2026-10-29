@@ -23,6 +23,13 @@ Para as versões de PC (Windows, macOS, Linux), os recursos e o randomizer, veja
 > obtida legalmente, dos arquivos extraídos de *Link's Awakening* **v1.0.0, v1.0.1 ou v1.1.0**. Não serão dadas
 > instruções de como obtê-los.
 
+## Apoie o projeto
+
+Se quiser apoiar o desenvolvimento deste port, você pode patrociná-lo pelo GitHub. O apoio é totalmente opcional:
+todas as versões continuam gratuitas e iguais para todos, sem nada exclusivo para quem apoia.
+
+[![Patrocine pelo GitHub](https://img.shields.io/badge/Patrocine-pelo%20GitHub-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/mamcjr)
+
 ## Novidades da 0.5.7
 
 Menos trabalho de CPU em celulares cujo driver não consegue mapear a memória do jogo na GPU (Mali, Samsung Xclipse, o driver da própria Qualcomm).
@@ -458,15 +465,11 @@ Awakening* são marcas registradas da Nintendo. Nenhum arquivo, código, recurso
 repositório ou em qualquer build. Você precisa fornecer a sua própria cópia, obtida legalmente, dos arquivos do jogo
 para jogar.
 
-## Contribuições e suporte
+## Contribuições
 
 Relate problemas e sugestões do Android nas [Issues deste fork](https://github.com/mamcjr/LASRecompAndroid/issues).
 Português e inglês são bem-vindos. Consulte [CONTRIBUTING.md](CONTRIBUTING.md) para saber quais informações do
 aparelho incluir, como desenvolver para Android e como validar e enviar alterações.
-
-Se quiser apoiar o trabalho neste port, você pode patrociná-lo pelo
-[GitHub Sponsors](https://github.com/sponsors/mamcjr). É totalmente opcional: todas as versões continuam gratuitas e
-iguais para todos, sem nada exclusivo para quem apoia.
 
 ## Licença
 
