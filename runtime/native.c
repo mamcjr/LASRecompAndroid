@@ -634,6 +634,7 @@ void native_prepare(void) {
     uint64_t f;
     __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(f));
     g_tick_mul = f && f != 19200000 ? (uint64_t)(((__uint128_t)19200000 << 32) / f) : 0;
+    if (!g_tick_mul && getenv("LARECOMP_NATIVE_SCALED_TICKS")) g_tick_mul = 1ull << 32;  // (test: the scaled reads' stubs, x1.0)
     LOG("[native] the game's code runs on the CPU (counter %llu Hz%s)\n", (unsigned long long)f,
         g_tick_mul ? ": its reads scaled to the Switch's 19.2 MHz" : ", as the Switch's");
     memset(g_native_tab, 0, sizeof g_native_tab);
