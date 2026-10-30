@@ -894,9 +894,10 @@ static void create_swapchain(void) {
         if (fmts[i].format == VK_FORMAT_B8G8R8A8_UNORM && fmts[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) { sf = fmts[i]; break; }
     uint32_t count = caps.minImageCount + 1;
     if (caps.maxImageCount && count > caps.maxImageCount) count = caps.maxImageCount;
-    if (count > 8) count = 8;
+    if (count > VK_SC_MAX) count = VK_SC_MAX;
 #ifdef __ANDROID__  // (only the usages and composition the surface supports: drivers differ)
-    if (count < caps.minImageCount) FATAL("Surface needs %u swapchain images; renderer supports at most 8.\n", caps.minImageCount);
+    if (count < caps.minImageCount)
+        FATAL("Surface needs %u swapchain images; renderer supports at most %d.\n", caps.minImageCount, VK_SC_MAX);
     VkImageUsageFlags usage = vk_backend_swapchain_usage(caps.supportedUsageFlags);
     VkCompositeAlphaFlagBitsKHR alpha = vk_backend_composite_alpha(caps.supportedCompositeAlpha);
     if (!usage || !alpha) FATAL("Vulkan surface lacks supported color rendering or composition (usage %#x alpha %#x).\n",
@@ -922,7 +923,8 @@ static void create_swapchain(void) {
     g_vk.sc_extent = ext;
 #ifdef __ANDROID__
     VK_CHECK(vkGetSwapchainImagesKHR(g_vk.dev, g_vk.swapchain, &g_vk.sc_count, NULL));
-    if (g_vk.sc_count > 8) FATAL("Driver created %u swapchain images; renderer supports at most 8.\n", g_vk.sc_count);
+    if (g_vk.sc_count > VK_SC_MAX)
+        FATAL("Driver created %u swapchain images; renderer supports at most %d.\n", g_vk.sc_count, VK_SC_MAX);
     VK_CHECK(vkGetSwapchainImagesKHR(g_vk.dev, g_vk.swapchain, &g_vk.sc_count, g_vk.sc_images));
 #else
     g_vk.sc_count = 8;
@@ -1009,7 +1011,7 @@ static bool android_surface_ready(void) {  // false: no window to draw into now
 // ================================================================== frames (start screen and game)
 // Acquire semaphores rotate per frame in flight; a slot is reused once the submission that waited on it is done.
 #define FRAMES 3
-static VkSemaphore acquire_sem[FRAMES], done_sem[8];
+static VkSemaphore acquire_sem[FRAMES], done_sem[VK_SC_MAX];
 static uint64_t slot_seq[FRAMES];
 static int slot;
 
