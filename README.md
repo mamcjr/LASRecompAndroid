@@ -30,6 +30,19 @@ optional: every release stays free and the same for everyone, with nothing exclu
 
 [![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-on%20GitHub-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/mamcjr)
 
+## New in 0.5.8
+
+The game can run without building its code, and without copying its data; plus fixes for issues #2, #7 and #10.
+
+[Download the v0.5.8 preview APK](https://github.com/mamcjr/LASRecompAndroid/releases/tag/v0.5.8).
+
+- **Native game code (experimental)**: **Game code: Native** (above the game files folder) runs the game's own ARM64 code directly on the phone's CPU, so the setup builds nothing. An installed game can switch in Video > Native game code. Off by default. From BOTWRecompAndroid.
+- **Game files used in place**: **Game files: Use them in place** reads the game data straight from your folder (its romfs/ or romfs.bin), no ~6 GB copy. Android asks for access to all files; the folder must stay where it is.
+- **A ready-made romfs.bin** beside exefs/ is accepted by the setup: one file instead of ~3,800.
+- **Fixes**: going back to the start screen crashed on Turnip with sound playing; 0.5.7's write tracking crash and Mali memory coherency (#2); up to 16 swapchain images (#10); a lighter game code build (#7); game memory on the GPU only with ~7 GB of RAM or more.
+
+Validation: on the POCO F7 Ultra, native code at 30 and 60 fps in the village, a reboot to the start screen, and a Mali-like path simulated; game files in place from a romfs/ folder and from a romfs.bin. Not tested on a real Mali here.
+
 ## New in 0.5.7
 
 Less CPU work on phones whose driver can't map the game's memory on the GPU (Mali, Samsung Xclipse, Qualcomm's own driver).

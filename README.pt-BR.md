@@ -30,6 +30,19 @@ todas as versões continuam gratuitas e iguais para todos, sem nada exclusivo pa
 
 [![Patrocine pelo GitHub](https://img.shields.io/badge/Patrocine-pelo%20GitHub-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/mamcjr)
 
+## Novidades da 0.5.8
+
+O jogo pode rodar sem compilar o código dele e sem copiar os dados; mais correções para as issues #2, #7 e #10.
+
+[Baixe o APK de preview v0.5.8](https://github.com/mamcjr/LASRecompAndroid/releases/tag/v0.5.8).
+
+- **Código nativo do jogo (experimental)**: **Código do jogo: Nativo** (acima da pasta dos arquivos do jogo) roda o código ARM64 original do jogo direto no processador do celular, então a configuração não compila nada. Um jogo já instalado pode mudar em Vídeo > Código nativo do jogo. Desligado por padrão. Vem do BOTWRecompAndroid.
+- **Arquivos do jogo usados no lugar**: **Arquivos do jogo: Usar no lugar** lê os dados do jogo direto da sua pasta (o romfs/ ou o romfs.bin dela), sem a cópia de ~6 GB. O Android pede acesso a todos os arquivos; a pasta tem que ficar onde está.
+- **Um romfs.bin pronto** ao lado de exefs/ é aceito pela configuração: um arquivo em vez de ~3.800.
+- **Correções**: voltar à tela inicial travava no Turnip com som tocando; o crash do rastreio de escrita da 0.5.7 e a coerência de memória na Mali (#2); até 16 imagens na swapchain (#10); compilação do código do jogo mais leve (#7); memória do jogo na GPU só com ~7 GB de RAM ou mais.
+
+Validação: no POCO F7 Ultra, código nativo a 30 e 60 fps na vila, um reinício para a tela inicial e o caminho da Mali simulado; arquivos do jogo no lugar a partir de uma pasta romfs/ e de um romfs.bin. Não testado numa Mali de verdade aqui.
+
 ## Novidades da 0.5.7
 
 Menos trabalho de CPU em celulares cujo driver não consegue mapear a memória do jogo na GPU (Mali, Samsung Xclipse, o driver da própria Qualcomm).
