@@ -1168,6 +1168,7 @@ void vk_frame_end(const char *shot_path) {
     if (shot_path) {
         vk_wait_seq(seq);
         uint32_t w = g_vk.sc_extent.width, h = g_vk.sc_extent.height;
+        vk_readback_ready((uint64_t)w * h * 4);
         uint8_t *px = shot.ptr;
         bool bgr = g_vk.sc_format == VK_FORMAT_B8G8R8A8_UNORM || g_vk.sc_format == VK_FORMAT_B8G8R8A8_SRGB;
         for (uint64_t i = 0; bgr && i < (uint64_t)w * h; i++) { uint8_t t = px[i * 4]; px[i * 4] = px[i * 4 + 2]; px[i * 4 + 2] = t; }

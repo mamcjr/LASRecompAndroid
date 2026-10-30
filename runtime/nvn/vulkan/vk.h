@@ -114,6 +114,7 @@ typedef struct { VkBuffer buf; uint64_t off; void *ptr; } VkSpan;
 VkSpan vk_transient(uint64_t size, uint64_t align);
 VkSpan vk_transient_copy(const void *data, uint64_t size, uint64_t align);
 VkSpan vk_readback(uint64_t size);  // host-cached GPU -> CPU staging (read right after the copy completes)
+void vk_readback_ready(uint64_t size);  // after the copy's submission is done, before the CPU reads it
 VkDescriptorSet vk_alloc_set(VkDescriptorSetLayout layout);
 
 // ---- textures (textures.c)

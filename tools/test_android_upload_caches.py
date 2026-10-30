@@ -51,6 +51,7 @@ typedef struct { uint64_t data_hash; } TexBackend;
 static uint8_t guest[2048], arena[4096];
 #define HEAP_BASE ((uintptr_t)guest)
 static uint8_t *ga_ptr = arena;
+static void ga_wrote(uint64_t off, uint64_t len) { (void)off; (void)len; }  // (exec.c: Mali's non-coherent arena)
 static uint64_t gcopy_gen, seq = 1, top;
 static uint64_t vk_pending_seq(void) { return seq; }
 static uint64_t ga_ring(uint64_t n) {

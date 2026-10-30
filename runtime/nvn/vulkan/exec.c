@@ -109,6 +109,8 @@ static uint64_t gmem_bda;  // the placed heap's device address when shaders reac
 static VkSpan gc_span;    // this draw's / dispatch's copy, gc_size bytes (0: none)
 static uint64_t gc_size;
 static void gcopy_retire(uint64_t done);
+static void ga_flush_dirty(void);
+static void ga_invalidate(const void *p, uint64_t len);
 #endif
 
 void vk_wait_seq(uint64_t seq) {
@@ -723,6 +725,9 @@ void vk_submit_extra(VkSemaphore wait, VkSemaphore signal, VkCommandBuffer extra
     VkCommandBufferSubmitInfo cbs[2];
     int n = 0;
     vc_flush();
+#ifdef __ANDROID__
+    ga_flush_dirty();  // (the arena's CPU writes, before the GPU reads them)
+#endif
     if (s->upload_begun) {
         vk_full_barrier(s->upload);  // uploads complete before anything in the main buffer reads them
         VK_CHECK(vkEndCommandBuffer(s->upload));
@@ -919,22 +924,29 @@ VkSpan vk_transient(uint64_t size, uint64_t align) {
 // GPU -> CPU copies: the ring is write-combined (often device-local over the BAR), where CPU reads crawl (a
 // 1280x720 screenshot took 7 s). Readbacks use one host-cached buffer instead. Every user waits for the GPU and
 // reads the data before the next readback (render thread), so a single grow-only buffer suffices.
+// Cached, and on Mali not coherent (types 0x7 and 0xb: none both): the GPU's data is read after vk_readback_ready.
+// (0.2.3 asked for coherent memory instead - on Mali the uncached type, where the CPU's reads crawled.)
+static VmaAllocation rb_mem;
 VkSpan vk_readback(uint64_t size) {
     static VkBuffer buf;
-    static VmaAllocation mem;
     static uint8_t *ptr;
     static uint64_t cap;
     if (size > cap) {
-        if (buf) { vk_wait_seq(submit_seq); vmaDestroyBuffer(g_vk.vma, buf, mem); }
+        if (buf) { vk_wait_seq(submit_seq); vmaDestroyBuffer(g_vk.vma, buf, rb_mem); }
         cap = (size + (16 << 20) - 1) & ~((16ull << 20) - 1);
         VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = cap, .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
         VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
                                       .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT};
         VmaAllocationInfo info;
-        VK_CHECK(vmaCreateBuffer(g_vk.vma, &bi, &ai, &buf, &mem, &info));
+        VK_CHECK(vmaCreateBuffer(g_vk.vma, &bi, &ai, &buf, &rb_mem, &info));
         ptr = info.pMappedData;
     }
     return (VkSpan){buf, 0, ptr};
+}
+
+// The readback's first size bytes as the GPU wrote them, once its submission is done (no-op on coherent memory)
+void vk_readback_ready(uint64_t size) {
+    if (rb_mem) vmaInvalidateAllocation(g_vk.vma, rb_mem, 0, size);
 }
 
 VkSpan vk_transient_copy(const void *data, uint64_t size, uint64_t align) {
@@ -2566,6 +2578,7 @@ static void debug_save_depth(TexBackend *b, const char *path) {
                            .imageExtent = {b->width, b->height, 1}};
     vkCmdCopyImageToBuffer(cb, b->image, VK_IMAGE_LAYOUT_GENERAL, out.buf, 1, &c);
     renderer_flush();
+    vk_readback_ready((uint64_t)n * 4);
     const float *d = out.ptr;
     float lo = 1e30f, hi = -1e30f;
     for (uint64_t i = 0; i < n; i++) { if (d[i] < lo) lo = d[i]; if (d[i] > hi) hi = d[i]; }
@@ -3308,6 +3321,7 @@ static void gcopy_retire(uint64_t done) {
             // back undid the CPU's writes made since, for good - wrong shadows while moving)
             uint8_t *g = (uint8_t *)(uintptr_t)gc_back[i].addr, *sh = gc_back[i].shadow;
             const uint8_t *src = gc_back[i].src;
+            ga_invalidate(src, gc_back[i].len);
             for (uint64_t b = 0; b < gc_back[i].len; b += 256) {
                 uint64_t n = gc_back[i].len - b < 256 ? gc_back[i].len - b : 256;
                 // (a block the CPU's newer data was uploaded into after this submission: the shadow is that data
@@ -3351,6 +3365,40 @@ static uint8_t *ga_ptr;
 static uint64_t ga_res_top, ga_head = GA_RES, ga_seg_seq[GA_SIZE / GA_SEG];
 static int gres_state = -1;
 static uint64_t stat_gres_res, stat_gres_sync;  // (resident ranges used, CPU-changed bytes uploaded)
+
+// The arena's memory not coherent (Mali: its cached type 0xb; no type is both cached and coherent): what the CPU
+// writes there is flushed before the next submission (ga_wrote, ga_flush_dirty), what the GPU stored is invalidated
+// before the CPU reads it (ga_invalidate). Without them the GPU read copies still in the CPU's cache and the CPU took
+// stale lines for the GPU's results - null pointers, doubled text (#71); 0.2.3 used the coherent type instead, which
+// on Mali is uncached: the CPU's reads and writes there crawled, 2-9 fps in the world (#88, #89, #93).
+#define GA_NDIRTY 64
+static bool ga_noncoherent;
+static struct { uint64_t lo, hi; } ga_dirty[GA_NDIRTY];
+static int ga_ndirty;
+
+static void ga_flush_dirty(void) {
+    if (!ga_ndirty) return;
+    VmaAllocation a[GA_NDIRTY];
+    VkDeviceSize o[GA_NDIRTY], sz[GA_NDIRTY];
+    for (int i = 0; i < ga_ndirty; i++) a[i] = ga_mem, o[i] = ga_dirty[i].lo, sz[i] = ga_dirty[i].hi - ga_dirty[i].lo;
+    vmaFlushAllocations(g_vk.vma, (uint32_t)ga_ndirty, a, o, sz);
+    ga_ndirty = 0;
+}
+
+// The CPU wrote [off, off + len) of the arena (render thread): flushed with the next submission. The ring's copies
+// follow each other, so they mostly extend the last range.
+static void ga_wrote(uint64_t off, uint64_t len) {
+    if (!ga_noncoherent || !len) return;
+    if (ga_ndirty && ga_dirty[ga_ndirty - 1].hi == off) { ga_dirty[ga_ndirty - 1].hi = off + len; return; }
+    if (ga_ndirty == GA_NDIRTY) ga_flush_dirty();
+    ga_dirty[ga_ndirty].lo = off, ga_dirty[ga_ndirty].hi = off + len;
+    ga_ndirty++;
+}
+
+// The GPU's stores in the arena at p, once their submission is done, before the CPU reads them
+static void ga_invalidate(const void *p, uint64_t len) {
+    if (ga_noncoherent) vmaInvalidateAllocation(g_vk.vma, ga_mem, (VkDeviceSize)((const uint8_t *)p - ga_ptr), len);
+}
 static uint64_t stat_gres_fail[4];  // (fell back to the plain copies: 0 no entry/space, 1 table full, 2 ring, 3 too big)
 
 static bool gres_init(void) {
@@ -3361,10 +3409,20 @@ static bool gres_init(void) {
     VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = GA_SIZE,
                              .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                                       VK_BUFFER_USAGE_TRANSFER_SRC_BIT};
+    // (cached: the CPU reads the GPU's stores back. Adreno's Turnip has a cached coherent type; Mali's cached one
+    // isn't coherent - flushed and invalidated by hand, ga_noncoherent)
     VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
                                   .flags = (getenv("LARECOMP_GA_UNCACHED") ? VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT
                                                                            : VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT) |
-                                           VMA_ALLOCATION_CREATE_MAPPED_BIT};  // (cached: read back; LARECOMP_GA_UNCACHED=1, a test)
+                                           VMA_ALLOCATION_CREATE_MAPPED_BIT};  // (LARECOMP_GA_UNCACHED=1, a test)
+    if (getenv("LARECOMP_GA_NONCOHERENT")) {  // (a test: Mali's case on an Adreno - a cached type that isn't coherent)
+        VkPhysicalDeviceMemoryProperties mp;
+        vkGetPhysicalDeviceMemoryProperties(g_vk.phys, &mp);
+        for (uint32_t i = 0; i < mp.memoryTypeCount; i++)
+            if ((mp.memoryTypes[i].propertyFlags & (VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
+                VK_MEMORY_PROPERTY_HOST_CACHED_BIT)
+                ai.memoryTypeBits |= 1u << i;
+    }
     VmaAllocationInfo inf;
     if (vmaCreateBuffer(g_vk.vma, &bi, &ai, &ga_buf, &ga_mem, &inf) != VK_SUCCESS || !inf.pMappedData) {
         LOG("[vk] global memory arena: not available\n");
@@ -3372,7 +3430,11 @@ static bool gres_init(void) {
     }
     ga_ptr = inf.pMappedData;
     gres_state = 1;
-    LOG("[vk] global memory arena: %llu MB (what shaders store stays on the GPU)\n", (unsigned long long)(GA_SIZE >> 20));
+    VkMemoryPropertyFlags mf;
+    vmaGetMemoryTypeProperties(g_vk.vma, inf.memoryType, &mf);
+    ga_noncoherent = !(mf & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    LOG("[vk] global memory arena: %llu MB (what shaders store stays on the GPU), memory type %u (flags 0x%x%s)\n",
+        (unsigned long long)(GA_SIZE >> 20), inf.memoryType, (unsigned)mf, ga_noncoherent ? ": flushed and invalidated" : "");
     return true;
 }
 
@@ -3454,6 +3516,7 @@ static GaRes *gres_get(uint64_t lo, uint64_t hi, bool create) {
     ga_res_top += (len + 255) & ~255ull;
     memcpy(shadow, g, len);
     memcpy(ga_ptr + n->off, g, len);  // (a new slot: nothing on the GPU uses it yet)
+    ga_wrote(n->off, len);
     if (no) {  // the overlapped slots may hold the GPU's results: into the new one, in GPU order
         VkCommandBuffer cb = vk_cmd();
         vk_full_barrier(cb);
@@ -3519,6 +3582,7 @@ static uint64_t ga_load_copy(uint64_t at, uint64_t size) {
     uint64_t off = ga_ring(size);
     if (off == ~0ull) return off;
     memcpy(ga_ptr + off, src, size);
+    ga_wrote(off, size);
     cache[slot].at = at; cache[slot].size = size; cache[slot].off = off;
     cache[slot].seq = seq; cache[slot].gen = gcopy_gen; cache[slot].valid = true;
     return off;
@@ -3548,6 +3612,7 @@ static bool gres_prepare(const GcRange *r, int m, bool store) {
             static int logit = -1;
             if (logit < 0) logit = getenv("LARECOMP_GMISS") != NULL;
             uint32_t *w = (uint32_t *)(ga_ptr + (uint64_t)GMISS_WORD * 4);
+            ga_invalidate(w, 4096);
             uint32_t cnt = __atomic_load_n(&w[0], __ATOMIC_RELAXED);
             if (cnt) {
                 char b[1024];
@@ -3564,6 +3629,7 @@ static bool gres_prepare(const GcRange *r, int m, bool store) {
                 }
                 if (logit) LOG("[gmiss] frame %llu: %u accesses outside the tables, at:%s\n", (unsigned long long)last_frame, cnt, b);
                 w[0] = 0;
+                ga_wrote((uint64_t)GMISS_WORD * 4, 4);
             }
         }
     }
@@ -5249,6 +5315,7 @@ static void copy_texture_to_buffer(const TexRefRec *src, uint64_t dst) {
     vkCmdCopyImageToBuffer(cb, srcimg, VK_IMAGE_LAYOUT_GENERAL, out.buf, 1, &c);
     wait_why = "texture -> buffer readback";
     renderer_flush();  // the CPU may read the result right after the fence
+    vk_readback_ready(total);
     memcpy((void *)(uintptr_t)dst, out.ptr, total);
     if (small_mem) vmaDestroyImage(g_vk.vma, srcimg, small_mem);
 }
@@ -5701,6 +5768,7 @@ void renderer_save_texture_tex(TexBackend *b, const char *path) {
     VkBufferImageCopy c = {.bufferOffset = out.off, .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, .imageExtent = {w, h, 1}};
     vkCmdCopyImageToBuffer(cb, img, VK_IMAGE_LAYOUT_GENERAL, out.buf, 1, &c);
     renderer_flush();
+    vk_readback_ready((uint64_t)w * h * 4);
     vk_save_png(path, out.ptr, w, h);
     vk_rp_forget_view(tv);
     vkDestroyImageView(g_vk.dev, tv, NULL);
