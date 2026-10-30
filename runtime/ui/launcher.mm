@@ -15,6 +15,7 @@
 #include <pthread.h>
 #include <string>
 #include <sys/stat.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <vector>
 #include <algorithm>
@@ -656,6 +657,65 @@ extern "C" JNIEXPORT jstring JNICALL Java_com_lasrecomp_LASRecompActivity_native
     if (ok) return NULL;
     fprintf(stderr, "[launcher] romfs image: %s\n", why);
     return env->NewStringUTF(why[0] ? why : "Could not build the game data image. Check free storage and try again.");
+}
+
+// Called by the activity's import thread with a ready-made romfs.bin beside exefs/ (hactool's --romfs, or one from
+// another install) instead of a romfs/ folder: copied as one file into <root>/romfs.bin - one file through the file
+// provider instead of every one in romfs/ - its files checked from its own tables (romfs_check: names, sizes, the
+// total), and the loose few the runtime opens by path taken out of it (keep_loose). fd is the picked file's (closed
+// here). Returns NULL, or why it failed. From BOTWRecompAndroid (47270e8).
+struct ImgEntries { std::vector<std::string> paths; std::vector<uint64_t> sizes; };
+static void img_entry(void *ud, const char *path, uint64_t, uint64_t size) {
+    ImgEntries *l = (ImgEntries *)ud;
+    l->paths.push_back(path);
+    l->sizes.push_back(size);
+}
+extern "C" JNIEXPORT jstring JNICALL Java_com_lasrecomp_LASRecompActivity_nativeUseRomfsImage(JNIEnv *env, jobject, jint fd) {
+    char why[256] = "";
+    if (!romfs_image_fd_ok(fd, why, sizeof why)) {
+        close(fd);
+        fprintf(stderr, "[launcher] romfs.bin: %s\n", why);
+        return env->NewStringUTF(why);
+    }
+    set_job("Copying the game data image...");
+    g_phase_base = g_done;
+    std::string out = g_root + "/romfs.bin";
+    struct stat st;
+    uint64_t size = fstat(fd, &st) == 0 ? (uint64_t)st.st_size : 0, done = 0;
+    FILE *f = fopen(out.c_str(), "wb");
+    static uint8_t buf[8 << 20];  // (the import's one thread)
+    bool ok = f != NULL;
+    lseek(fd, 0, SEEK_SET);
+    while (ok && done < size) {
+        ssize_t r = read(fd, buf, sizeof buf);
+        if (r <= 0) { ok = false; break; }
+        ok = fwrite(buf, 1, (size_t)r, f) == (size_t)r;
+        done += (uint64_t)r;
+        setup_progress(done, size);
+    }
+    if (f && fclose(f) != 0) ok = false;
+    close(fd);
+    if (!ok) {
+        fprintf(stderr, "[launcher] romfs.bin: copy stopped at %llu of %llu bytes\n", (unsigned long long)done,
+                (unsigned long long)size);
+        return env->NewStringUTF("Could not copy romfs.bin. Check free storage and try again.");
+    }
+    int img = open(out.c_str(), O_RDONLY);
+    ImgEntries l;
+    ok = img >= 0 && romfs_image_files(img, img_entry, &l, why, sizeof why);
+    if (ok) {
+        std::vector<RomfsEntry> e(l.paths.size());
+        for (size_t i = 0; i < e.size(); i++) e[i] = {l.paths[i].c_str(), l.sizes[i]};
+        fprintf(stderr, "[launcher] romfs.bin: %zu files\n", e.size());
+        romfs_check(e.data(), (int)e.size());
+        std::string romfs = g_root + "/romfs";
+        mkdir(romfs.c_str(), 0755);
+        ok = romfs_image_extract(img, romfs.c_str(), keep_loose, why, sizeof why);
+    }
+    if (img >= 0) close(img);
+    if (ok) return NULL;
+    fprintf(stderr, "[launcher] romfs.bin: %s\n", why);
+    return env->NewStringUTF(why[0] ? why : "Could not read romfs.bin. Copy it again and retry.");
 }
 
 // An earlier version copied all of romfs/ beside romfs.bin (about 6 GB twice): once the image is there, only the

@@ -26,6 +26,15 @@ bool romfs_build_entries(const RomfsEntry *entries, int n, int (*open_fd)(void *
                          const char *out, const char *keep_dir, bool (*keep)(const char *rel),
                          void (*progress)(uint64_t done, uint64_t total), char *why, size_t why_size);
 
+// An image made elsewhere (a romfs.bin the player brings, read through a descriptor: the file picker's on Android).
+// romfs_image_fd_ok: its header, and the file long enough for it. romfs_image_files: each file's path ("a/b/c"), offset
+// in the image and size, from its tables. romfs_image_extract: the files keep(rel) picks, written under keep_dir/rel.
+// false = why says what's wrong.
+bool romfs_image_fd_ok(int fd, char *why, size_t why_size);
+bool romfs_image_files(int fd, void (*each)(void *ud, const char *path, uint64_t off, uint64_t size), void *ud,
+                       char *why, size_t why_size);
+bool romfs_image_extract(int fd, const char *keep_dir, bool (*keep)(const char *rel), char *why, size_t why_size);
+
 // Bytes of file data under dir (the image is about this plus its tables).
 uint64_t romfs_dir_bytes(const char *dir);
 

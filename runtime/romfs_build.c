@@ -185,6 +185,127 @@ static bool copy_data(FILE *out, const File *f, const Source *src, uint8_t *buf,
 static bool write_image(Dir *root, const Source *src, const char *out_path, void (*progress)(uint64_t, uint64_t),
                         char *why, size_t why_size);
 
+#ifdef __ANDROID__  // (the Android setup: launcher.mm nativeUseRomfsImage)
+// ---- an image made elsewhere (a romfs.bin the player brings: hactool's --romfs, or ours from another phone). From
+// BOTWRecompAndroid (47270e8). Its file tables walked from the root directory: each file's path ("a/b/c"), offset in
+// the image and size.
+static bool read_full(int fd, void *dst, uint64_t n, uint64_t off) {
+    for (uint64_t done = 0; done < n;) {
+        ssize_t r = pread(fd, (uint8_t *)dst + done, n - done, (off_t)(off + done));
+        if (r <= 0) return false;
+        done += (uint64_t)r;
+    }
+    return true;
+}
+
+typedef struct {
+    const uint8_t *dt, *ft;  // directory and file entry tables
+    uint32_t dsize, fsize;
+    uint64_t data;  // where file data starts
+    void (*each)(void *ud, const char *path, uint64_t off, uint64_t size);
+    void *ud;
+    long budget;  // (entries left to visit: a damaged table's loop ends)
+} Walk;
+
+static uint32_t get32(const uint8_t *p) { uint32_t v; memcpy(&v, p, 4); return v; }
+static uint64_t get64(const uint8_t *p) { uint64_t v; memcpy(&v, p, 8); return v; }
+
+static bool walk_dir(Walk *w, uint32_t doff, char *path, size_t len, int depth) {
+    if (depth > 64 || doff > w->dsize - 0x18) return false;
+    const uint8_t *d = w->dt + doff;
+    for (uint32_t f = get32(d + 12); f != EMPTY; ) {  // its files
+        if (--w->budget < 0 || f > w->fsize - 0x20) return false;
+        const uint8_t *e = w->ft + f;
+        uint32_t nl = get32(e + 28);
+        if (nl > w->fsize - f - 0x20 || len + nl + 2 > 4096) return false;
+        memcpy(path + len, e + 0x20, nl);
+        path[len + nl] = 0;
+        w->each(w->ud, path, w->data + get64(e + 8), get64(e + 16));
+        f = get32(e + 4);
+    }
+    for (uint32_t c = get32(d + 8); c != EMPTY; ) {  // its folders
+        if (--w->budget < 0 || c > w->dsize - 0x18) return false;
+        const uint8_t *e = w->dt + c;
+        uint32_t nl = get32(e + 20);
+        if (nl > w->dsize - c - 0x18 || len + nl + 2 > 4096) return false;
+        memcpy(path + len, e + 0x18, nl);
+        path[len + nl] = '/';
+        if (!walk_dir(w, c, path, len + nl + 1, depth + 1)) return false;
+        c = get32(e + 4);
+    }
+    return true;
+}
+
+bool romfs_image_fd_ok(int fd, char *why, size_t why_size) {
+    uint64_t h[10];
+    struct stat st;
+    if (!read_full(fd, h, sizeof h, 0) || fstat(fd, &st) != 0 || h[0] != 0x50) {
+        if (why) snprintf(why, why_size, "It isn't a RomFS image (no 0x50 header).");
+        return false;
+    }
+    uint64_t end = h[9];
+    for (int i = 1; i < 9; i += 2) {
+        if (h[i] > (1ull << 40) || h[i + 1] > (1ull << 40)) {
+            if (why) snprintf(why, why_size, "Its header is damaged.");
+            return false;
+        }
+        if (h[i] + h[i + 1] > end) end = h[i] + h[i + 1];
+    }
+    if ((uint64_t)st.st_size < end) {
+        if (why) snprintf(why, why_size, "It has %.2f of its %.2f GB: copy it again.", st.st_size / 1e9, end / 1e9);
+        return false;
+    }
+    return true;
+}
+
+bool romfs_image_files(int fd, void (*each)(void *ud, const char *path, uint64_t off, uint64_t size), void *ud,
+                       char *why, size_t why_size) {
+    uint64_t h[10];
+    if (!romfs_image_fd_ok(fd, why, why_size) || !read_full(fd, h, sizeof h, 0)) return false;
+    if (h[4] < 0x18 || h[8] < 0x20 || h[4] > (256u << 20) || h[8] > (256u << 20)) {
+        if (why) snprintf(why, why_size, "Its tables are damaged.");
+        return false;
+    }
+    uint8_t *dt = malloc(h[4]), *ft = malloc(h[8]);
+    bool ok = dt && ft && read_full(fd, dt, h[4], h[3]) && read_full(fd, ft, h[8], h[7]);
+    if (ok) {
+        Walk w = {dt, ft, (uint32_t)h[4], (uint32_t)h[8], h[9], each, ud, (long)(h[4] / 0x18 + h[8] / 0x20)};
+        char path[4096];
+        ok = walk_dir(&w, 0, path, 0, 0);
+    }
+    if (!ok && why) snprintf(why, why_size, "Its file tables can't be read.");
+    free(dt), free(ft);
+    return ok;
+}
+
+// The files keep(path) picks, out of the image into keep_dir/path (the few the runtime opens by path)
+typedef struct { int fd; const char *dir; bool (*keep)(const char *); bool ok; char *why; size_t why_size; } ImgOut;
+static void img_out_one(void *ud, const char *path, uint64_t off, uint64_t size) {
+    ImgOut *o = ud;
+    if (!o->ok || !o->keep(path)) return;
+    char dst[4096];
+    snprintf(dst, sizeof dst, "%s/%s", o->dir, path);
+    mkdirs_for(dst);
+    FILE *f = fopen(dst, "wb");
+    static uint8_t buf[1 << 20];  // (the setup's one thread)
+    bool good = f != NULL;
+    for (uint64_t done = 0; good && done < size;) {
+        uint64_t k = size - done < sizeof buf ? size - done : sizeof buf;
+        good = read_full(o->fd, buf, k, off + done) && fwrite(buf, 1, k, f) == k;
+        done += k;
+    }
+    if (f && fclose(f) != 0) good = false;
+    if (good) return;
+    o->ok = false;
+    if (o->why) snprintf(o->why, o->why_size, "Can't write %s.", dst);
+}
+
+bool romfs_image_extract(int fd, const char *keep_dir, bool (*keep)(const char *rel), char *why, size_t why_size) {
+    ImgOut o = {fd, keep_dir, keep, true, why, why_size};
+    return romfs_image_files(fd, img_out_one, &o, why, why_size) && o.ok;
+}
+#endif
+
 bool romfs_build(const char *dir, const char *out_path, void (*progress)(uint64_t, uint64_t), char *why, size_t why_size) {
     Dir *root = scan(dir, "", NULL, 0);
     if (!root) {

@@ -90,6 +90,7 @@ public class LASRecompActivity extends SDLActivity {
     private static native void nativeImportFailure(String reason);
     private static native void nativeImportChecking();
     private native String nativeBuildRomfs(String[] paths, long[] sizes);
+    private native String nativeUseRomfsImage(int fd);  // (a ready-made romfs.bin: launcher.mm)
     private static native void nativeDriverPicked(String name);
     private static native void nativeSaveTransferDone(String message);
     private static native void nativeModImportDone(String message);
@@ -658,8 +659,9 @@ public class LASRecompActivity extends SDLActivity {
     }
 
     // exefs: the folder with main and main.npdm; romfs: the folder with region_common - in the picked folder or a few
-    // levels below it (as runtime/ui/launcher.mm find_game)
-    private Doc exefs, romfs;
+    // levels below it (as runtime/ui/launcher.mm find_game). romfsBin: a ready-made romfs.bin (hactool's --romfs, or
+    // one from another install), used when there's no romfs/ folder: one file to copy instead of ~3,800
+    private Doc exefs, romfs, romfsBin;
     private boolean packages;
 
     private void find(Uri tree, Doc dir, int depth) {
@@ -668,6 +670,8 @@ public class LASRecompActivity extends SDLActivity {
         if (exefs == null && named(kids, "main") != null && named(kids, "main.npdm") != null) exefs = dir;
         Doc rc = named(kids, "region_common");
         if (romfs == null && rc != null && rc.dir) romfs = dir;
+        for (Doc k : kids)
+            if (romfsBin == null && !k.dir && k.name != null && k.name.equalsIgnoreCase("romfs.bin")) romfsBin = k;
         for (Doc k : kids) {
             String n = k.name == null ? "" : k.name.toLowerCase();
             if (n.endsWith(".nsp") || n.endsWith(".xci") || n.endsWith(".nca") || n.endsWith(".nsz") || n.endsWith(".xcz")) packages = true;
@@ -747,13 +751,13 @@ public class LASRecompActivity extends SDLActivity {
         int result;
         try {
             nativeImportChecking();
-            exefs = romfs = null;
+            exefs = romfs = romfsBin = null;
             packages = false;
             Doc root = new Doc();
             root.id = DocumentsContract.getTreeDocumentId(tree);
             root.dir = true;
             find(tree, root, 0);
-            if (exefs == null || romfs == null) {
+            if (exefs == null || (romfs == null && romfsBin == null)) {
                 nativeImportDone(packages ? 3 : 2);
                 return;
             }
@@ -771,7 +775,7 @@ public class LASRecompActivity extends SDLActivity {
             if (dataRoot == null) throw new IOException("App storage is unavailable. Check the phone storage and retry.");
             File games = new File(dataRoot, "extracted");
             if ("com.android.externalstorage.documents".equals(tree.getAuthority())) {
-                for (Doc source : new Doc[] {exefs, romfs}) {
+                for (Doc source : new Doc[] {exefs, romfs != null ? romfs : romfsBin}) {
                     if (source.id.startsWith("primary:")) {
                         File local = new File(android.os.Environment.getExternalStorageDirectory(), source.id.substring(8));
                         if (ImportStorage.isInside(local, games))
@@ -780,6 +784,32 @@ public class LASRecompActivity extends SDLActivity {
                 }
             }
             copied = reported = 0;
+            if (romfs == null) {  // a ready-made romfs.bin: copied whole, checked and its loose files taken out natively
+                if (romfsBin.size < 0) throw new IOException("The file provider did not report the size of romfs.bin. " +
+                        "Copy the extracted game files to a local folder and select it again.");
+                long exefsBytes = treeBytes(tree, exefs);
+                total = Math.addExact(romfsBin.size, exefsBytes);
+                long needed = ImportStorage.requiredBytes(exefsBytes, romfsBin.size);
+                long available = games.getParentFile().getUsableSpace();
+                if (available < needed) {
+                    nativeImportFailure(ImportStorage.spaceMessage(needed, available));
+                    return;
+                }
+                String name = DocumentsContract.getTreeDocumentId(tree);
+                nativeImportBegin(name.substring(name.lastIndexOf(':') + 1));
+                copyTree(tree, exefs, new File(games, "exefs"));
+                nativeImportProgress(copied, total);
+                android.os.ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(
+                        DocumentsContract.buildDocumentUriUsingTree(tree, romfsBin.id), "r");
+                if (pfd == null) throw new IOException("Could not open romfs.bin.");
+                String failed = nativeUseRomfsImage(pfd.detachFd());
+                if (failed != null) {
+                    nativeImportFailure(failed);
+                    return;
+                }
+                nativeImportDone(0);
+                return;
+            }
             romfsTree = tree;
             romfsFiles.clear();
             romfsPaths.clear();
