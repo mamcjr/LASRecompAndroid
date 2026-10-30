@@ -40,10 +40,17 @@ como `main+offset` com o símbolo do módulo e a cadeia de chamadores pelo `x29`
 ## Estado
 
 - Compila e os stubs saem como esperado no PC (`tools/test_android_native.py`: os codificadores do `native.c`
-  desmontados, e os 68 pontos contra o jogo). **Ainda não rodou num celular.**
-- No BOTWRecompAndroid o mesmo caminho chegou à tela de título e ao mundo no POCO (Adreno), sem ganho de fps; o ganho
-  é não compilar. O que vale testar aqui: a tela de título, o vilarejo, um reinício para a tela inicial, uma seed do
-  randomizer, o widescreen, e um Mali (o contador escalado e o rastreio de escrita de páginas com o código do jogo).
+  desmontados, e os 68 pontos contra o jogo).
+- **POCO F7 Ultra (Adreno 830, Turnip), 1.1.0, 2026-10-30:** tela de título, seleção de arquivo, a Vila Mabe com o
+  Link andando, a 30 fps com o widescreen (3200x1440); um reinício para a tela inicial (44 threads paradas em 10 ms, o
+  jogo de novo nativo até a tela de título); uma seed de teste com uma palavra de código (escrita no código, o jogo na
+  vila, o menu de pausa na página de itens). No log: 483 leituras de TLS e os 68 pontos no `main`, 61 `svc`, 61 TLS e
+  32 leituras do contador no `sdk`.
+- O reinício caía no modo recompilado também (a thread de áudio lia vozes no heap que o Turnip já tinha soltado):
+  corrigido à parte, o áudio para antes (`audio_stop_all`).
+- No BOTWRecompAndroid o mesmo caminho não deu ganho de fps; o ganho é não compilar. Falta: uma seed de verdade (com
+  romfs e as opções do randomizer), 60 fps, e um Mali (o contador escalado e o rastreio de escrita de páginas com o
+  código do jogo).
 - Riscos: memória executável anônima (`mprotect` com `PROT_EXEC`; permitida a apps, o caminho dos JITs, mas cada
   fabricante pode ter política própria); páginas de 16 KB (o fim do texto é arredondado para a página do sistema); o
   tratador de falhas do ART roda antes do nosso com o `x18` do jogo.
