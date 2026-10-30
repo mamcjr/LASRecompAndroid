@@ -237,22 +237,45 @@ void plat_write_tracking_enable(uint64_t lo, uint64_t hi) {
 }
 
 // (signal handler) a write to a page made read-only here: true when handled
+// A fault on a page that should be writable already (not tracked, or written since) is reopened too, unless the same
+// address keeps faulting: on a Mali-G57 (issue #2, 0.5.7 at the title) the game's heap lock at 0x340000048 - the heap's
+// first page, the first one tracked - faulted and wasn't taken for ours; not on the POCO F7 Ultra with the same path.
+// BOTWRecompAndroid saw it on an Adreno 650, a Mali-G57 and an Adreno 610 (its c2a2320, confirmed fixed on the 650).
+// wt_odd counts those (the crash report shows it).
+static uint64_t wt_odd, wt_odd_addr;
+static int wt_odd_repeats;
 static bool wt_fault(uint64_t a) {
     if (!wt_state || a < wt_lo || a >= wt_hi) return false;
     uint64_t p = (a - wt_lo) >> 12, np = (wt_hi - wt_lo) >> 12;
     bool ours = false;
     wt_lock();
+    if (wt_state[p] == 1) wt_odd_repeats = 0;
+    else if (wt_odd_addr == a && ++wt_odd_repeats > 8) { wt_unlock(); return false; }  // (a real fault)
+    else if (wt_odd_addr != a) wt_odd_addr = a, wt_odd_repeats = 0;
+    if (wt_state[p] != 1) wt_odd++;
     // (2: another thread's fault on it got there first - writable already. The next page too: a store across the
     // boundary may report its first byte, in the page before the protected one - only while still read-only: a real
     // fault on this one must not retry forever)
     for (uint64_t k = p; k < p + 2 && k < np; k++) {
-        if (k == p ? !wt_state[k] : wt_state[k] != 1) continue;
+        if (k != p && wt_state[k] != 1) continue;
+        if (k == p && wt_state[k] == 0) {  // (untracked: writable unless mprotect can't make it so - a real fault)
+            if (mprotect((void *)(uintptr_t)(wt_lo + (k << 12)), 4096, PROT_READ | PROT_WRITE)) break;
+            ours = true;
+            continue;
+        }
         wt_state[k] = 2;
         mprotect((void *)(uintptr_t)(wt_lo + (k << 12)), 4096, PROT_READ | PROT_WRITE);
         ours = true;
     }
     wt_unlock();
     return ours;
+}
+
+// (the crash report) the tracking state of a guest page: -1 not tracked by this, else 0-2 (wt_state), and the odd faults
+static int plat_write_tracking_state(uint64_t a, uint64_t *odd) {
+    *odd = wt_odd;
+    if (!wt_state || a < wt_lo || a >= wt_hi) return -1;
+    return wt_state[(a - wt_lo) >> 12];
 }
 
 void plat_write_prepare(uint64_t addr, uint64_t size) {
@@ -438,7 +461,14 @@ static void crash_handler(int sig, siginfo_t *si, void *ctx) {
     uint64_t fa = (uint64_t)(uintptr_t)si->si_addr;
     uint64_t pc = uc->uc_mcontext.pc, lr = uc->uc_mcontext.regs[30];
     if (rt_fault_watch(fa, pc)) return;  // (debugging watches first: a watched page may be write-tracked too)
-    if (sig == SIGSEGV && si->si_code == SEGV_ACCERR && wt_fault(fa)) return;  // (write tracking)
+    if (sig == SIGSEGV && wt_fault(fa)) return;  // (write tracking - whatever the code: mprotect decides, issue #2)
+    if (sig == SIGSEGV) {  // (what the next report needs: the kernel's code, and the page's tracking state)
+        uint64_t odd;
+        int st = plat_write_tracking_state(fa, &odd);
+        fprintf(stderr, "*** SIGSEGV code %d (%s), page tracking %d, odd write faults %llu\n", si->si_code,
+                si->si_code == SEGV_ACCERR ? "no access" : si->si_code == SEGV_MAPERR ? "not mapped" : "other", st,
+                (unsigned long long)odd);
+    }
     char what[32];
     snprintf(what, sizeof what, "signal %d", sig);
     rt_fault_report(what, fa, pc, lr);
