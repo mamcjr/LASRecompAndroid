@@ -48,9 +48,9 @@ como `main+offset` com o símbolo do módulo e a cadeia de chamadores pelo `x29`
   32 leituras do contador no `sdk`.
 - O reinício caía no modo recompilado também (a thread de áudio lia vozes no heap que o Turnip já tinha soltado):
   corrigido à parte, o áudio para antes (`audio_stop_all`).
-- No BOTWRecompAndroid o mesmo caminho não deu ganho de fps; o ganho é não compilar. Falta: uma seed de verdade (com
-  romfs e as opções do randomizer), 60 fps, e um Mali (o contador escalado e o rastreio de escrita de páginas com o
-  código do jogo).
+- No BOTWRecompAndroid o mesmo caminho não deu ganho de fps; o ganho é não compilar. Falta: 60 fps e um Mali (o
+  contador escalado e o rastreio de escrita de páginas com o código do jogo). O randomizer não entra no Android: o
+  caminho das seeds só segue o do runtime (as palavras de código escritas), sem mais testes.
 - Riscos: memória executável anônima (`mprotect` com `PROT_EXEC`; permitida a apps, o caminho dos JITs, mas cada
   fabricante pode ter política própria); páginas de 16 KB (o fim do texto é arredondado para a página do sistema); o
   tratador de falhas do ART roda antes do nosso com o `x18` do jogo.
