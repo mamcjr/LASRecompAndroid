@@ -3050,6 +3050,22 @@ bool vk_heap_place(uint64_t size) {
             g_settings.gpu_heap < 0 ? "automatic: not an Adreno 8xx" : "settings");
         return NOT_PLACED();
     }
+    {   // The placed heap is committed at once (~3.2 GB), where CPU copies commit only the pages the game touches: on a
+        // 6 GB phone with it turned on by hand, Android killed the app as the world loaded (BOTWRecompAndroid 833cb5d,
+        // its issue #83). Below ~7 GB of RAM (6 GB phones report ~5.5, 8 GB ones ~7.4): CPU copies whatever the setting
+        // says. LARECOMP_HEAP_ANY_RAM=1: placed anyway.
+        long total_kb = 0;
+        FILE *f = fopen("/proc/meminfo", "r");
+        if (f) {
+            if (fscanf(f, "MemTotal: %ld kB", &total_kb) != 1) total_kb = 0;
+            fclose(f);
+        }
+        if (total_kb && total_kb < 7L * 1024 * 1024 && !getenv("LARECOMP_HEAP_ANY_RAM")) {
+            LOG("[vk] guest heap as GPU memory: off (%ld MB of RAM: it would take %llu MB at once) - shader global memory "
+                "through CPU copies\n", total_kb >> 10, (unsigned long long)(size >> 20));
+            return NOT_PLACED();
+        }
+    }
     uint64_t align = g_vk.placed_align > 65536 ? g_vk.placed_align : 65536;
     size = (size + align - 1) & ~(align - 1);
     if ((HEAP_BASE & (align - 1)) || size > HEAP_MAX) {
