@@ -8,6 +8,8 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -365,19 +367,30 @@ bool romfs_build_entries(const RomfsEntry *entries, int n, int (*open_fd)(void *
     return ok;
 }
 
-static bool write_image(Dir *root, const Source *src, const char *out_path, void (*progress)(uint64_t, uint64_t),
-                        char *why, size_t why_size) {
-    #define FAIL(...) do { if (why) snprintf(why, why_size, __VA_ARGS__); goto fail; } while (0)
-    bool ok = false;
-    FILE *out = NULL;
-    uint8_t *dtab = NULL, *ftab = NULL, *buf = NULL;
-    uint32_t *dbuckets = NULL, *fbuckets = NULL;
+// An image's tables (write_image writes them, romfs_virtual_open keeps them): l lists the directories and files in table
+// order, each file with its data_off (from DATA_START); the header's offsets go to hv
+typedef struct {
+    Lists l;
+    uint32_t dsize, fsize, nbd, nbf;
+    uint8_t *dtab, *ftab;
+    uint32_t *dbuckets, *fbuckets;
+    uint64_t data, total, hv[10];
+} Tables;
+
+static void tables_free(Tables *t) {
+    free(t->dtab), free(t->ftab), free(t->dbuckets), free(t->fbuckets), free(t->l.dirs), free(t->l.files);
+    memset(t, 0, sizeof *t);
+}
+
+static bool make_tables(Dir *root, Tables *t) {
+    memset(t, 0, sizeof *t);
     Lists l = {0};
     // table order: root, then each directory's subdirectories as flatten() lists them; files likewise
-    if (l.nd == l.cd) l.dirs = realloc(l.dirs, sizeof *l.dirs * (l.cd = 64));
+    l.dirs = realloc(l.dirs, sizeof *l.dirs * (l.cd = 64));
     l.dirs[l.nd++] = root;
     flatten(root, &l);
-    if (!l.nf) FAIL("no game files found");
+    t->l = l;
+    if (!l.nf) return false;
 
     // entry offsets
     uint32_t dsize = 0, fsize = 0;
@@ -393,7 +406,8 @@ static bool write_image(Dir *root, const Source *src, const char *out_path, void
     }
 
     uint32_t nbd = bucket_count((uint32_t)l.nd), nbf = bucket_count((uint32_t)l.nf);
-    dbuckets = malloc(4 * nbd), fbuckets = malloc(4 * nbf);
+    uint32_t *dbuckets = malloc(4 * nbd), *fbuckets = malloc(4 * nbf);
+    uint8_t *dtab, *ftab;
     for (uint32_t i = 0; i < nbd; i++) dbuckets[i] = EMPTY;
     for (uint32_t i = 0; i < nbf; i++) fbuckets[i] = EMPTY;
     dtab = calloc(1, dsize), ftab = calloc(1, fsize);
@@ -435,9 +449,26 @@ static bool write_image(Dir *root, const Source *src, const char *out_path, void
     // header: tables after the file data (4-byte aligned)
     uint64_t dhash_off = (DATA_START + data + 3) & ~3ull;
     uint64_t dmeta_off = dhash_off + 4ull * nbd, fhash_off = dmeta_off + dsize, fmeta_off = fhash_off + 4ull * nbf;
-    uint8_t hdr[DATA_START] = {0};
     uint64_t hv[10] = {0x50, dhash_off, 4ull * nbd, dmeta_off, dsize, fhash_off, 4ull * nbf, fmeta_off, fsize, DATA_START};
-    memcpy(hdr, hv, sizeof hv);
+    memcpy(t->hv, hv, sizeof hv);
+    t->dsize = dsize, t->fsize = fsize, t->nbd = nbd, t->nbf = nbf, t->dtab = dtab, t->ftab = ftab;
+    t->dbuckets = dbuckets, t->fbuckets = fbuckets, t->data = data, t->total = total;
+    return true;
+}
+
+static bool write_image(Dir *root, const Source *src, const char *out_path, void (*progress)(uint64_t, uint64_t),
+                        char *why, size_t why_size) {
+    #define FAIL(...) do { if (why) snprintf(why, why_size, __VA_ARGS__); goto fail; } while (0)
+    bool ok = false;
+    FILE *out = NULL;
+    uint8_t *buf = NULL;
+    Tables t;
+    if (!make_tables(root, &t)) FAIL("no game files found");
+    Lists l = t.l;
+    uint64_t total = t.total, dhash_off = t.hv[1];
+    uint32_t nbd = t.nbd, nbf = t.nbf, dsize = t.dsize, fsize = t.fsize;
+    uint8_t hdr[DATA_START] = {0};
+    memcpy(hdr, t.hv, sizeof t.hv);
 
     out = fopen(out_path, "wb");
     if (!out) FAIL("can't write %s", out_path);
@@ -455,8 +486,8 @@ static bool write_image(Dir *root, const Source *src, const char *out_path, void
     }
     uint64_t tail = dhash_off - DATA_START - pos;
     if (tail && fwrite(zero, 1, (size_t)tail, out) != tail) FAIL("write failed (disk full?)");
-    if (fwrite(dbuckets, 4, nbd, out) != nbd || fwrite(dtab, 1, dsize, out) != dsize ||
-        fwrite(fbuckets, 4, nbf, out) != nbf || fwrite(ftab, 1, fsize, out) != fsize)
+    if (fwrite(t.dbuckets, 4, nbd, out) != nbd || fwrite(t.dtab, 1, dsize, out) != dsize ||
+        fwrite(t.fbuckets, 4, nbf, out) != nbf || fwrite(t.ftab, 1, fsize, out) != fsize)
         FAIL("write failed (disk full?)");
     if (fclose(out) != 0) { out = NULL; FAIL("write failed (disk full?)"); }
     out = NULL;
@@ -464,10 +495,144 @@ static bool write_image(Dir *root, const Source *src, const char *out_path, void
 fail:
     if (out) fclose(out);
     if (!ok) remove(out_path);
-    free(buf), free(dtab), free(ftab), free(dbuckets), free(fbuckets), free(l.dirs), free(l.files);
+    free(buf);
+    tables_free(&t);
     return ok;
     #undef FAIL
 }
+
+// ------------------------------------------------------------------ the image of a folder, unwritten (romfs_build.h)
+#ifdef __ANDROID__  // (the game files used in place: Android's setup)
+#define VFD_SLOTS 16
+struct RomfsVirtual {
+    Dir *root;
+    Tables t;
+    uint8_t *head, *tail;  // [0, DATA_START) and the tables, [hv[1], size)
+    uint64_t size;
+    struct { int file, fd; uint64_t used; } fds[VFD_SLOTS];  // (the files open lately)
+    uint64_t clock;
+    pthread_mutex_t lock;  // (reads from several threads: the open files are shared)
+};
+
+RomfsVirtual *romfs_virtual_open(const char *dir, char *why, size_t why_size) {
+    Dir *root = scan(dir, "", NULL, 0);
+    if (!root) {
+        if (why) snprintf(why, why_size, "can't read %s", dir);
+        return NULL;
+    }
+    RomfsVirtual *v = calloc(1, sizeof *v);
+    v->root = root;
+    if (!make_tables(root, &v->t)) {
+        if (why) snprintf(why, why_size, "no game files found in %s", dir);
+        romfs_virtual_close(v);
+        return NULL;
+    }
+    const uint64_t *hv = v->t.hv;
+    v->head = calloc(1, DATA_START);
+    memcpy(v->head, hv, sizeof v->t.hv);
+    v->size = hv[7] + hv[8];
+    uint64_t tl = v->size - hv[1];
+    v->tail = calloc(1, tl);
+    memcpy(v->tail, v->t.dbuckets, 4ull * v->t.nbd);
+    memcpy(v->tail + (hv[3] - hv[1]), v->t.dtab, v->t.dsize);
+    memcpy(v->tail + (hv[5] - hv[1]), v->t.fbuckets, 4ull * v->t.nbf);
+    memcpy(v->tail + (hv[7] - hv[1]), v->t.ftab, v->t.fsize);
+    for (int i = 0; i < VFD_SLOTS; i++) v->fds[i].file = -1, v->fds[i].fd = -1;
+    pthread_mutex_init(&v->lock, NULL);
+    return v;
+}
+
+uint64_t romfs_virtual_size(const RomfsVirtual *v) { return v->size; }
+
+void romfs_virtual_close(RomfsVirtual *v) {
+    if (!v) return;
+    for (int i = 0; i < VFD_SLOTS; i++)
+        if (v->fds[i].fd >= 0) close(v->fds[i].fd);
+    tables_free(&v->t);
+    free_tree(v->root);
+    free(v->head), free(v->tail), free(v);
+}
+
+static int virtual_fd(RomfsVirtual *v, int file) {
+    int lru = 0;
+    for (int i = 0; i < VFD_SLOTS; i++) {
+        if (v->fds[i].file == file) { v->fds[i].used = ++v->clock; return v->fds[i].fd; }
+        if (v->fds[i].used < v->fds[lru].used) lru = i;
+    }
+    if (v->fds[lru].fd >= 0) close(v->fds[lru].fd);
+    v->fds[lru].file = file;
+    v->fds[lru].fd = open(v->t.l.files[file]->path, O_RDONLY);
+    v->fds[lru].used = ++v->clock;
+    return v->fds[lru].fd;
+}
+
+static int64_t virtual_read(RomfsVirtual *v, void *dst, uint64_t n, uint64_t off);
+int64_t romfs_virtual_read(RomfsVirtual *v, void *dst, uint64_t n, uint64_t off) {
+    pthread_mutex_lock(&v->lock);
+    int64_t r = virtual_read(v, dst, n, off);
+    pthread_mutex_unlock(&v->lock);
+    return r;
+}
+
+static int64_t virtual_read(RomfsVirtual *v, void *dst, uint64_t n, uint64_t off) {
+    uint8_t *d = dst;
+    uint64_t done = 0, tables = v->t.hv[1];
+    while (done < n) {
+        uint64_t o = off + done, left = n - done;
+        if (o >= v->size) { memset(d + done, 0, left); break; }
+        if (o < DATA_START) {
+            uint64_t k = DATA_START - o < left ? DATA_START - o : left;
+            memcpy(d + done, v->head + o, k);
+            done += k;
+            continue;
+        }
+        if (o >= tables) {
+            uint64_t k = v->size - o < left ? v->size - o : left;
+            memcpy(d + done, v->tail + (o - tables), k);
+            done += k;
+            continue;
+        }
+        // file data: the last file starting at or before o (files are in data order)
+        uint64_t rel = o - DATA_START;
+        int lo = 0, hi = v->t.l.nf - 1, at = -1;
+        while (lo <= hi) {
+            int mid = (lo + hi) / 2;
+            if (v->t.l.files[mid]->data_off <= rel) at = mid, lo = mid + 1;
+            else hi = mid - 1;
+        }
+        File *f = at >= 0 ? v->t.l.files[at] : NULL;
+        uint64_t next = at + 1 < v->t.l.nf ? DATA_START + v->t.l.files[at + 1]->data_off : tables;
+        if (!f || rel >= f->data_off + f->size) {  // (alignment padding between files)
+            uint64_t k = next - o < left ? next - o : left;
+            memset(d + done, 0, k);
+            done += k;
+            continue;
+        }
+        uint64_t in = rel - f->data_off, k = f->size - in < left ? f->size - in : left;
+        int fd = virtual_fd(v, at);
+        ssize_t r = fd >= 0 ? pread(fd, d + done, k, (off_t)in) : -1;
+        if (r <= 0) return -1;
+        done += (uint64_t)r;
+    }
+    return (int64_t)done;
+}
+
+
+bool romfs_link_read(const char *root, char *out, size_t size) {
+    char p[1100];
+    snprintf(p, sizeof p, "%s/romfs.link", root);
+    FILE *f = fopen(p, "rb");
+    if (!f || !size) {
+        if (f) fclose(f);
+        return false;
+    }
+    size_t n = fread(out, 1, size - 1, f);
+    fclose(f);
+    out[n] = 0;
+    while (n && (out[n - 1] == '\n' || out[n - 1] == '\r')) out[--n] = 0;
+    return n > 0;
+}
+#endif
 
 // ------------------------------------------------------------------ copying the player's folder
 static bool copy_file(const char *src, const char *dst, uint64_t size, uint64_t *done, uint64_t total,

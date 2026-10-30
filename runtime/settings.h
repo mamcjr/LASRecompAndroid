@@ -41,6 +41,7 @@ typedef struct {
     bool frame_gen_flow;  // ... characters' own movement too, by block matching (experimental; framegen.c build_flow)
     bool frame_gen_120;   // ... with the display at 120 Hz: the game's 60 become 120 (off: 60 Hz, its 30 become 60)
     bool native_code;     // the game's own code on the CPU, no build of it (runtime/native.c); off by default
+    bool files_in_place;  // a setup reads the picked romfs/ or romfs.bin where it is, no copy (services/fs.c); off by default
     int overlay_style;    // Show FPS's overlay (ui/perf_overlay.mm): 0 full, 1 compact (one line)
     float overlay_pos[2]; // its top left, a share of the screen, dragged there with a finger (negative: the corner)
     char mods_off[512];   // the game mods turned off in the menu (runtime/mods.c), their folder names separated by '|'

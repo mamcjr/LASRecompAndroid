@@ -35,6 +35,20 @@ bool romfs_image_files(int fd, void (*each)(void *ud, const char *path, uint64_t
                        char *why, size_t why_size);
 bool romfs_image_extract(int fd, const char *keep_dir, bool (*keep)(const char *rel), char *why, size_t why_size);
 
+// The image of the folder `dir` without writing it: its header and tables in memory, each file's data read from the
+// folder where it lies (Android: the game files used in place, no copy - runtime/services/fs.c, romfs.link).
+// romfs_virtual_read reads image bytes [off, off + n) as romfs_build's image would hold them; the files are opened as
+// they're first read (a few kept open). NULL = failed (why). From BOTWRecompAndroid (f1d15ba).
+typedef struct RomfsVirtual RomfsVirtual;
+RomfsVirtual *romfs_virtual_open(const char *dir, char *why, size_t why_size);
+int64_t romfs_virtual_read(RomfsVirtual *v, void *dst, uint64_t n, uint64_t off);
+uint64_t romfs_virtual_size(const RomfsVirtual *v);
+void romfs_virtual_close(RomfsVirtual *v);
+
+// <root>/romfs.link (Android: the game files used in place): the path of the player's own romfs/ folder or romfs.bin
+// it names, into out. false: there's none (the files are copied).
+bool romfs_link_read(const char *root, char *out, size_t size);
+
 // Bytes of file data under dir (the image is about this plus its tables).
 uint64_t romfs_dir_bytes(const char *dir);
 

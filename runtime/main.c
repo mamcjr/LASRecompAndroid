@@ -14,8 +14,16 @@
 #include "hle.h"
 #include "kernel.h"
 #include "rando.h"
+#ifdef __ANDROID__
+#include <sys/stat.h>
+
+#include "romfs_build.h"
+#endif
 
 const char *g_romfs_dir;
+#ifdef __ANDROID__
+const char *g_romfs_link;
+#endif
 
 // rtld normally passes these to nn::init::Start: run every module's init/fini arrays.
 static void run_array(Cpu *c, uint64_t arr, uint64_t size) {
@@ -135,6 +143,19 @@ static void boot(const char *root) {
     snprintf(exefs, sizeof exefs, "%s/exefs", root);
     snprintf(romfs, sizeof romfs, "%s/romfs", root);
     snprintf(npdm_path, sizeof npdm_path, "%s/main.npdm", exefs);
+#ifdef __ANDROID__
+    {   // the game files used in place: romfs.link names the player's own romfs/ (no romfs.bin; the movies and the
+        // sheets from there too) - or their own romfs.bin, read as ours would be (the loose files taken out of it into
+        // romfs/ at setup). romfs_build.h romfs_link_read; services/fs.c reads it.
+        // (each boot: the files may have been set up again on the start screen; the old strings stay - a few bytes)
+        char target[1024];
+        struct stat st;
+        const char *test = getenv("LARECOMP_ROMFS_LINK");  // (test: what a romfs.link would name)
+        if (test) snprintf(target, sizeof target, "%s", test);
+        g_romfs_link = test || romfs_link_read(root, target, sizeof target) ? strdup(target) : NULL;
+        g_romfs_dir = g_romfs_link && !(stat(target, &st) == 0 && S_ISREG(st.st_mode)) ? g_romfs_link : strdup(romfs);
+    }
+#endif
     if (!g_romfs_dir) g_romfs_dir = strdup(romfs);
 
     char why[512];

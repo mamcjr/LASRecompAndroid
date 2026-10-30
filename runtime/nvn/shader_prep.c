@@ -15,6 +15,7 @@
 
 #include "nvn.h"
 #include "shader_prep.h"
+#include "../romfs_build.h"
 
 uint64_t shader_code_hash(const uint8_t *code, size_t n) {  // FNV-1a, 64-bit
     uint64_t h = 0xcbf29ce484222325ull;
@@ -366,15 +367,31 @@ static bool shader_file(const char *name) {
 // The RomFS image (runtime/services/fs.c rom_index reads the same tables): its files whose names say they may hold
 // shaders. header: size, dir hash (off, size), dir meta (off, size), file hash (off, size), file meta (off, size), data
 // off. A file entry: parent +0, data +8, size +0x10, name length +0x1C, name +0x20.
+// The game files used in place from the player's romfs/ folder (<root>/romfs.link): the image made up from it
+// (romfs_build.h romfs_virtual), read where an image file would be; its sources' path is VIRT_PATH.
+static RomfsVirtual *prep_virt;
+static const char VIRT_PATH[] = "<romfs.link>";
+static ssize_t src_pread(int fd, const char *path, void *dst, size_t n, uint64_t off) {
+    if (path && !strcmp(path, VIRT_PATH)) return prep_virt ? (ssize_t)romfs_virtual_read(prep_virt, dst, n, off) : -1;
+    return pread(fd, dst, n, (off_t)off);
+}
+
 static void idx_romfs_image(const char *path) {
-    int fd = open(path, O_RDONLY);
-    if (fd < 0) { LOG("[shader] preparation: no %s\n", path); return; }
+    struct stat ps;
+    bool folder = stat(path, &ps) == 0 && S_ISDIR(ps.st_mode);
+    if (folder && !prep_virt) {
+        char why[256];
+        if (!(prep_virt = romfs_virtual_open(path, why, sizeof why))) { LOG("[shader] preparation: %s\n", why); return; }
+    }
+    if (folder) path = VIRT_PATH;
+    int fd = folder ? -3 : open(path, O_RDONLY);
+    if (fd == -1) { LOG("[shader] preparation: no %s\n", path); return; }
     uint64_t h[10];
     uint8_t *fmeta = NULL;
-    if (pread(fd, h, sizeof h, 0) == (ssize_t)sizeof h && h[8] && h[8] < (64u << 20)) {
+    if (src_pread(fd, path, h, sizeof h, 0) == (ssize_t)sizeof h && h[8] && h[8] < (64u << 20)) {
         uint64_t foff = h[7], fsz = h[8], data_off = h[9];
         fmeta = malloc(fsz);
-        if (fmeta && pread(fd, fmeta, fsz, (off_t)foff) == (ssize_t)fsz) {
+        if (fmeta && src_pread(fd, path, fmeta, fsz, foff) == (ssize_t)fsz) {
             for (uint64_t o = 0; o + 0x20 <= fsz;) {
                 uint64_t data = rd64(fmeta, o + 8), size = rd64(fmeta, o + 0x10);
                 uint32_t namelen = rd32(fmeta, o + 0x1C);
@@ -384,7 +401,7 @@ static void idx_romfs_image(const char *path) {
                 o += 0x20 + ((namelen + 3) & ~3u);
                 if (!shader_file(name) || !size || size > (512u << 20)) continue;
                 uint8_t *d = malloc(size);
-                if (d && pread(fd, d, size, (off_t)(data_off + data)) == (ssize_t)size && idx_buffer(d, size)) {
+                if (d && src_pread(fd, path, d, size, data_off + data) == (ssize_t)size && idx_buffer(d, size)) {
                     idx_files = realloc(idx_files, sizeof *idx_files * (size_t)(idx_nfiles + 1));
                     idx_files[idx_nfiles++] = (IdxSrc){strdup(path), data_off + data, NULL};
                 }
@@ -393,7 +410,7 @@ static void idx_romfs_image(const char *path) {
         }
     }
     free(fmeta);
-    close(fd);
+    if (fd >= 0) close(fd);
 }
 
 // The main module (exefs/main, an NSO) holds a few shaders of its own in its data (LZ4-compressed in the file): its
@@ -431,8 +448,9 @@ static uint8_t *blob_read(const IdxEnt *e, ShaderBlob *b, int *fds) {
     if (s->mem) memcpy(d, s->mem + e->off, e->size);
     else {
         int *fd = &fds[e->file];
-        if (*fd < 0 && (*fd = open(s->path, O_RDONLY)) < 0) { free(d); return NULL; }
-        if (pread(*fd, d, e->size, (off_t)(s->base + e->off)) != (ssize_t)e->size) { free(d); return NULL; }
+        bool virt = !strcmp(s->path, VIRT_PATH);
+        if (!virt && *fd < 0 && (*fd = open(s->path, O_RDONLY)) < 0) { free(d); return NULL; }
+        if (src_pread(*fd, s->path, d, e->size, s->base + e->off) != (ssize_t)e->size) { free(d); return NULL; }
     }
     *b = (ShaderBlob){d, e->size, NULL, e->const_offset, e->const_size};
     return d;
@@ -534,7 +552,8 @@ static bool prep_run_locked(const char *root, void (*progress)(int done, int tot
     queued0 = renderer_prepare_queued();
     if (!idx_n) {
         char p[1100];
-        snprintf(p, sizeof p, "%s/romfs.bin", root);
+        if (!romfs_link_read(root, p, sizeof p))  // (the game files used in place: what romfs.link names)
+            snprintf(p, sizeof p, "%s/romfs.bin", root);
         idx_romfs_image(p);
         snprintf(p, sizeof p, "%s/exefs/main", root);
         idx_nso(p);

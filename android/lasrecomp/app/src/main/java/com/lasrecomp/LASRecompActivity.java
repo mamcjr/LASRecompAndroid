@@ -91,6 +91,7 @@ public class LASRecompActivity extends SDLActivity {
     private static native void nativeImportChecking();
     private native String nativeBuildRomfs(String[] paths, long[] sizes);
     private native String nativeUseRomfsImage(int fd);  // (a ready-made romfs.bin: launcher.mm)
+    private native String nativeUseRomfsInPlace(String path);  // (the game files used in place: launcher.mm)
     private static native void nativeDriverPicked(String name);
     private static native void nativeSaveTransferDone(String message);
     private static native void nativeModImportDone(String message);
@@ -244,7 +245,10 @@ public class LASRecompActivity extends SDLActivity {
     }
 
     // ---- pickers (called from the start screen, on SDL's thread)
+    private static volatile boolean importInPlace;  // (the next game folder picked: its romfs/ or romfs.bin used where it is)
+
     public static void pickGameFolder() {
+        importInPlace = false;
         self.runOnUiThread(() -> {
             try {
                 self.startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQ_GAME);
@@ -253,6 +257,43 @@ public class LASRecompActivity extends SDLActivity {
                 nativeImportDone(1);
             }
         });
+    }
+
+    // Game files used in place (the start screen's Game files: Use them in place): the native side reads the picked
+    // romfs/ or romfs.bin by its path (runtime/services/fs.c, romfs.link), which Android allows only with the access to
+    // all files. Without it, the system's page for it opens and the setup waits for the folder to be chosen again. From
+    // BOTWRecompAndroid (f1d15ba).
+    public static void pickGameFolderInPlace() {
+        if (android.os.Build.VERSION.SDK_INT >= 30 && !android.os.Environment.isExternalStorageManager()) {
+            self.runOnUiThread(() -> {
+                try {
+                    self.startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                            Uri.parse("package:" + self.getPackageName())));
+                } catch (Exception e) {
+                    self.startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
+                }
+            });
+            nativeImportFailure("Allow LAS Recomp to access all files (the page Android just opened), then choose the folder again.");
+            return;
+        }
+        pickGameFolder();
+        importInPlace = true;
+    }
+
+    // A file or folder the file picker gave (its document id: "primary:Download/LAS", "1A2B-3C4D:Games/LAS/romfs.bin",
+    // "raw:/storage/...") as a path the native side can open, or null (a cloud provider, or nothing there)
+    private static String documentPath(String id) {
+        if (id == null) return null;
+        String path;
+        if (id.startsWith("raw:")) path = id.substring(4);
+        else {
+            int c = id.indexOf(':');
+            if (c < 0) return null;
+            String vol = id.substring(0, c), rel = id.substring(c + 1);
+            File base = "primary".equalsIgnoreCase(vol) ? android.os.Environment.getExternalStorageDirectory() : new File("/storage/" + vol);
+            path = rel.isEmpty() ? base.getPath() : new File(base, rel).getPath();
+        }
+        return new File(path).exists() ? path : null;
     }
 
     public static void pickDriver() {
@@ -784,6 +825,34 @@ public class LASRecompActivity extends SDLActivity {
                 }
             }
             copied = reported = 0;
+            if (importInPlace) {  // the romfs/ or romfs.bin where it is: exefs/ copied, its path noted (services/fs.c)
+                Doc data = romfs != null ? romfs : romfsBin;
+                String at = documentPath(data.id);
+                if (at == null || !new File(at).canRead()) {
+                    nativeImportFailure("This folder can't be used in place (" + (at == null ? data.id : at) +
+                            "): choose Game files: Copy them, or a folder on the phone's storage.");
+                    return;
+                }
+                long exefsBytes = treeBytes(tree, exefs);
+                total = exefsBytes;
+                long available = games.getParentFile().getUsableSpace();
+                if (available < exefsBytes + (64L << 20)) {
+                    nativeImportFailure(ImportStorage.spaceMessage(exefsBytes + (64L << 20), available));
+                    return;
+                }
+                String name = DocumentsContract.getTreeDocumentId(tree);
+                nativeImportBegin(name.substring(name.lastIndexOf(':') + 1));
+                copyTree(tree, exefs, new File(games, "exefs"));
+                nativeImportProgress(copied, total);
+                String failed = nativeUseRomfsInPlace(at);
+                if (failed != null) {
+                    nativeImportFailure(failed);
+                    return;
+                }
+                Log.i(TAG, "game data used in place: " + at);
+                nativeImportDone(0);
+                return;
+            }
             if (romfs == null) {  // a ready-made romfs.bin: copied whole, checked and its loose files taken out natively
                 if (romfsBin.size < 0) throw new IOException("The file provider did not report the size of romfs.bin. " +
                         "Copy the extracted game files to a local folder and select it again.");

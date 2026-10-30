@@ -18,6 +18,7 @@
 #include "../rando.h"
 #include "../ipc.h"
 #include "../game_addresses.h"
+#include "../romfs_build.h"
 
 #define FS_PATH_NOT_FOUND MAKE_RESULT(2, 1)
 #define FS_PATH_EXISTS MAKE_RESULT(2, 2)
@@ -26,6 +27,30 @@
 
 const char *g_save_dir = "save";
 static int romfs_fd = -1;
+
+#ifdef __ANDROID__
+// The game files used in place (main.c g_romfs_link: <root>/romfs.link names the player's own romfs/ folder): no
+// romfs.bin, its image made up from that folder (romfs_build.h romfs_virtual) - romfs_fd is then VIRT_FD, and every
+// read of the image goes through img_pread. Kept over a reboot (the same files). From BOTWRecompAndroid (f1d15ba).
+#define VIRT_FD (-2)
+static RomfsVirtual *romfs_virt;
+static ssize_t img_pread(int fd, void *dst, size_t n, uint64_t off) {
+    if (fd == VIRT_FD) return romfs_virt ? (ssize_t)romfs_virtual_read(romfs_virt, dst, n, off) : -1;
+    return pread(fd, dst, n, (off_t)off);
+}
+static uint64_t img_size(int fd) {
+    if (fd == VIRT_FD) return romfs_virt ? romfs_virtual_size(romfs_virt) : 0;
+    struct stat sb;
+    return fstat(fd, &sb) ? 0 : (uint64_t)sb.st_size;
+}
+#else
+#define img_pread(fd, dst, n, off) pread(fd, dst, n, (off_t)(off))
+static uint64_t img_size(int fd) {
+    struct stat sb;
+    fstat(fd, &sb);
+    return (uint64_t)sb.st_size;
+}
+#endif
 
 // ------------------------------------------------------------------ RomFS file index (offset -> path)
 typedef struct { uint64_t start, size; char *path; int fd; const uint8_t *mem; } Overlay;
@@ -57,7 +82,7 @@ RT_ON_RESET(fs_reset) {
     npatches = 0;
     rom_files = NULL, rom_nfiles = 0, rom_data_off = 0;
     if (romfs_fd >= 0) close(romfs_fd);
-    romfs_fd = -1;
+    romfs_fd = -1;  // (Android: romfs_virt stays - the same files next boot)
     g_save_dir = "save";
 }
 
@@ -159,11 +184,11 @@ static void add_new_files(int fd, const uint64_t *h, const uint8_t *dmeta, uint6
     uint64_t hoff = h[5], hsz = h[6];
     uint8_t *dcopy = malloc(dsz), *hcopy = malloc(hsz), *head = malloc(0x50);
     memcpy(dcopy, dmeta, dsz);
-    if (pread(fd, hcopy, hsz, (off_t)hoff) != (ssize_t)hsz || pread(fd, head, 0x50, 0) != 0x50) return;
+    if (img_pread(fd, hcopy, hsz, hoff) != (ssize_t)hsz || img_pread(fd, head, 0x50, 0) != 0x50) return;
     // the file-meta table to extend: the override-patched copy if there is one
     const uint8_t *base_meta = ov_meta;
     uint8_t *tmp = NULL;
-    if (!base_meta) { tmp = malloc(fsz); pread(fd, tmp, fsz, (off_t)h[7]); base_meta = tmp; }
+    if (!base_meta) { tmp = malloc(fsz); img_pread(fd, tmp, fsz, h[7]); base_meta = tmp; }
     uint64_t extra = 0;
     for (int i = 0; i < n; i++) {
         const char *name = strrchr(nf[i].rel, '/');
@@ -174,11 +199,7 @@ static void add_new_files(int fd, const uint64_t *h, const uint8_t *dmeta, uint6
     uint8_t *meta = calloc(1, nsz);
     memcpy(meta, base_meta, fsz);
     free(tmp);
-    if (!ov_end) {
-        struct stat rs;
-        fstat(fd, &rs);
-        ov_end = (rs.st_size + 0xF) & ~0xFull;
-    }
+    if (!ov_end) ov_end = (img_size(fd) + 0xF) & ~0xFull;
     uint64_t meta_at = ov_end;  // the new table first, then the new files' data
     uint64_t data_at = (meta_at + nsz + 0xF) & ~0xFull;
     uint32_t nb = (uint32_t)(hsz / 4);
@@ -233,12 +254,12 @@ static void rom_index(int fd) {
     mods_scan();  // (game mods: runtime/mods.c - their files replace the game's below, after a randomizer seed's)
 #endif
     uint64_t h[10];
-    if (pread(fd, h, sizeof h, 0) != (ssize_t)sizeof h) return;
+    if (img_pread(fd, h, sizeof h, 0) != (ssize_t)sizeof h) return;
     // header: size, dir hash (off,size), dir meta (off,size), file hash (off,size), file meta (off,size), data off
     uint64_t doff = h[3], dsz = h[4], foff = h[7], fsz = h[8];
     rom_data_off = h[9];
     uint8_t *dmeta = malloc(dsz), *fmeta = malloc(fsz);
-    if (pread(fd, dmeta, dsz, (off_t)doff) != (ssize_t)dsz || pread(fd, fmeta, fsz, (off_t)foff) != (ssize_t)fsz) return;
+    if (img_pread(fd, dmeta, dsz, doff) != (ssize_t)dsz || img_pread(fd, fmeta, fsz, foff) != (ssize_t)fsz) return;
     int cap = 4096;
     rom_files = malloc(sizeof(RomFile) * cap);
     for (uint64_t o = 0; o + 0x20 <= fsz;) {
@@ -308,9 +329,7 @@ static void rom_index(int fd) {
             memcpy(ov_meta, fmeta, fsz);
             ov_meta_off = foff;
             ov_meta_size = fsz;
-            struct stat rs;
-            fstat(fd, &rs);
-            ov_end = (rs.st_size + 0xF) & ~0xFull;
+            ov_end = (img_size(fd) + 0xF) & ~0xFull;
         }
         uint64_t rel = ov_end - rom_data_off, size = (uint64_t)sb.st_size;
         memcpy(ov_meta + rom_files[i].meta + 8, &rel, 8);
@@ -339,7 +358,7 @@ static void rom_index(int fd) {
 
 // Virtual RomFS image read: original bytes, with the patched file table and appended replacement files.
 static ssize_t romfs_read(int fd, uint8_t *dst, uint64_t size, uint64_t off) {
-    if (!ov_n) return pread(fd, dst, size, (off_t)off);
+    if (!ov_n) return img_pread(fd, dst, size, off);
     uint64_t done = 0;
     while (done < size) {
         uint64_t o = off + done, n = size - done;
@@ -361,7 +380,7 @@ static ssize_t romfs_read(int fd, uint8_t *dst, uint64_t size, uint64_t off) {
             if ((uint64_t)r < n) memset(dst + done + r, 0, n - r);
         } else {
             if (o + n > ov[0].start) n = ov[0].start - o;
-            ssize_t r = pread(fd, dst + done, n, (off_t)o);
+            ssize_t r = img_pread(fd, dst + done, n, o);
             if (r < 0) r = 0;
             if ((uint64_t)r < n) memset(dst + done + r, 0, n - r);
             // overlay the patched tables (file meta, and with added files: header, dir meta, file hash)
@@ -425,18 +444,37 @@ static void storage(Service *s, IpcReq *req, IpcResp *resp) {
 }
 
 static Service *open_romfs_storage(void) {
-    if (romfs_fd < 0) {
+#ifdef __ANDROID__
+    struct stat lst;  // (the game files used in place: their own romfs.bin, or their romfs/ folder)
+    bool link_file = g_romfs_link && stat(g_romfs_link, &lst) == 0 && S_ISREG(lst.st_mode);
+    if (romfs_fd == -1 && g_romfs_link && !link_file) {
+        if (!romfs_virt) {
+            uint64_t t0 = plat_now_ns();
+            char why[256];
+            romfs_virt = romfs_virtual_open(g_romfs_link, why, sizeof why);
+            if (!romfs_virt)
+                FATAL("The game files folder can't be read: %s. If it was moved or deleted, set up the game files again "
+                      "on the start screen.\n", why);
+            LOG("[fs] game data from %s in place: %.1f GB, its index made in %llu ms\n", g_romfs_link,
+                romfs_virtual_size(romfs_virt) / 1e9, (unsigned long long)((plat_now_ns() - t0) / 1000000));
+        }
+        romfs_fd = VIRT_FD;
+        rom_index(romfs_fd);
+    }
+#endif
+    if (romfs_fd == -1) {  // (not VIRT_FD)
         char path[1024];
         snprintf(path, sizeof path, "%s.bin", g_romfs_dir);  // extracted/romfs.bin
+#ifdef __ANDROID__
+        if (link_file) snprintf(path, sizeof path, "%s", g_romfs_link), LOG("[fs] game data from %s in place\n", path);
+#endif
         romfs_fd = open(path, O_RDONLY);
         if (romfs_fd < 0) FATAL("cannot open %s (set up the game files on the start screen)\n", path);
         rom_index(romfs_fd);
     }
     Storage *st = calloc(1, sizeof *st);
     st->fd = romfs_fd;
-    struct stat sb;
-    fstat(romfs_fd, &sb);
-    st->size = sb.st_size;
+    st->size = img_size(romfs_fd);
     return service_new("IStorage(romfs)", storage, st);
 }
 

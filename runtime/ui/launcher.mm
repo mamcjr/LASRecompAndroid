@@ -184,6 +184,15 @@ static bool file_exists(const std::string &p) {
 static std::string check_copied_files(const std::string &root) {
     if (!file_exists(root + "/exefs/main")) return "No game files";
     if (!game_version_of(root.c_str())) return "Wrong game version (needs v1.0.0, v1.0.1 or v1.1.0)";
+#ifdef __ANDROID__
+    char linked[1024];  // (the game files used in place: the player's own romfs/ or romfs.bin - romfs_build.h romfs.link)
+    if (romfs_link_read(root.c_str(), linked, sizeof linked)) {
+        struct stat st;
+        if (stat(linked, &st) != 0) return "The game files folder was moved or can't be read";
+        if (S_ISDIR(st.st_mode)) return file_exists(std::string(linked) + "/region_common") ? "" : "Game data missing";
+        return file_exists(root + "/romfs/region_common") ? "" : "Game data missing";  // (their romfs.bin: the loose few here)
+    }
+#endif
     if (!file_exists(root + "/romfs/region_common") || !file_exists(root + "/romfs.bin")) return "Game data missing";
     return "";
 }
@@ -726,6 +735,64 @@ extern "C" JNIEXPORT jstring JNICALL Java_com_lasrecomp_LASRecompActivity_native
     if (ok) return NULL;
     fprintf(stderr, "[launcher] romfs.bin: %s\n", why);
     return env->NewStringUTF(why[0] ? why : "Could not read romfs.bin. Copy it again and retry.");
+}
+
+// The game files used in place (Game files: Use them in place): the picked romfs/ folder or ready-made romfs.bin where
+// it is, by its path (the activity has the access to all files then). Its files checked (romfs_check, from the folder or
+// the image's own tables), the loose few taken out of a romfs.bin into <root>/romfs (a folder has them itself), and
+// <root>/romfs.link written with the path: services/fs.c reads the game's data from there, no copy. Returns NULL, or why
+// it failed. From BOTWRecompAndroid (f1d15ba, 47270e8).
+static void walk_romfs(const std::string &dir, const std::string &rel, ImgEntries *l, int depth) {
+    DIR *d = depth < 32 ? opendir(dir.c_str()) : NULL;
+    if (!d) return;
+    while (struct dirent *e = readdir(d)) {
+        if (e->d_name[0] == '.') continue;  // (as romfs_build's scan)
+        std::string p = dir + "/" + e->d_name, r = rel.empty() ? e->d_name : rel + "/" + e->d_name;
+        struct stat st;
+        if (stat(p.c_str(), &st) != 0) continue;
+        if (S_ISDIR(st.st_mode)) walk_romfs(p, r, l, depth + 1);
+        else img_entry(l, r.c_str(), 0, (uint64_t)st.st_size);
+    }
+    closedir(d);
+}
+extern "C" JNIEXPORT jstring JNICALL Java_com_lasrecomp_LASRecompActivity_nativeUseRomfsInPlace(JNIEnv *env, jobject,
+                                                                                               jstring jpath) {
+    const char *c = env->GetStringUTFChars(jpath, NULL);
+    std::string path = c ? c : "";
+    if (c) env->ReleaseStringUTFChars(jpath, c);
+    set_job("Checking the game files...");
+    struct stat st;
+    if (path.empty() || stat(path.c_str(), &st) != 0) return env->NewStringUTF("The game files can't be read where they are.");
+    char why[256] = "";
+    ImgEntries l;
+    bool ok = true;
+    if (S_ISDIR(st.st_mode)) {
+        walk_romfs(path, "", &l, 0);
+        if (!file_exists(path + "/region_common")) ok = false, snprintf(why, sizeof why, "%s isn't the game's romfs folder", path.c_str());
+    } else {
+        int fd = open(path.c_str(), O_RDONLY);
+        ok = fd >= 0 && romfs_image_fd_ok(fd, why, sizeof why) && romfs_image_files(fd, img_entry, &l, why, sizeof why);
+        if (ok) {
+            std::string romfs = g_root + "/romfs";
+            mkdir(romfs.c_str(), 0755);
+            ok = romfs_image_extract(fd, romfs.c_str(), keep_loose, why, sizeof why);
+        }
+        if (fd >= 0) close(fd);
+        else snprintf(why, sizeof why, "can't open %s", path.c_str());
+    }
+    if (ok) {
+        std::vector<RomfsEntry> e(l.paths.size());
+        for (size_t i = 0; i < e.size(); i++) e[i] = {l.paths[i].c_str(), l.sizes[i]};
+        fprintf(stderr, "[launcher] game data in place: %s, %zu files\n", path.c_str(), e.size());
+        romfs_check(e.data(), (int)e.size());
+        FILE *f = fopen((g_root + "/romfs.link").c_str(), "wb");
+        ok = f && fprintf(f, "%s\n", path.c_str()) > 0;
+        if (f && fclose(f) != 0) ok = false;
+        if (!ok) snprintf(why, sizeof why, "can't write romfs.link");
+    }
+    if (ok) return NULL;
+    fprintf(stderr, "[launcher] game data in place: %s\n", why);
+    return env->NewStringUTF(why[0] ? why : "The game files can't be used where they are.");
 }
 
 // An earlier version copied all of romfs/ beside romfs.bin (about 6 GB twice): once the image is there, only the
@@ -2271,9 +2338,28 @@ extern "C" void launcher_run(const char *root) {
                         }
                     }
 #endif
+#ifdef __ANDROID__
+                    {   // copied, or read where they are (the romfs/ or romfs.bin: services/fs.c romfs.link; exefs/ is
+                        // copied, small)
+                        static const char *const ways[] = {"Copy them", "Use them in place"};
+                        int w = g_settings.files_in_place ? 1 : 0;
+                        if (busy) opt_disable_next();
+                        opt_choice("Game files", &w, ways, 2, 0,
+                                   "Copy them: the setup copies the game data into LAS Recomp's folder - your folder can "
+                                   "be moved or deleted afterwards.\n\nUse them in place: the game reads its data from "
+                                   "your folder (its romfs/ or romfs.bin), no copy - it saves the space and the wait. It "
+                                   "needs the permission to access all files (Android asks), and the folder must stay "
+                                   "where it is: moved or deleted, the game files have to be set up again.");
+                        if ((w == 1) != g_settings.files_in_place) {
+                            g_settings.files_in_place = w == 1;
+                            settings_save();
+                        }
+                    }
+#endif
                     if (busy) opt_disable_next();
 #ifdef __ANDROID__
-                    if (opt_action("Game files folder", tr(src_v.c_str()), src_d.c_str(), true)) android_call("pickGameFolder");
+                    if (opt_action("Game files folder", tr(src_v.c_str()), src_d.c_str(), true))
+                        android_call(g_settings.files_in_place ? "pickGameFolderInPlace" : "pickGameFolder");
 #else
                     if (opt_action("Game files folder", src_v.c_str(), src_d.c_str(), true))
                         SDL_ShowOpenFolderDialog(picked, NULL, win, NULL, false);

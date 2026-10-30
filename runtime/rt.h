@@ -120,3 +120,6 @@ uint64_t native_ticks(void);
 #endif
 void *hle_alloc(uint64_t size);           // zeroed guest-visible memory (never freed)
 extern const char *g_romfs_dir;
+#ifdef __ANDROID__
+extern const char *g_romfs_link;  // the player's own romfs/ or romfs.bin used in place (<root>/romfs.link): NULL - copied
+#endif

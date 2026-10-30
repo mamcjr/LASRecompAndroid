@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- After SDL3's android-project template (3.4.16), with LAS Recomp's activity. -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-feature android:name="android.hardware.vulkan.version" android:version="0x403000" android:required="true" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
@@ -12,6 +13,9 @@
     <!-- the game kept alive (paused) while another app is in front: PlayService -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Game files used in place (the start screen's Game files: Use them in place): the picked romfs/ or romfs.bin read
+         by its path, no copy - only asked for when that's chosen (LASRecompActivity.pickGameFolderInPlace) -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
 
     <application
         android:label="LAS Recomp"
