@@ -234,7 +234,21 @@ void rt_dispatch(Cpu *c) {
 #endif
 }
 
+#ifdef __ANDROID__
+// The host function at an HLE address (native.c native_hle_c: the slots are code there)
+HostFn hle_slot_fn(uint64_t pc) {
+    int i = (int)((pc - HLE_BASE) / 16);
+    if (i < 0 || i >= hle_count) FATAL("[native] call to HLE slot %d of %d\n", i, hle_count);
+    if (hle_slots[i].fn) return hle_slots[i].fn;
+    unimpl_pc = pc;
+    return hle_unimplemented;
+}
+#endif
+
 void guest_call(Cpu *c, uint64_t addr) {
+#ifdef __ANDROID__
+    if (native_on()) { native_call(c, addr); return; }
+#endif
     uint64_t lr = c->x[30];
     c->x[30] = 0;
     c->pc = addr;
@@ -291,6 +305,17 @@ void rt_fatal_trace(void) {
         for (int i = 0; i < 31; i += 4)
             fprintf(stderr, "  x%-2d %016llx  x%-2d %016llx  x%-2d %016llx  x%-2d %016llx\n", i, c->x[i], i + 1,
                     c->x[i + 1], i + 2, c->x[i + 2], i + 3, c->x[i + 3]);
+#ifdef __ANDROID__
+        // (Native game code: the game's callers, by its frame records - x29 -> {the caller's x29, its return address})
+        uint64_t fp = c->x[29];
+        for (int k = 0; native_on() && k < 16 && !(fp & 15) && fp >= GUEST_LO && fp + 16 <= GUEST_HI; k++) {
+            uint64_t ret = LD64(fp + 8), off = 0;
+            const char *s = loader_symbol_at(ret, &off);
+            fprintf(stderr, "  caller %llx (main+%llx, %s+%llx)\n", (unsigned long long)ret,
+                    (unsigned long long)(ret - MAIN_BASE), s ? s : "?", (unsigned long long)off);
+            fp = LD64(fp);
+        }
+#endif
     }
     plat_fatal_notice();
     // our crash handler also catches SIGABRT: without this abort() re-entered it forever (a 5 GB log)
@@ -354,6 +379,15 @@ bool rt_fault_watch(uint64_t fa, uint64_t pc) {
 void rt_fault_report(const char *what, uint64_t fa, uint64_t pc, uint64_t lr) {
     uint64_t po = 0, lo = 0;
     const char *ps = host_sym(pc, &po), *ls = host_sym(lr, &lo);
+#ifdef __ANDROID__
+    if (pc >= GUEST_LO && pc < GUEST_HI) {  // (Native game code: the game's own, named by the modules' symbols)
+        ps = loader_symbol_at(pc, &po);
+        if (lr >= GUEST_LO && lr < GUEST_HI) ls = loader_symbol_at(lr, &lo);
+        fprintf(stderr, "\n*** %s accessing %#llx in the game's code\n    guest pc %llx (main+%llx, %s+%llx)\n",
+                what, (unsigned long long)fa, (unsigned long long)pc, (unsigned long long)(pc - MAIN_BASE), ps ? ps : "?",
+                (unsigned long long)po);
+    }
+#endif
     fprintf(stderr, "\n*** %s accessing %#llx\n    host pc %llx (%s+%llx)\n    host lr %llx (%s)\n", what,
             (unsigned long long)fa, (unsigned long long)pc, ps ? ps : "?", (unsigned long long)po,
             (unsigned long long)lr, ls ? ls : "?");

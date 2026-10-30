@@ -460,6 +460,8 @@ static void crash_handler(int sig, siginfo_t *si, void *ctx) {
     if (sig == SIGABRT && depth++ > 0) { signal(SIGABRT, SIG_DFL); abort(); }  // (nested: just die)
     uint64_t fa = (uint64_t)(uintptr_t)si->si_addr;
     uint64_t pc = uc->uc_mcontext.pc, lr = uc->uc_mcontext.regs[30];
+    bool in_game = native_on() && pc >= GUEST_LO && pc < GUEST_HI;  // (Native game code: its x18 is the game's)
+    if (in_game) native_host_x18();
     if (rt_fault_watch(fa, pc)) return;  // (debugging watches first: a watched page may be write-tracked too)
     if (sig == SIGSEGV && wt_fault(fa)) return;  // (write tracking - whatever the code: mprotect decides, issue #2)
     if (sig == SIGSEGV) {  // (what the next report needs: the kernel's code, and the page's tracking state)
@@ -471,6 +473,14 @@ static void crash_handler(int sig, siginfo_t *si, void *ctx) {
     }
     char what[32];
     snprintf(what, sizeof what, "signal %d", sig);
+    if (in_game) {  // (the game's own code on the CPU: its registers are the signal's, not the Cpu's - for the report)
+        Cpu *c = kernel_current_cpu();
+        if (c) {
+            memcpy(c->x, uc->uc_mcontext.regs, 31 * sizeof c->x[0]);
+            c->sp = uc->uc_mcontext.sp;
+            c->pc = pc;
+        }
+    }
     rt_fault_report(what, fa, pc, lr);
 }
 
@@ -485,6 +495,7 @@ void plat_crash_handler_install(void) {
     sigaction(SIGILL, &sa, NULL);
     sigaction(SIGFPE, &sa, NULL);
     sigaction(SIGABRT, &sa, NULL);
+    sigaction(SIGTRAP, &sa, NULL);  // (Native game code: a brk in the game's code)
 }
 
 // ---- child processes (none of the desktop's helpers exist on Android yet: docs/ANDROID-PORT.md, Fases 6-7)

@@ -136,12 +136,23 @@ static void boot(const char *root) {
 
     char why[512];
     if (!game_version_select(root, why, sizeof why)) FATAL("%s\n", why);  // (the address table: game_addresses.h)
+#ifdef __ANDROID__
+    { extern void settings_load(void); settings_load(); }
+    native_begin_boot();  // (Native game code: the game's own code runs, no lasgame.so - runtime/native.c)
+    if (!native_on() && !gamelib_load(root, why, sizeof why)) FATAL("%s\n", why);
+#else
     if (!gamelib_load(root, why, sizeof why)) FATAL("%s\n", why);
+#endif
     loader_load(exefs);
     rando_boot();  // the chosen seed's data patches go into the freshly loaded module
     { extern void settings_load(void); settings_load(); }
     kernel_init();
+#ifdef __ANDROID__
+    if (!native_on()) dispatch_init();
+    native_prepare();  // (the seed's code words, the svcs, TLS and counter reads, patches.py's fixes)
+#else
     dispatch_init();
+#endif
 
     uint32_t stack_size = 0x100000;
     int prio = 44;

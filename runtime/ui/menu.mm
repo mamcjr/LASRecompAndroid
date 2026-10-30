@@ -632,6 +632,11 @@ static void tab_display(void) {
                "Turns off the tilt-shift blur at the top and bottom of the screen.");
     opt_toggle("Hide Hero Mode icon", &g_settings.hide_hero_icon, false,
                "Hides the Hero Mode emblem in the corner of the screen while playing a Hero Mode file.");
+#ifdef __ANDROID__
+    opt_toggle("Native game code (experimental)", &g_settings.native_code, false,
+               "Runs the game's own code directly on the phone's CPU instead of the game code built at setup: no build "
+               "needed. An experiment - report what goes wrong. Applies the next time the game starts.");
+#endif
     opt_end();
 }
 

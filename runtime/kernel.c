@@ -76,6 +76,9 @@ void kernel_signal(KObject *o) {
 
 uint64_t rt_ticks(void) {
     // 19.2 MHz system tick
+#ifdef __ANDROID__
+    if (native_on()) return native_ticks();  // (Native game code: the counter its own reads see, native.c)
+#endif
     uint64_t ns = plat_now_ns();
     static double scale = -1;
     if (scale < 0) scale = getenv("LARECOMP_TICK_SCALE") ? atof(getenv("LARECOMP_TICK_SCALE")) : 1.0;
@@ -262,6 +265,7 @@ static void *thread_main(void *arg) {
         guest_call(&t->cpu, t->entry);
     }
     core0_release(t);
+    native_thread_end();
 #else
     if (!setjmp(t->unwind)) guest_call(&t->cpu, t->entry);
 #endif

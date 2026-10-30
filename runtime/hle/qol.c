@@ -25,6 +25,9 @@ int rt_snap_dir(Cpu *c) {
     if (inner) return 0;
     double turns = atan2(y, x) / (2 * M_PI) + 0.25;  // (the mod: floor(degrees) + 90)
     uint32_t a = (uint32_t)(int64_t)llround(turns * 4294967296.0);
+#ifdef __ANDROID__
+    if (native_on()) logn = -1;  // (the game's own answer is the generated code's: none with Native game code)
+#endif
     if (logn >= 0 && logn++ % 30 == 0) {  // (with the game's own 8-way answer for comparison)
         static Cpu tmp;
         tmp = *c;

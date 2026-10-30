@@ -188,9 +188,16 @@ static std::string check_copied_files(const std::string &root) {
     return "";
 }
 
+#ifdef __ANDROID__
+extern "C" bool native_wanted(void);  // (Native game code: nothing to build - runtime/native.c)
+#endif
+
 // "" = ready to play, else what is wrong
 static std::string check_game_files(const std::string &root) {
     std::string why = check_copied_files(root);
+#ifdef __ANDROID__
+    if (why.empty() && native_wanted()) return why;
+#endif
     if (why.empty() && !gamelib_present(root.c_str())) return "Game code not built yet";
     return why;
 }
@@ -286,6 +293,9 @@ static float extract_progress(void) {
 
 // Builds the game code from the copied files (a few minutes); false = failed (the job line says so)
 static bool build_game_code(void) {
+#ifdef __ANDROID__
+    if (native_wanted()) return true;  // (the game's own code runs as it is)
+#endif
     int cores = SDL_GetNumLogicalCPUCores(), ram_gb = SDL_GetSystemRAM() / 1024;
     GameBuildOpts o = {build_progress, cores < ram_gb - 2 ? cores : ram_gb - 2 > 1 ? ram_gb - 2 : 1};
     char why[256] = "";
@@ -2225,6 +2235,11 @@ extern "C" void launcher_run(const char *root) {
                 const std::string &job_line = job;
                 std::string ex_d = tr("Copies the game files LAS Recomp needs and recompiles the game from them. This only "
                                       "needs to be done once and may take a while. Your own files aren't changed.");
+#ifdef __ANDROID__
+                if (native_wanted())
+                    ex_d = tr("Copies the game files LAS Recomp needs (native game code: nothing to build). Your own files "
+                              "aren't changed.");
+#endif
                 if (!job.empty()) ex_d += "\n\n" + std::string(tr(job.c_str())) + (job_hint.empty() ? "" : ".\n" + std::string(tr(job_hint.c_str())));
 
                 // the controller's cursor starts on the first row (not the X), a few frames while the window lays out
@@ -2237,6 +2252,25 @@ extern "C" void launcher_run(const char *root) {
                 opt_begin("##files", sc);
                 if (!ready) {
                     opt_section("Your copy of the game");
+#ifdef __ANDROID__
+                    {   // how the game's code runs - chosen before the folder (picking it sets the game up at once):
+                        // built from the files (recompiled) or the game's own on the CPU (native: no build; runtime/native.c)
+                        static const char *const modes[] = {"Recompiled", "Native (experimental)"};
+                        int m = g_settings.native_code ? 1 : 0;
+                        if (busy) opt_disable_next();
+                        opt_choice("Game code", &m, modes, 2, 0,
+                                   "Recompiled: the setup rebuilds the game's code for this phone from your files (once, it "
+                                   "may take a while). Set up this way, the game can still run natively: Video > Native game "
+                                   "code.\n\nNative: the game's own code runs directly on the phone's CPU, so the "
+                                   "setup only copies the files - no build. An experiment. Switching to Recompiled later "
+                                   "means building the game code then.");
+                        if ((m == 1) != g_settings.native_code) {
+                            g_settings.native_code = m == 1;
+                            settings_save();
+                            status = check_game_files(g_root);
+                        }
+                    }
+#endif
                     if (busy) opt_disable_next();
 #ifdef __ANDROID__
                     if (opt_action("Game files folder", tr(src_v.c_str()), src_d.c_str(), true)) android_call("pickGameFolder");

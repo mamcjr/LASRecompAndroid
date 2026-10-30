@@ -107,5 +107,16 @@ int ui_run(void);  // window loop; returns the reboot kind requested (the window
 // ---- helpers
 void guest_call(Cpu *c, uint64_t addr);   // call guest function at addr (saves/restores x30)
 uint64_t guest_sym(const char *name);     // cached loader_find_symbol, fatal if missing
+#ifdef __ANDROID__
+// ---- Native game code (runtime/native.c): the game's own code on the CPU, no lasgame.so
+bool native_wanted(void);                 // (the setting, or LARECOMP_NATIVE)
+void native_begin_boot(void);             // native_on() for this boot
+bool native_on(void);
+void native_prepare(void);                // the loaded modules rewritten and made executable
+void native_call(Cpu *c, uint64_t addr);  // guest_call's native path
+void native_thread_end(void);
+void native_host_x18(void);               // (a signal in the game's code: the host's x18 back)
+uint64_t native_ticks(void);
+#endif
 void *hle_alloc(uint64_t size);           // zeroed guest-visible memory (never freed)
 extern const char *g_romfs_dir;

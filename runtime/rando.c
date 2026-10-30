@@ -143,6 +143,15 @@ void rando_select(const char *seed) {
     unsetenv("LARECOMP_RANDO_SEED");
 }
 
+#ifdef __ANDROID__
+// Native game code (runtime/native.c): the seed's code words, i from 0 (0: past the last)
+int rando_code_word(int i, uint64_t *addr, uint32_t *word) {
+    if (i < 0 || i >= nwords) return 0;
+    *addr = words[i].addr, *word = words[i].word;
+    return 1;
+}
+#endif
+
 uint32_t rando_word(uint64_t addr) {
     rando_init();
     for (int i = 0; i < nwords; i++)

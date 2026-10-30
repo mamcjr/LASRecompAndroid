@@ -2,7 +2,7 @@
 # Vulkan backend and the ImGui UI. The game code is not in it: lasgame.so, generated with gen.py --dyn-base and built
 # from the player's own game files, is loaded at run time (docs/ANDROID-PORT.md).
 cmake_minimum_required(VERSION 3.22)
-project(lasrecomp C CXX)
+project(lasrecomp C CXX ASM)
 
 set(R ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../..)   # the repository
 get_filename_component(R ${R} ABSOLUTE)
@@ -67,7 +67,7 @@ set(IMGUI_SRC ${IMGUI}/imgui.cpp ${IMGUI}/imgui_draw.cpp ${IMGUI}/imgui_tables.c
     ${IMGUI}/backends/imgui_impl_sdl3.cpp ${IMGUI}/backends/imgui_impl_vulkan.cpp)
 
 add_library(main SHARED ${RT_SRC} ${R}/runtime/platform/android.c ${VK_SRC} ${UI_SRC} ${IMGUI_SRC}
-            ${DEPS}/volk/volk.c ${R}/android/common/guest_window.c)
+            ${DEPS}/volk/volk.c ${R}/android/common/guest_window.c ${R}/runtime/native_gate.S)
 # the UI sources are plain C++ apart from __APPLE__ blocks (as on Linux / Windows)
 set_source_files_properties(${UI_SRC} PROPERTIES LANGUAGE CXX COMPILE_OPTIONS "-xc++")
 set_source_files_properties(${R}/runtime/gamelib.c PROPERTIES COMPILE_DEFINITIONS "GAMELIB_ID=\"${GAMELIB_ID}\"")
