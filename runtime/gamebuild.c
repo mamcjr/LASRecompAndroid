@@ -21,7 +21,11 @@
 // calls. -O1 as on the desktop (on the phone a build takes minutes; -O2 measured no faster in game).
 // -mllvm -dag-maps-huge-region=500: the schedulers' dependency graph of huge runs of stores was quadratic (main_012.c
 // 4.3 s -> 0.7 s, 806 of 812 objects byte-identical: from LASRecomp-Android-Plus, MIT).
-#define GAMELIB_CFLAGS "-target aarch64-linux-musl -O1 -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibility=hidden -fPIC -mllvm -dag-maps-huge-region=500"
+// -fno-sanitize=undefined -fno-stack-protector -g0: zig cc adds DWARF debug info on its own (and, at -O0, UBSan and a
+// stack protector): memory and time the phone's build doesn't need (issue #7: a Mali-G57 phone's build stopped). From
+// BOTWRecompAndroid (6582d40: a giant file's compile from 6-8 GB to under 20 s). No resume stamp here: a new build
+// starts over, so the flags can change without a new game code id.
+#define GAMELIB_CFLAGS "-target aarch64-linux-musl -O1 -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibility=hidden -fPIC -mllvm -dag-maps-huge-region=500 -fno-sanitize=undefined -fno-stack-protector -g0"
 #define GAMELIB_SHARED "-target aarch64-linux-musl -shared -nostdlib -Wl,-z,max-page-size=16384"
 #endif
 // From the Makefile: the flags the game code is compiled and linked with (as `make` builds it in a source checkout)
