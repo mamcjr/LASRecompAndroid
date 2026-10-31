@@ -882,6 +882,27 @@ static void light_tiles_fix(Ctx *c, const uint64_t *code, size_t end, uint32_t p
     sp(&c->body, "    r%d = as_type<uint>(as_type<float>(r%d) * (as_type<float>(%s) * as_type<float>(%s) / as_type<float>(%s)));\n", d, d, a, h, w);  // (GLSL: as_type is rewritten)
 }
 
+#ifdef __ANDROID__
+// Whether the instruction that last wrote reg before pc (straight-line, 32 back) is FMUL by the immediate 255.0: an
+// 8-bit value read back from a UNORM texture. Truncated, a sample a little under k/255 gives k - 1: off the texel
+// centre (a scaled G-buffer) the filter lands there - in BOTWRecompAndroid (02ab939, its #112) the material ID 7 read
+// as 6 left distant trees unlit.
+static bool scaled_by_255(const Ctx *c, uint32_t pc, int reg) {
+    const uint64_t *code = (const uint64_t *)c->code;
+    for (size_t i = pc / 8, n = 0; i-- > 0 && n < 32; n++) {
+        if (i % 4 == 0) continue;
+        uint64_t x = code[i];
+        if ((int)bits(x, 0, 8) != reg) continue;
+        if ((x & 0xfef8000000000000ull) == 0x3868000000000000ull)  // FMUL imm: 19 bits + sign at 56, the float's top
+            return !bits(x, 56, 1) && (uint32_t)bits(x, 20, 19) << 12 == 0x437f0000u;
+        if ((x & 0xff00000000000000ull) == 0x1e00000000000000ull)  // FMUL32I
+            return (uint32_t)bits(x, 20, 32) == 0x437f0000u;
+        return false;
+    }
+    return false;
+}
+#endif
+
 static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
     char t[2048], u[2048];
     int d = (int)bits(w, 0, 8), a = (int)bits(w, 8, 8);
@@ -1129,6 +1150,13 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         int rnd = (int)bits(w, 39, 2);
         bool sgn = bits(w, 12, 1), i16 = bits(w, 8, 2) == 1;
         static const char *const rf[] = {"rint", "floor", "ceil", "trunc"};
+#ifdef __ANDROID__
+        static int unorm_round = -1;  // (LARECOMP_NO_UNORM_ROUND=1: truncated as written)
+        if (unorm_round < 0) unorm_round = getenv("LARECOMP_NO_UNORM_ROUND") == NULL;
+        if (rnd == 3 && unorm_round && OPM(0x5cb0000000000000ull, 0xfff8000000000000ull) && bits(w, 10, 2) == 2 &&
+            scaled_by_255(c, pc, (int)bits(w, 20, 8)))
+            rnd = 0;
+#endif
         if (i16)
             sprintf(t, sgn ? "uint(int(clamp(%s(%s), -32768.0f, 32767.0f)))" : "uint(clamp(%s(%s), 0.0f, 65535.0f))", rf[rnd], x);
         else
