@@ -126,6 +126,17 @@ const char *settings_language(void) {
     return i > LANG_AUTO && i < N_LANGUAGES ? g_language_codes[i] : host_language();
 }
 
+#ifdef __ANDROID__
+// The code the game is told (am GetDesiredLanguage, set GetLanguageCode): Chinese as the Switch has reported it since
+// its 4.0 system (zh-Hans / zh-Hant) - with the old zh-CN / zh-TW the game showed its Japanese text (issue #12).
+// LARECOMP_ZH_LEGACY=1 (test): the old codes.
+const char *settings_game_language(void) {
+    const char *c = settings_language();
+    if (getenv("LARECOMP_ZH_LEGACY")) return c;
+    return !strcmp(c, "zh-CN") ? "zh-Hans" : !strcmp(c, "zh-TW") ? "zh-Hant" : c;
+}
+#endif
+
 const char *settings_language_name(void) {
     const char *c = settings_language();
     for (int i = 0; i < N_LANGUAGES; i++)

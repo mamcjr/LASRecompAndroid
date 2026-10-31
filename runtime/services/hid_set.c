@@ -66,7 +66,11 @@ static void language_list(IpcReq *req, IpcResp *resp, int max) {
 SERVICE("set", set) {
     (void)s;
     switch (req->cmd) {
+#ifdef __ANDROID__
+    case 0: OUT(uint64_t, 0) = lang_code(settings_game_language()); resp_size(resp, 8); break;  // GetLanguageCode
+#else
     case 0: OUT(uint64_t, 0) = lang_code(settings_language()); resp_size(resp, 8); break;  // GetLanguageCode
+#endif
     case 1: language_list(req, resp, 15); break;                                   // GetAvailableLanguageCodes
     case 2: {                                                                      // MakeLanguageCode
         uint32_t i = IN(uint32_t, 0);

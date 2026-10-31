@@ -98,6 +98,9 @@ void settings_load(void);
 void settings_save(void);
 // The language code to serve the game ("es", "en-US", ...): the setting, or the host locale for LANG_AUTO
 const char *settings_language(void);
+#ifdef __ANDROID__
+const char *settings_game_language(void);  // settings_language as the game is told it (Chinese: zh-Hans / zh-Hant)
+#endif
 // That code's name for the menu ("Spanish")
 const char *settings_language_name(void);
 // Android: the phone's language is Portuguese (the menus' own text: ui/i18n.mm). LARECOMP_HOST_LANG=pt|en (tests)
