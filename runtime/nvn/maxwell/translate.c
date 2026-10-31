@@ -2414,6 +2414,10 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
         for (int i = 0; i < 32; i++) {
             if (!(c->in_attr_mask & (1u << i))) continue;
             int kind = key ? key->attr_kind[i] : 0;
+            if (kind >= 3) {  // (a packed format the driver can't fetch: one uint, unpacked at main's start)
+                sp(&s, "layout(location = %d) in uint a%d_p;\nvec4 a%d;\n", i, i, i);
+                continue;
+            }
             sp(&s, "layout(location = %d) in %s a%d;\n", i, kind == 1 ? "ivec4" : kind == 2 ? "uvec4" : "vec4", i);
         }
         // depth pre-pass + EQUAL test needs identical positions from different shaders: invariant, and precise so no
@@ -2444,7 +2448,24 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     } else {
         sp(&s, "layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;\n");
     }
+    bool packed = false;
+    for (int i = 0; stage == STAGE_VERTEX && key && i < 32; i++) packed |= (c->in_attr_mask & (1u << i)) && key->attr_kind[i] >= 3;
+    if (packed)  // (vertex formats the driver can't fetch, as Vulkan's own conversions: PowerVR's 10:10:10:2 SNORM)
+        sp(&s, "vec4 unpack_s1010102(uint p) { ivec4 v = ivec4(int(p << 22u) >> 22, int(p << 12u) >> 22, int(p << 2u) >> 22, "
+               "int(p) >> 30); return max(vec4(v) / vec4(511.0, 511.0, 511.0, 1.0), vec4(-1.0)); }\n"
+               "vec4 unpack_u1010102(uint p) { return vec4(uvec4(p & 1023u, (p >> 10) & 1023u, (p >> 20) & 1023u, p >> 30)) / "
+               "vec4(1023.0, 1023.0, 1023.0, 3.0); }\n"
+               "float unpack_uf(uint v, uint mb) { uint e = v >> mb, m = v & ((1u << mb) - 1u); float f = float(m) / float(1u << mb); "
+               "return e == 0u ? ldexp(f, -14) : e == 31u ? (m == 0u ? uintBitsToFloat(0x7F800000u) : uintBitsToFloat(0x7FC00000u)) "
+               ": ldexp(1.0 + f, int(e) - 15); }\n"
+               "vec4 unpack_r11g11b10(uint p) { return vec4(unpack_uf(p & 2047u, 6u), unpack_uf((p >> 11) & 2047u, 6u), "
+               "unpack_uf(p >> 22, 5u), 1.0); }\n");
     sp(&s, "void main() {\n");
+    for (int i = 0; packed && i < 32; i++) {
+        int kind = (c->in_attr_mask & (1u << i)) ? key->attr_kind[i] : 0;
+        if (kind >= 3)
+            sp(&s, "  a%d = %s(a%d_p);\n", i, kind == 3 ? "unpack_s1010102" : kind == 4 ? "unpack_u1010102" : "unpack_r11g11b10", i);
+    }
     if (stage == STAGE_VERTEX) {
         sp(&s, "  gl_Position = vec4(0, 0, 0, 1);\n");
         for (int i = 0; i < 32; i++)

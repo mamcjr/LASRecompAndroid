@@ -2116,16 +2116,52 @@ static VkFormat vertex_format(uint32_t f) {
     }
 }
 
-// 3-component 8/16-bit vertex formats aren't universally supported: read 4 components instead.
-static VkFormat vertex_format_supported(VkFormat f) {
+static bool vertex_format_ok(VkFormat f) {
     static uint8_t known[256];  // 1 ok, 2 not
     uint32_t i = f < 256 ? f : 0;
     if (!known[i]) {
         VkFormatProperties p;
         vkGetPhysicalDeviceFormatProperties(g_vk.phys, f, &p);
         known[i] = (p.bufferFeatures & VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT) ? 1 : 2;
+#ifdef __ANDROID__
+        if (getenv("LARECOMP_VK_NO_PACKED_VERTEX") && (f == VK_FORMAT_A2B10G10R10_SNORM_PACK32 ||
+            f == VK_FORMAT_A2B10G10R10_UNORM_PACK32 || f == VK_FORMAT_B10G11R11_UFLOAT_PACK32))
+            known[i] = 2;  // (test: the packed formats as a PowerVR driver has them - unpacked by the shader)
+#endif
     }
-    if (known[i] == 1) return f;
+    return known[i] == 1;
+}
+
+#ifdef __ANDROID__
+// The packed formats a driver may not fetch (PowerVR BXM: 10:10:10:2 SNORM, the game's normals - read as 4 floats they
+// lit the scene white, issue #8): one uint, unpacked by the vertex shader (shader.h attr_kind 3-5)
+static int packed_kind(VkFormat f) {
+    static int old = -1;  // LARECOMP_VK_PACKED_OLD=1 (test): read as 4 floats, as before
+    if (old < 0) old = getenv("LARECOMP_VK_PACKED_OLD") != NULL;
+    if (old) return 0;
+    return f == VK_FORMAT_A2B10G10R10_SNORM_PACK32 ? 3 : f == VK_FORMAT_A2B10G10R10_UNORM_PACK32 ? 4
+         : f == VK_FORMAT_B10G11R11_UFLOAT_PACK32 ? 5 : 0;
+}
+#endif
+static int attr_kind_vk(uint32_t fmt) {
+#ifdef __ANDROID__
+    VkFormat f = vertex_format(fmt);
+    if (packed_kind(f) && !vertex_format_ok(f)) return packed_kind(f);
+#endif
+    return attr_kind(fmt);
+}
+
+// 3-component 8/16-bit vertex formats aren't universally supported: read 4 components instead.
+static VkFormat vertex_format_supported(VkFormat f) {
+    uint32_t i = f < 256 ? f : 0;
+    if (vertex_format_ok(f)) return f;
+#ifdef __ANDROID__
+    if (packed_kind(f)) {
+        static uint8_t told_packed[256];
+        if (!told_packed[i]) told_packed[i] = 1, LOG("[vk] vertex format %d unsupported: one uint, unpacked by the shader\n", f);
+        return VK_FORMAT_R32_UINT;
+    }
+#endif
     { static uint8_t told[256]; if (!told[i]++) LOG("[vk] vertex format %d unsupported: read as 4 components\n", f); }
     switch (f) {
     case VK_FORMAT_R8G8B8_UNORM: return VK_FORMAT_R8G8B8A8_UNORM;
@@ -4492,7 +4528,7 @@ bool renderer_prepare(const ShaderRec *r, const ShaderBlob *vsb, const ShaderBlo
     vkey.flip_x = fkey.flip_x = (r->flags & SR_FLIP_X) != 0;
     // (copy mode, as draw_ makes it: no depth / stencil writes - always so without a depth target)
     fkey.no_ds_write = xcfg(copy, bda).miss_log && ((r->flags & SR_NO_DS_WRITE) || !r->depth);
-    for (int i = 0; i < r->nattrib; i++) vkey.attr_kind[i] = (uint8_t)attr_kind(r->attrib[i] & 0xFF);
+    for (int i = 0; i < r->nattrib; i++) vkey.attr_kind[i] = (uint8_t)attr_kind_vk(r->attrib[i] & 0xFF);
     for (int i = 0; i < r->ncolor && i < 8; i++) if (r->color[i]) fkey.rt_kind[i] = (uint8_t)rt_kind(r->color[i]);
     uint64_t ck = prog_content_key(r->vs, r->fs, &vkey, &fkey, xh);
     Prog *p = PREP_GET(prep_progs, ck);
@@ -4668,7 +4704,7 @@ static void draw_(CmdRec *r, bool indexed) {
     vkey.glsl = fkey.glsl = 1;
     vkey.flip_y = fkey.flip_y = nvn_window_origin() == 0;
     vkey.depth_minus_one = nvn_depth_mode() == 0;
-    for (int i = 0; i < st.nattrib; i++) vkey.attr_kind[i] = (uint8_t)attr_kind(st.attrib[i] & 0xFF);
+    for (int i = 0; i < st.nattrib; i++) vkey.attr_kind[i] = (uint8_t)attr_kind_vk(st.attrib[i] & 0xFF);
     for (int i = 0; i < st.rt.ncolor; i++) if (st.rt.color[i]) fkey.rt_kind[i] = (uint8_t)rt_kind(st.rt.color[i]->format);
 #ifdef __ANDROID__
     if (maxwell_gmem_miss_log)  // (copy mode: early depth tests for the shaders that log misses - ShaderKey)

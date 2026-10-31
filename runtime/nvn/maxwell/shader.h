@@ -38,7 +38,9 @@ enum { TEXTYPE_1D, TEXTYPE_2D, TEXTYPE_3D, TEXTYPE_CUBE, TEXTYPE_2D_ARRAY, TEXTY
        TEXTYPE_BUFFER, TEXTYPE_2D_MS };
 
 typedef struct {
-    uint8_t attr_kind[32];  // vertex inputs: 0 float, 1 signed int, 2 unsigned int
+    uint8_t attr_kind[32];  // vertex inputs: 0 float, 1 signed int, 2 unsigned int; Android, a packed format the driver
+                            // can't fetch read as one uint and unpacked in the shader: 3 10:10:10:2 SNORM, 4 UNORM,
+                            // 5 11:11:10 UFLOAT (vulkan/exec.c attr_kind_vk)
     uint8_t rt_kind[8];     // fragment outputs: 0 float, 1 signed int, 2 unsigned int
     bool depth_minus_one;   // NVN depth mode [-1,1]: remap clip z
     bool flip_y;            // lower-left window origin
