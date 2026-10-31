@@ -30,6 +30,19 @@ optional: every release stays free and the same for everyone, with nothing exclu
 
 [![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-on%20GitHub-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/mamcjr)
 
+## New in 0.5.9
+
+PowerVR's overbright scenes and the Chinese languages fixed; fewer CPU copies on Mali after loading an area.
+
+[Download the v0.5.9 preview APK](https://github.com/mamcjr/LASRecompAndroid/releases/tag/v0.5.9).
+
+- **PowerVR**: the scene no longer lights up white - a vertex format the driver can't read (the models' normals) is now unpacked by the shader (#8).
+- **Chinese**: Simplified and Traditional Chinese show the game's Chinese text instead of the Japanese (#12).
+- **Mali, Xclipse and Qualcomm's own driver**: after loading an area, draws no longer fall back to full CPU copies, and idle upload memory is given back (from BOTWRecompAndroid); render targets the Mali driver can compress.
+- **Fixes**: an 8-bit value read from a texture rounded, not truncated; a window surface lost on the way back from the background made again; a movie that can't be opened no longer crashes the game.
+
+Validation: on the POCO F7 Ultra, the PowerVR case reproduced and fixed, the Chinese text checked, and issue #2's route with a Mali-like path simulated. Not tested on a real PowerVR or Mali here.
+
 ## New in 0.5.8
 
 The game can run without building its code, and without copying its data; plus fixes for issues #2, #7 and #10.
