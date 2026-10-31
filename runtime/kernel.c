@@ -749,8 +749,8 @@ static void svc_impl(Cpu *c, uint32_t imm, uint64_t pc) {
         if (ns <= 0) {
 #ifdef __ANDROID__
             // A yield returns at once, without the host's: the game's job workers spin on yields, and a host sched_yield
-            // took ~30 us - each look at the job queue came that much later (BOTWRecompAndroid 57fe05b: +6-14% fps in
-            // TOTKRecompAndroid). Core 0's threads still hand the core on (svc_blocks). LARECOMP_HOST_YIELD=1: as before.
+            // took ~30 us - each look at the job queue came that much later (BOTWRecompAndroid 57fe05b). Core 0's threads
+            // still hand the core on (svc_blocks). LARECOMP_HOST_YIELD=1: as before.
             static int host_yield = -1;
             if (host_yield < 0) host_yield = getenv("LARECOMP_HOST_YIELD") != NULL;
             if (!host_yield) break;
