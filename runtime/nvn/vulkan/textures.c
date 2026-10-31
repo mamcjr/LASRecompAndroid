@@ -497,6 +497,23 @@ static void create_image(NvnTexture *t, TexBackend *b) {
         b->fmt_listed = true;
         b->fmt_twin = fl_fmts[1];
     }
+    // Mali: a render target with no sRGB / UNORM twin is made without MUTABLE_FORMAT at all - a Mali driver doesn't
+    // compress (AFBC) an image whose views may take any format, and each pass then loads and stores it whole (from
+    // BOTWRecompAndroid 57fe05b, after p5r-android's notes). Its views take its own format (vk_view_format: a view in
+    // another one is logged). On Vulkan 1.1 (Mali-G57's driver) the list above isn't there at all. Turnip: no change.
+    // LARECOMP_VK_RT_FIXED=1 / 0.
+    static int rt_fixed = -1;
+    if (rt_fixed < 0) {
+        const char *e = getenv("LARECOMP_VK_RT_FIXED");
+        rt_fixed = e ? atoi(e) != 0 : g_vk.props.vendorID == 0x13B5;
+        if (rt_fixed) LOG("[vk] render targets without a format twin: not mutable (Mali's compression)\n");
+    }
+    if (rt_fixed && !depthfmt && (usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) && !fl_fmts[1]) {
+        ci.flags &= ~VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+        ci.pNext = NULL;
+        b->fmt_listed = true;
+        b->fmt_twin = VK_FORMAT_UNDEFINED;
+    }
 #endif
     VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
     VkResult r = vmaCreateImage(g_vk.vma, &ci, &ai, &b->image, &b->mem, NULL);
@@ -508,6 +525,7 @@ static void create_image(NvnTexture *t, TexBackend *b) {
         ci.flags &= ~VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
 #ifdef __ANDROID__
         ci.pNext = NULL;
+        ci.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
         b->fmt_listed = false;
 #endif
         VK_CHECK(vmaCreateImage(g_vk.vma, &ci, &ai, &b->image, &b->mem, NULL));
@@ -753,8 +771,15 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
     static int always_full = -1;
     if (always_full < 0) always_full = getenv("LARECOMP_TEX_FULLHASH") ? 1 : 0;
     bool full = b->dynamic || !b->uploaded || always_full;
+#ifdef __ANDROID__
+    // (safety net: a full hash now and then - one larger than the frame's budget too, as the frame's first: a texture
+    // over 4 MB never fit it, and a change its samples missed stayed unseen - BOTWRecompAndroid 6681b37)
+    bool periodic = frame - b->full_frame >= 120 && (full_hash_budget >= total || full_hash_budget == (4u << 20));
+    if (!full && periodic) { full = true; full_hash_budget = full_hash_budget > total ? full_hash_budget - total : 0; }
+#else
     bool periodic = frame - b->full_frame >= 120 && full_hash_budget >= total;  // (safety net: a full hash now and then)
     if (!full && periodic) { full = true; full_hash_budget -= total; }
+#endif
     bool identified_now = !b->tp;  // (button prompts / Hero Mode icon: re-uploaded when their look changes)
     if (identified_now) b->tp = texpatch_marker(t);
     bool restyle = b->tp > 0 && b->uploaded && b->tp_gen != texpatch_generation();
@@ -771,7 +796,11 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
             b->wgen = now;
             if (!ch && b->uploaded && !restyle) {
                 if (!periodic) { prof_tex_watch_skips++; return; }
+#ifdef __ANDROID__
+                if (b->dynamic) full_hash_budget = full_hash_budget > total ? full_hash_budget - total : 0;  // (the others took theirs above)
+#else
                 if (b->dynamic) full_hash_budget -= total;  // (the others took theirs above)
+#endif
             }
         }
     }
