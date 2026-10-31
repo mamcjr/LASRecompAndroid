@@ -2655,6 +2655,9 @@ ShaderInfo *maxwell_translate_bounded(const uint8_t *blob, size_t max_size, size
         us = calloc(end + 1, sizeof *us);
         ue = calloc(end + 1, sizeof *ue);
     }
+#ifdef __ANDROID__
+    c->code = code;  // (scaled_by_255 looks back from pc in it)
+#endif
     for (size_t i = 0; i < end && !c->fail; i++) {
         if (i % 4 == 0) continue;
         uint32_t pc = (uint32_t)(i * 8);
