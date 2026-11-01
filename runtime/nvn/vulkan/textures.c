@@ -619,8 +619,9 @@ static void texture_snapshot_forget(TexBackend *b);
 
 void backend_texture_destroyed(NvnTexture *t) {
 #ifdef __ANDROID__
-    extern void vk_async_drain(void);
-    vk_async_drain();  // (the render thread idle: vulkan/async.c)
+    extern void vk_async_hold(void);
+    extern void vk_async_release(void);
+    vk_async_hold();  // (the render thread idle until the texture is gone: vulkan/async.c)
 #endif
     TexBackend *b = t->backend;
     if (b) {
@@ -633,6 +634,9 @@ void backend_texture_destroyed(NvnTexture *t) {
         free(b);
     }
     t->backend = NULL;
+#ifdef __ANDROID__
+    vk_async_release();
+#endif
 }
 
 // Reboot (device.c backend_reset; GPU idle): every game texture and its views go.

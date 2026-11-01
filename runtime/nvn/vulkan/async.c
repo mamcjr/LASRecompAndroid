@@ -150,6 +150,27 @@ void vk_async_drain(void) {
     pthread_mutex_unlock(&q_lock);
 }
 
+// A drain that holds: until vk_async_release, no other thread queues a request, so the render thread stays idle while
+// this one changes what it uses. A plain drain only empties the queue: another guest thread's command list could start
+// right after, and the render thread translated it while a texture was being destroyed here - both threads in the
+// driver at once (issue #2: a Mali-G57 crashed in both). Nested holds on one thread only count. Core 0 goes to the
+// game's other threads for the whole hold: a producer can wait for core 0 while it has p_lock (push), so this thread
+// never waits for p_lock with core 0, nor for core 0 with p_lock.
+static __thread int hold_depth;
+void vk_async_hold(void) {
+    if (vk_async_is_render_thread()) return;
+    if (hold_depth++) return;
+    kernel_blocking_begin();
+    pthread_mutex_lock(&p_lock);
+    vk_async_drain();
+}
+void vk_async_release(void) {
+    if (vk_async_is_render_thread()) return;
+    if (--hold_depth) return;
+    pthread_mutex_unlock(&p_lock);
+    kernel_blocking_end();
+}
+
 // The fences a command list signals (CMD_FENCE_SYNC, in it or in the lists it calls) get the list's request: a wait
 // on one first waits for the render thread to have translated it (its GPU submission is only known then).
 static void mark_fences(uint64_t p, uint64_t id, int depth) {
