@@ -30,6 +30,16 @@ optional: every release stays free and the same for everyone, with nothing exclu
 
 [![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-on%20GitHub-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/mamcjr)
 
+## New in 0.5.10
+
+A crash on Mali fixed: the game could close by itself, most often around area changes.
+
+[Download the v0.5.10 preview APK](https://github.com/mamcjr/LASRecompAndroid/releases/tag/v0.5.10).
+
+- **Crash while playing**: when a texture was destroyed (often on an area change), the render thread could use the GPU driver at the same time, and a Mali-G57's driver crashed (#2). The render thread now stays idle until the texture is gone.
+
+Validation: on the POCO F7 Ultra, issue #2's route with the native game code on and a Mali-like path simulated, four area changes without a crash. Not tested on a real Mali here.
+
 ## New in 0.5.9
 
 PowerVR's overbright scenes and the Chinese languages fixed; fewer CPU copies on Mali after loading an area.

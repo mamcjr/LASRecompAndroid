@@ -30,6 +30,16 @@ todas as versões continuam gratuitas e iguais para todos, sem nada exclusivo pa
 
 [![Patrocine pelo GitHub](https://img.shields.io/badge/Patrocine-pelo%20GitHub-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/mamcjr)
 
+## Novidades da 0.5.10
+
+Um travamento na Mali corrigido: o jogo podia fechar sozinho, quase sempre perto de uma troca de área.
+
+[Baixe o APK de preview v0.5.10](https://github.com/mamcjr/LASRecompAndroid/releases/tag/v0.5.10).
+
+- **Fechamento durante o jogo**: quando uma textura era apagada (muitas vezes numa troca de área), a thread que desenha podia usar o driver da GPU ao mesmo tempo, e o driver de uma Mali-G57 caía (#2). Agora a thread que desenha fica parada até a textura terminar de ser apagada.
+
+Validação: no POCO F7 Ultra, a rota da issue #2 com o código nativo do jogo ligado e simulando o caminho da Mali, quatro trocas de área sem travar. Não testado numa Mali de verdade aqui.
+
 ## Novidades da 0.5.9
 
 O brilho estourado na PowerVR e os idiomas chineses corrigidos; menos cópias pela CPU na Mali depois de carregar uma área.
