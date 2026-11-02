@@ -3606,12 +3606,22 @@ static GaRes *gres_get(uint64_t lo, uint64_t hi, bool create) {
 // the lighting's draws read the light count, next to a light list a compute dispatch writes, without having the list
 // bound (~950k reads a frame, all zero: a dark scene). The shaders record such misses (gmiss, at the arena's end); a
 // miss inside a resident range makes that range part of every table from then on, pointing at its slot.
-#define GL_MAX 16
+// The list keeps the most recently missed: a dungeon's lights and objects reach 20-33 ranges, and with room for 16 the
+// oldest went out, was missed again, came back and pushed out another - the same ranges learned up to 9 times, the
+// lighting flickering in houses and dungeons until the order happened to settle (issue #2, a Mali-G57). A miss in a
+// learned range (left out of a full table) makes it the newest again instead.
+#define GL_MAX 48
 static GcRange gl_learned[GL_MAX];
 static int gl_n;
 
 static void gres_learn(uint32_t off) {
-    for (int i = 0; i < gl_n; i++) if (gl_learned[i].lo <= off && off < gl_learned[i].hi) return;
+    for (int i = 0; i < gl_n; i++)
+        if (gl_learned[i].lo <= off && off < gl_learned[i].hi) {
+            GcRange g = gl_learned[i];
+            memmove(gl_learned + i, gl_learned + i + 1, sizeof g * (gl_n - 1 - i));
+            gl_learned[gl_n - 1] = g;
+            return;
+        }
     GaRes *in = NULL;
     for (int i = 0; i < ga_nres && !in; i++)
         if (ga_res[i].live && ga_res[i].lo <= off && off < ga_res[i].hi) in = &ga_res[i];
