@@ -25,10 +25,13 @@ For the PC versions (Windows, macOS, Linux), features and the randomizer, see th
 
 ## Support the project
 
-If you'd like to support the ongoing work on this port, you can sponsor it on GitHub. Supporting is entirely
-optional: every release stays free and the same for everyone, with nothing exclusive for sponsors.
+If you'd like to support the ongoing work on this port, you can sponsor it on GitHub, Ko-fi or Buy Me a Coffee.
+Supporting is entirely optional: every release stays free and the same for everyone, with nothing exclusive for
+sponsors.
 
 [![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-on%20GitHub-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/mamcjr)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-mamcjr-FF5E5B?logo=kofi&logoColor=white)](https://ko-fi.com/mamcjr)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-mamcjr-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/mamcjr)
 
 ## New in 0.5.10
 

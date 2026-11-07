@@ -25,10 +25,13 @@ Para as versões de PC (Windows, macOS, Linux), os recursos e o randomizer, veja
 
 ## Apoie o projeto
 
-Se quiser apoiar o desenvolvimento deste port, você pode patrociná-lo pelo GitHub. O apoio é totalmente opcional:
-todas as versões continuam gratuitas e iguais para todos, sem nada exclusivo para quem apoia.
+Se quiser apoiar o desenvolvimento deste port, você pode patrociná-lo pelo GitHub, pelo Ko-fi ou pelo Buy Me a
+Coffee. O apoio é totalmente opcional: todas as versões continuam gratuitas e iguais para todos, sem nada exclusivo
+para quem apoia.
 
 [![Patrocine pelo GitHub](https://img.shields.io/badge/Patrocine-pelo%20GitHub-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/mamcjr)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-mamcjr-FF5E5B?logo=kofi&logoColor=white)](https://ko-fi.com/mamcjr)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-mamcjr-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/mamcjr)
 
 ## Novidades da 0.5.10
 
