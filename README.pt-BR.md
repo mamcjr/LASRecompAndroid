@@ -25,8 +25,8 @@ Para as versões de PC (Windows, macOS, Linux), os recursos e o randomizer, veja
 
 ## Apoie o projeto
 
-Se quiser apoiar o desenvolvimento deste port, você pode patrociná-lo pelo GitHub, pelo Ko-fi ou pelo Buy Me a
-Coffee. O apoio é totalmente opcional: todas as versões continuam gratuitas e iguais para todos, sem nada exclusivo
+Se quiser apoiar o desenvolvimento deste port, você pode patrociná-lo pelo GitHub, pelo Ko-fi, pelo Buy Me a
+Coffee ou via **Pix**. O apoio é totalmente opcional: todas as versões continuam gratuitas e iguais para todos, sem nada exclusivo
 para quem apoia.
 
 A meta do mês é pagar o Claude Code Max (US$ 100/mês), a ferramenta de IA para programação que uso nos meus projetos.
@@ -38,6 +38,9 @@ TOTKDroid e LASRecompAndroid); eu atualizo à mão.
 [![Patrocine pelo GitHub](https://img.shields.io/badge/Patrocine-pelo%20GitHub-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/mamcjr)
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-mamcjr-FF5E5B?logo=kofi&logoColor=white)](https://ko-fi.com/mamcjr)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-mamcjr-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/mamcjr)
+[![Pix](https://img.shields.io/badge/Pix-Chave%20Aleat%C3%B3ria-32BCAD?logo=pix&logoColor=white)](#apoie-o-projeto)
+
+> **Chave Pix (chave aleatória):** `6c326b56-6caf-4c3a-bcf7-1fa8ad2abd16`
 
 ## Novidades da 0.5.10
 
@@ -79,10 +82,14 @@ Validação: no POCO F7 Ultra, código nativo a 30 e 60 fps na vila, um reiníci
 
 Menos trabalho de CPU em celulares cujo driver não consegue mapear a memória do jogo na GPU (Mali, Samsung Xclipse, o driver da própria Qualcomm).
 
+[Baixe o APK de prévia da v0.5.7](https://github.com/mamcjr/LASRecompAndroid/releases/tag/v0.5.7).
+
 - **Dados de vértices copiados só onde mudaram**: nesses drivers, todos os buffers de vértices e índices eram copiados a cada quadro (250 a 490 MB a cada 2 s numa Mali-G57). Agora o app percebe quais páginas da memória do jogo o jogo escreveu e copia só essas. Vem do BOTWRecompAndroid.
 - **A versão do app** aparece no canto inferior direito da tela inicial.
 
 Validação: no POCO F7 Ultra simulando o caminho de um driver como o da Mali, as cópias pela CPU no campo foram de 769 para 123 MB a cada 2 s, com a mesma imagem. Não testado numa Mali de verdade aqui.
+
+Atualizar da v0.5.6 não recompila o código do jogo nem altera os saves.
 
 ## Novidades da 0.5.6
 
@@ -367,6 +374,9 @@ No lado da CPU:
   corrida de sincronização no kernel emulado;
 - o runtime é compilado com otimização, os fences de GPU do jogo não esperam mais o compositor, e o trabalho por draw
   é guardado em cache.
+- nos drivers que usam o caminho de cópias, os dados de vértices e índices são copiados apenas das páginas alteradas
+  pelo jogo (v0.5.7). O volume de cópias pela CPU caiu numa simulação do caminho Mali; ainda não foi medido ganho de
+  FPS em aparelhos reais com Mali, Xclipse ou o driver padrão da Qualcomm.
 
 ## Turnip ou o driver do próprio celular
 
@@ -404,9 +414,13 @@ que nenhum dos dois drivers tem.
   decodificadas na CPU (a Mali não tem texturas BC, o formato do Switch), o que corrige os blocos coloridos vistos
   nela - ainda a confirmar em mais celulares Mali. Xclipse e outras devem funcionar pelo mesmo caminho: relatos são
   bem-vindos.
-- Você precisa do seu próprio dump v1.0.0, v1.0.1 ou v1.1.0 e de cerca de **12 GB livres** para a configuração (o app guarda a sua
-  própria cópia dos arquivos do jogo mais uma imagem de dados gerada a partir deles); o dump pode ser apagado depois.
-- A primeira configuração compila o código do jogo no celular: cerca de 20 minutos em um Snapdragon 8 Elite.
+- Você precisa dos seus próprios arquivos extraídos do jogo v1.0.0, v1.0.1 ou v1.1.0. A configuração confere o espaço
+  livre adicional necessário para os seus arquivos (cerca de **8 GiB** com o dump testado; reservar 12 GB deixa uma
+  margem): copia o ExeFS e monta a imagem de dados do RomFS direto da pasta selecionada. Você pode apagar o dump
+  original do celular após a configuração terminar, se tiver um backup.
+- A primeira configuração compila o código do jogo no celular. Uma configuração completa levou cerca de 7 min 40 s
+  no POCO F7 Ultra na v0.4.0; na v0.5.6, só a compilação do código do jogo v1.0.1 levou 284 s no mesmo aparelho.
+  O tempo varia conforme o celular e a versão do jogo.
 - Mudar a resolução com o jogo rodando pode fechar o app. Mude na tela de título.
 - Ainda sem randomizer no celular.
 
@@ -418,9 +432,9 @@ de um pacote do driver Turnip (o `.zip` do adrenotools, o mesmo usado por outros
 
 1. Instale o APK da página de [Releases](https://github.com/mamcjr/LASRecompAndroid/releases).
 2. Abra o app, toque em **Game files folder** e escolha a pasta que contém `exefs` e `romfs` (ou a pasta acima dela).
-   O Android pede permissão de acesso a ela: o app copia os arquivos para a sua própria pasta.
-3. Aguarde a configuração: a cópia, a imagem de dados do jogo e o código do jogo (cerca de 20 minutos na primeira
-   vez; mantenha a tela ligada).
+   O Android pede permissão de acesso a ela: o app copia o ExeFS e monta uma imagem de dados do RomFS na própria pasta.
+3. Aguarde a configuração: a cópia, a imagem de dados do jogo e o código do jogo (mantenha a tela ligada). A primeira
+   execução demora mais; as seguintes reutilizam o código compilado, salvo quando uma atualização exigir recompilação.
 4. Opcional, para 60 fps em Adreno: **Settings > Prelaunch > Vulkan driver > Choose driver**, escolha o `.zip` do
    Turnip e depois **Restart now**. Sem isso o jogo roda no driver do próprio celular, com a iluminação, a 30 fps.
    Se um driver deixar a tela embaralhada ou o app não abrir, segure o ícone do app e escolha

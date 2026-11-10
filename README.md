@@ -25,7 +25,7 @@ For the PC versions (Windows, macOS, Linux), features and the randomizer, see th
 
 ## Support the project
 
-If you'd like to support the ongoing work on this port, you can sponsor it on GitHub, Ko-fi or Buy Me a Coffee.
+If you'd like to support the ongoing work on this port, you can sponsor it on GitHub, Ko-fi, Buy Me a Coffee or via **Pix**.
 Supporting is entirely optional: every release stays free and the same for everyone, with nothing exclusive for
 sponsors.
 
@@ -38,6 +38,9 @@ and LASRecompAndroid; I update it by hand.
 [![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-on%20GitHub-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/mamcjr)
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-mamcjr-FF5E5B?logo=kofi&logoColor=white)](https://ko-fi.com/mamcjr)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-mamcjr-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/mamcjr)
+[![Pix](https://img.shields.io/badge/Pix-Random%20Key-32BCAD?logo=pix&logoColor=white)](#support-the-project)
+
+> **Pix (Brazil only — random key):** `6c326b56-6caf-4c3a-bcf7-1fa8ad2abd16`
 
 ## New in 0.5.10
 
@@ -79,10 +82,14 @@ Validation: on the POCO F7 Ultra, native code at 30 and 60 fps in the village, a
 
 Less CPU work on phones whose driver can't map the game's memory on the GPU (Mali, Samsung Xclipse, Qualcomm's own driver).
 
+[Download the v0.5.7 preview APK](https://github.com/mamcjr/LASRecompAndroid/releases/tag/v0.5.7).
+
 - **Vertex data copied only where it changed**: on those drivers every vertex and index buffer was copied each frame (250-490 MB every 2 s on a Mali-G57). The app now notices which pages of the game's memory the game wrote and copies only those. From BOTWRecompAndroid.
 - **The app's version** shows in the start screen's lower right corner.
 
 Validation: on the POCO F7 Ultra with a Mali-like driver path simulated, CPU copies in the field went from 769 to 123 MB every 2 s with the same picture. Not tested on a real Mali here.
+
+Updating from v0.5.6 does not rebuild the game code or change saves.
 
 ## New in 0.5.6
 
@@ -364,6 +371,9 @@ On the CPU side:
   hints (ADPF) with a single unified session for both threads aimed at 60 fps, and fixes to three thread-synchronization races in the emulated kernel;
 - the runtime is built optimized, the game's GPU fences no longer wait for the compositor, and per-draw work is
   cached.
+- on drivers that use the copy path, vertex and index data are copied only from pages the game changed (v0.5.7).
+  This reduced CPU copy volume in a simulated Mali-like path; an FPS improvement on real Mali, Xclipse or stock
+  Qualcomm devices has not been measured yet.
 
 ## Turnip or the phone's own driver
 
@@ -399,9 +409,12 @@ neither driver has.
   included, you provide your own. **Mali**: the game ran on a Mali-G615 at 20-30 fps; since 0.3.3 its textures are
   decoded on the CPU (Mali has no BC textures, the Switch's format), which fixed the colored blocks seen there - still
   to be confirmed on more Mali phones. Xclipse and others should work through the same path: reports are welcome.
-- You need your own v1.0.0, v1.0.1 or v1.1.0 dump, and about **12 GB free** for the setup (the app keeps its own copy of the game
-  files plus a data image built from them); the dump itself can be deleted afterwards.
-- The first setup builds the game code on the phone: about 20 minutes on a Snapdragon 8 Elite.
+- You need your own extracted v1.0.0, v1.0.1 or v1.1.0 game files. Setup checks the additional free space needed for
+  your files (about **8 GiB** with the tested dump; allowing 12 GB leaves headroom): it copies ExeFS and builds the
+  RomFS data image directly from the selected folder. You can delete the original dump from the phone after setup
+  succeeds, if you have a backup.
+- The first setup builds the game code on the phone. A complete setup took about 7 min 40 s on the POCO F7 Ultra in
+  v0.4.0; a v0.5.6 build of the v1.0.1 game code alone took 284 s on the same phone. Times vary by phone and game version.
 - Changing the resolution while the game is running can close the app. Change it on the title screen.
 - No randomizer on the phone yet.
 
@@ -413,9 +426,9 @@ or v1.1.0: the folders `exefs` and `romfs`) copied somewhere on the phone, and, 
 
 1. Install the APK from the [Releases](https://github.com/mamcjr/LASRecompAndroid/releases) page.
 2. Open the app, tap **Game files folder** and pick the folder that holds `exefs` and `romfs` (or the folder above
-   it). Android asks you to allow access to it: the app copies the files to its own folder.
-3. Wait for the setup: the copy, the game data image and the game code (about 20 minutes the first time; keep the
-   screen on).
+   it). Android asks you to allow access to it: the app copies ExeFS and builds a RomFS data image in its own folder.
+3. Wait for the setup: the copy, the game data image and the game code (keep the screen on). The first run takes
+   longer; later starts reuse the compiled code unless an update requires a rebuild.
 4. Optional, for 60 fps on Adreno: **Settings > Prelaunch > Vulkan driver > Choose driver**, pick the Turnip `.zip`,
    then **Restart now**. Without it the game runs on the phone's own driver, lighting included, at 30 fps.
    If a driver leaves the screen garbled or the app won't open, long-press the app icon and choose
