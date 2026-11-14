@@ -199,6 +199,9 @@ void shader_seen_note(const ShaderRec *r) {
             pthread_t t;
             if (pthread_create(&t, NULL, writer, NULL) == 0) pthread_detach(t);
             atexit(at_exit);
+#ifdef __ANDROID__
+            at_quick_exit(at_exit);  // (plat_quit)
+#endif
         }
         pthread_cond_signal(&q_cond);
     }

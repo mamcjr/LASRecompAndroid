@@ -1866,7 +1866,7 @@ extern "C" void launcher_run(const char *root) {
         while (SDL_PollEvent(&e)) {
             if (page == SETTINGS && bind_capture_event(&e)) continue;  // (waiting for a new binding: controls_ui.mm)
             if (!launcher_pad_event(e)) ImGui_ImplSDL3_ProcessEvent(&e);
-            if (e.type == SDL_EVENT_QUIT) exit(0);
+            if (e.type == SDL_EVENT_QUIT) plat_quit();
         }
         // extraction finished: re-check, load the background
         pthread_mutex_lock(&g_lock);
@@ -2169,7 +2169,7 @@ extern "C" void launcher_run(const char *root) {
                     if (menu_item("SET UP GAME FILES", !busy)) page = SETUP;
                 }
                 ImGui::SetCursorPosX(x0);
-                if (menu_item("QUIT", true)) exit(0);
+                if (menu_item("QUIT", true)) plat_quit();
                 g_menu_gap = 0.35f;
             } else if (page == SETTINGS) {
                 SettingsThemeScope settings_theme;

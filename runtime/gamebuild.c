@@ -409,7 +409,13 @@ static PlatProc start_compile(const Tools *t, const Unit *u) {
 bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size_t why_size) {
     uint64_t t0 = plat_now_ns();
     static bool registered;
-    if (!registered) registered = true, atexit(end_all);
+    if (!registered) {
+        registered = true;
+        atexit(end_all);
+#ifdef __ANDROID__
+        at_quick_exit(end_all);  // (plat_quit)
+#endif
+    }
     if (!gamelib_full_id(game_dir, g_full_id, sizeof g_full_id)) {
         snprintf(why, why_size, "the game files' exefs/main is missing or unreadable");
         return false;

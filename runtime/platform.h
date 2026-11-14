@@ -48,6 +48,15 @@ void plat_exec(char *const argv[]);  // replace the process (NULL = same command
 #if defined(_WIN32) || defined(__linux__)
 void plat_terminate(void);  // end the process now, skipping DLL teardown (exit status 0)
 #endif
+// Quitting (the window closed, the start screen's QUIT). Android: quick_exit, its handlers registered with
+// at_quick_exit too - exit() ran the static destructors of the libraries loaded after quick_exit_handler was
+// registered (the Vulkan driver, the gralloc mapper) before it, while the render thread still used them: a crash in
+// the Mali mapper, a destroyed mutex in an hwui thread (issues #14, #2).
+#ifdef __ANDROID__
+#define plat_quit() quick_exit(0)
+#else
+#define plat_quit() exit(0)
+#endif
 
 // Child processes (seed generator, game-file extraction). stdout + stderr go to log_path (NULL = /dev/null).
 typedef intptr_t PlatProc;  // 0 = failed to start

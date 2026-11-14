@@ -1615,6 +1615,9 @@ const char *vk_gpu_name(void) { return g_vk.props.deviceName; }
 void ui_window_init(void) {
     if (window) return;
     atexit(quick_exit_handler);
+#ifdef __ANDROID__
+    at_quick_exit(quick_exit_handler);  // (plat_quit: the first registered, so the last run - it ends the process)
+#endif
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
 #ifdef __ANDROID__
     SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");  // (the back button opens the menu: ui/touch_controls.mm)
@@ -1803,7 +1806,7 @@ int ui_run(void) {
 #endif
             if (e.type == SDL_EVENT_QUIT) {
                 LOG("window closed\n");
-                exit(0);
+                plat_quit();
             }
             extern bool input_user_blocked(const SDL_Event *e);
             if (input_user_blocked(&e)) continue;  // scripted test runs: the real keyboard / mouse / pads do nothing (as metal.m)
