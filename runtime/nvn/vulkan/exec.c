@@ -3570,7 +3570,8 @@ static GaRes *gres_get(uint64_t lo, uint64_t hi, bool create) {
             if (e->hi > uhi) { uhi = e->hi; grew = true; }
         }
     }
-    if (no && in_pass) vk_end_pass();  // (merging copies slot to slot: outside any render pass)
+    if (no && in_pass) return NULL;  // (merging copies slot to slot: not inside a render pass - the draw is recorded
+                                     // in it right after, so it takes the plain copies this time; gres_premerge)
     uint64_t len = uhi - ulo;
     int slot = -1;
     for (int i = 0; i < ga_nres; i++) if (!ga_res[i].live && !ga_res[i].shadow) { slot = i; break; }
@@ -3830,11 +3831,32 @@ static void gres_reset(void) {
 }
 
 // The storage buffers of the stages in stage_mask (bit = st.sbuf index) into the ring; store: copied back later.
-static void gcopy_prepare(unsigned stage_mask, bool store) {
-    memset(gmap_tab, 0, sizeof gmap_tab);
-    gfast_n = 0;
-    gc_size = 0;
+// The bound storage buffers of the stages in stage_mask as heap ranges (with gcopy_prepare's margin), sorted and merged
+static int gcopy_ranges(unsigned stage_mask, bool store, GcRange *r);
+
+// A storing draw's ranges made resident before its render pass opens. gres_get merges a new range with the resident
+// ones it overlaps by copying slot to slot, outside any render pass; draw_ prepares the arena after opening its pass,
+// so a merge there ended the pass and the draw was recorded outside it (now refused: the plain copies, a frame late -
+// readers alternating between this frame's data and the last one's). Here the pass is ended once for the merge; from
+// then on the range is resident and needs nothing. LARECOMP_GRES_PREMERGE=0: off.
+static void gres_premerge(unsigned stage_mask) {
+    static int on = -1;
+    if (on < 0) on = !getenv("LARECOMP_GRES_PREMERGE") || atoi(getenv("LARECOMP_GRES_PREMERGE"));
+    if (!on || !gres_init()) return;
     GcRange r[6 * 16];
+    int m = gcopy_ranges(stage_mask, true, r);
+    for (int i = 0; i < m; i++) {
+        if (gres_get(r[i].lo, r[i].hi, false)) continue;  // (covered already)
+        bool overlaps = false;
+        for (int k = 0; k < ga_nres && !overlaps; k++)
+            overlaps = ga_res[k].live && ga_res[k].lo < r[i].hi && r[i].lo < ga_res[k].hi;
+        if (!overlaps) continue;  // (a new slot needs no copies: gres_get makes it inside the pass too)
+        if (in_pass) vk_end_pass();
+        gres_get(r[i].lo, r[i].hi, true);
+    }
+}
+
+static int gcopy_ranges(unsigned stage_mask, bool store, GcRange *r) {
     int n = 0;
     // a margin before each bound range (LARECOMP_GMARGIN bytes, 4 KB): the lighting's shaders read a header 0x100-0x200
     // bytes before the light list's bound address (the light count: ~950k reads a frame outside the tables - zero
@@ -3859,6 +3881,15 @@ static void gcopy_prepare(unsigned stage_mask, bool store) {
         else r[m++] = r[i];
     }
     if (m > GMAP_MAX) m = GMAP_MAX;
+    return m;
+}
+
+static void gcopy_prepare(unsigned stage_mask, bool store) {
+    memset(gmap_tab, 0, sizeof gmap_tab);
+    gfast_n = 0;
+    gc_size = 0;
+    GcRange r[6 * 16];
+    int m = gcopy_ranges(stage_mask, store, r);
     // The learned ranges (reached through pointers - gres_learn): newest first while table slots remain, never
     // expanding a storing range's write-back or collapsing unrelated heap regions into one multi-megabyte span.
     for (int i = gl_n - 1; i >= 0 && m < GMAP_MAX - 2; i--) {
@@ -4231,6 +4262,16 @@ static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo
         }
     }
     if (h && st.spool && tsc < (uint32_t)st.spool->count) smp = vk_sampler(&((NvnSamplerDesc *)st.spool->entries)[tsc]);
+#ifdef __ANDROID__
+    if (smp && view && h && st.tpool && tic < (uint32_t)st.tpool->count) {
+        // (a format the GPU doesn't filter linearly: the sampler's nearest twin - textures.c vk_format_filters_linear)
+        extern bool vk_format_filters_linear(VkFormat f);
+        extern VkSampler vk_sampler_nearest(const NvnSamplerDesc *d, VkSampler linear);
+        NvnTexture *t = ((NvnTexEntry *)st.tpool->entries)[tic].tex;
+        if (t && t->backend && !vk_format_filters_linear(((TexBackend *)t->backend)->format))
+            smp = vk_sampler_nearest(&((NvnSamplerDesc *)st.spool->entries)[tsc], smp);
+    }
+#endif
     if (!view) view = vk_dummy_view(st_->type);
     if (!smp) smp = vk_default_sampler(true);
     *out = (VkDescriptorImageInfo){smp, view, VK_IMAGE_LAYOUT_GENERAL};
@@ -4881,6 +4922,10 @@ static void draw_(CmdRec *r, bool indexed) {
     snap_reason = "draw-colorwrite";
     for (int i = 0; i < st.rt.ncolor; i++)
         if (st.rt.color[i] && ((st.channel_mask >> (i * 4)) & 0xF)) snapshots_invalidate(st.rt.color[i]);
+#ifdef __ANDROID__
+    if (gcopy_mode && (pr->vi->uses_gmem_store || pr->fi->uses_gmem_store) && (pr->vi->uses_gmem_map || pr->fi->uses_gmem_map))
+        gres_premerge((pr->vi->uses_gmem_map ? 1u : 0u) | (pr->fi->uses_gmem_map ? 2u : 0u));  // (before the pass opens)
+#endif
     begin_pass();
     VkCommandBuffer cb = vk_cmd();
 
