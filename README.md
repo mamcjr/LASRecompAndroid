@@ -40,6 +40,19 @@ Current goal: buy a **POCO X7 Pro ($455)**, a test device equipped with a MediaT
 
 > **Pix (Brazil only — random key):** `6c326b56-6caf-4c3a-bcf7-1fa8ad2abd16`
 
+## New in 0.5.11
+
+Fixes for Mali GPUs (lighting, textures) and for a crash when closing the app.
+
+[Download the v0.5.11 preview APK](https://github.com/mamcjr/LASRecompAndroid/releases/tag/v0.5.11).
+
+- **Lighting flickering in houses and dungeons on Mali** (#2): the list of memory ranges the lighting reads had room for 16 and a dungeon needs 20-33; they pushed each other out. Room for 48 now, and a range missed again moves to the front.
+- **Draws that write the game's memory, on Mali**: joining two of their memory ranges ended the drawing pass in the middle of the draw. The ranges are now joined before the pass starts.
+- **Textures Mali can't filter smoothly**: sampled without filtering (undefined otherwise: the grass went black on a Mali-G68 in BOTWRecompAndroid). A candidate for the flowers' black outline (#14).
+- **Crash when closing the app** (#2, #14): closing let the GPU driver clean itself up while the app still drew ("FORTIFY: pthread_mutex_lock called on a destroyed mutex", or a crash in the Mali driver). The app now ends without that cleanup.
+
+Validation: on the POCO F7 Ultra, closing from recent apps crashed in 2 of 3 tries on 0.5.10 and in 0 of 6 now; with a Mali-like path simulated, the lighting route ran without errors at the same picture and frame rate. Not tested on a real Mali here.
+
 ## New in 0.5.10
 
 A crash on Mali fixed: the game could close by itself, most often around area changes.

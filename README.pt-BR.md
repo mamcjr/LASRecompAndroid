@@ -40,6 +40,19 @@ A meta atual do projeto é adquirir um **POCO X7 Pro (US$ 455)**, um celular de 
 
 > **Chave Pix (chave aleatória):** `6c326b56-6caf-4c3a-bcf7-1fa8ad2abd16`
 
+## Novidades da 0.5.11
+
+Correções para GPUs Mali (iluminação, texturas) e para um fechamento com erro ao sair do app.
+
+[Baixe o APK de preview v0.5.11](https://github.com/mamcjr/LASRecompAndroid/releases/tag/v0.5.11).
+
+- **Luz piscando em casas e masmorras na Mali** (#2): a lista das faixas de memória que a iluminação lê tinha espaço para 16, e uma masmorra precisa de 20 a 33; uma empurrava a outra para fora. Agora cabem 48, e uma faixa que volta a faltar passa para a frente.
+- **Desenhos que gravam na memória do jogo, na Mali**: juntar duas faixas de memória encerrava a etapa de desenho no meio do desenho. Agora as faixas são juntadas antes de a etapa começar.
+- **Texturas que a Mali não consegue suavizar**: lidas sem filtro (sem isso o resultado é indefinido: a grama ficava preta numa Mali-G68 no BOTWRecompAndroid). Pode ser a causa do contorno preto das flores (#14).
+- **Fechamento com erro ao sair do app** (#2, #14): fechar deixava o driver da GPU se desmontar enquanto o app ainda desenhava ("FORTIFY: pthread_mutex_lock called on a destroyed mutex", ou um erro dentro do driver da Mali). Agora o app termina sem essa desmontagem.
+
+Validação: no POCO F7 Ultra, fechar pelos apps recentes dava erro em 2 de 3 tentativas na 0.5.10 e em 0 de 6 agora; simulando o caminho da Mali, a rota da iluminação rodou sem erro, com a mesma imagem e o mesmo fps. Não testado numa Mali de verdade aqui.
+
 ## Novidades da 0.5.10
 
 Um travamento na Mali corrigido: o jogo podia fechar sozinho, quase sempre perto de uma troca de área.
